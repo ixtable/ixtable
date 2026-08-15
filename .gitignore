@@ -1,0 +1,6 @@
+.jj/
+.jj*/
+.treq/
+node_modules/
+dist/
+src-tauri/target/

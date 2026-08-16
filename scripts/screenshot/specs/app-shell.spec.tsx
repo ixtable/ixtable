@@ -4,13 +4,14 @@ import {it} from 'vitest';
 import App from '../../../src/App';
 import {captureDocument} from '../capture';
 
-it('captures the main project workflow',async()=>{
-  const user=userEvent.setup();
-  render(<App/>);
-  await screen.findByRole('heading',{name:'Projects'});
-  await captureDocument(document,{name:'app-qa-01-projects',expectations:['The ixtable sidebar and Projects heading are visible.','Five project rows appear in a clean desktop table.','The dark New project action is visible at the top right.']});
-  await user.type(screen.getByRole('textbox',{name:'Search projects'}),'design system');
-  await screen.findByDisplayValue('Design system');
-  await captureDocument(document,{name:'app-qa-02-filtered',expectations:['The search field contains “design system”.','Only the Design system project row remains visible.']});
+it('captures the document lifecycle shell',async()=>{
+ const user=userEvent.setup(); render(<App/>);
+ await screen.findByRole('heading',{name:'Your data, in one portable file.'});
+ await captureDocument(document,{name:'app-qa-01-start',expectations:['New and Open document actions are prominent.','Recent documents has a clear empty state.']});
+ await user.click(screen.getByRole('button',{name:/New document/}));
+ await screen.findByRole('heading',{name:'Tables'});
+ await captureDocument(document,{name:'app-qa-02-data',expectations:['The document shell shows Data mode and Tables navigation.','Save and Save As actions and embedded attachments are visible.']});
+ await user.click(screen.getByRole('button',{name:'Design'}));
+ await screen.findByRole('heading',{name:'Forms'});
+ await captureDocument(document,{name:'app-qa-03-design',expectations:['Design mode is selected.','Forms and Switchboards navigation is visible.']});
 });
-

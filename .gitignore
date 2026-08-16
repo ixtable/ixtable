@@ -6,3 +6,4 @@ dist/
 src-tauri/target/
 scripts/screenshot/.generated/
 scripts/service-qa/.generated/
+web/web-qa/.generated/

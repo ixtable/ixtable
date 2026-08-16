@@ -28,6 +28,15 @@
   },
   "bundle": {
     "active": true,
-    "targets": "all"
+    "targets": "all",
+    "fileAssociations": [
+      {
+        "ext": ["ixt"],
+        "name": "ixtable Document",
+        "description": "Portable ixtable database archive",
+        "role": "Editor",
+        "mimeType": "application/x-ixtable"
+      }
+    ]
   }
 }

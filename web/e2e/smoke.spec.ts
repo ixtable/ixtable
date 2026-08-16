@@ -3,7 +3,7 @@ import {test, expect} from '@playwright/test';
 test.describe('smoke', () => {
   test('home page renders', async ({page}) => {
     await page.goto('/');
-    await expect(page.locator('h1')).toHaveText('Web Template');
+    await expect(page.locator('h1')).toHaveText(/Keep every project\s*beautifully clear\./);
     await expect(page.getByRole('link', {name: 'Docs'}).first()).toBeVisible();
   });
 

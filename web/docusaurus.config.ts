@@ -12,8 +12,8 @@ const SUPABASE_ANON_KEY =
   'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZS1kZW1vIiwicm9sZSI6ImFub24iLCJleHAiOjE5ODM4MTI5OTZ9.CRXP1A7WOeoJeXxjNni43kdQwgnWNReilDMblYTn_I0';
 
 const config: Config = {
-  title: 'Web Template',
-  tagline: 'Docusaurus + Supabase auth, ready to build on',
+  title: 'ixtable',
+  tagline: 'Keep every project beautifully clear',
   favicon: 'img/favicon.svg',
 
   future: {
@@ -21,11 +21,11 @@ const config: Config = {
     faster: true,
   },
 
-  url: 'https://example.com',
+  url: 'https://ixtable.pages.dev',
   baseUrl: '/',
 
-  organizationName: 'your-org',
-  projectName: 'web-with-supa',
+  organizationName: 'ixtable',
+  projectName: 'ixtable',
 
   onBrokenLinks: 'throw',
 
@@ -63,9 +63,9 @@ const config: Config = {
       respectPrefersColorScheme: true,
     },
     navbar: {
-      title: 'Web Template',
+      title: 'ixtable',
       logo: {
-        alt: 'Web Template Logo',
+        alt: 'ixtable logo',
         src: 'img/favicon.svg',
       },
       items: [
@@ -76,7 +76,7 @@ const config: Config = {
           label: 'Docs',
         },
         {
-          href: 'https://github.com',
+          href: 'https://github.com/ixtable/ixtable',
           label: 'GitHub',
           position: 'right',
         },
@@ -103,12 +103,12 @@ const config: Config = {
           items: [
             {
               label: 'GitHub',
-              href: 'https://github.com',
+              href: 'https://github.com/ixtable/ixtable',
             },
           ],
         },
       ],
-      copyright: `Copyright © ${new Date().getFullYear()} Web Template.`,
+      copyright: `Copyright © ${new Date().getFullYear()} ixtable.`,
     },
     prism: {
       theme: prismThemes.github,

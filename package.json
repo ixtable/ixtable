@@ -16,7 +16,8 @@
     "prescreenshot": "npm run pretest",
     "screenshot": "npm run screenshot:css && vitest run --config vitest.screenshot.config.ts",
     "preservice-qa": "npm run pretest",
-    "service-qa": "vitest run --config vitest.service-qa.config.ts"
+    "service-qa": "vitest run --config vitest.service-qa.config.ts",
+    "web-qa": "npm run test:web-qa --prefix web"
   },
   "dependencies": {
     "@tauri-apps/api": "^2.8.0",

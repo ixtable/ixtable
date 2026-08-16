@@ -1,9 +1,9 @@
-import React, {createContext, useContext, useEffect, useState, type ReactNode} from 'react';
-import type {Session, User} from '@supabase/supabase-js';
-import useDocusaurusContext from '@docusaurus/useDocusaurusContext';
-import {getSupabaseClient} from '@site/src/lib/supabaseClient';
+import React, { createContext, useContext, useEffect, useState, type ReactNode } from "react";
+import type { Session, User } from "@supabase/supabase-js";
+import useDocusaurusContext from "@docusaurus/useDocusaurusContext";
+import { getSupabaseClient } from "@site/src/lib/supabaseClient";
 
-type AuthResult = {error: string | null};
+type AuthResult = { error: string | null };
 
 interface AuthContextValue {
   user: User | null;
@@ -15,14 +15,14 @@ interface AuthContextValue {
   signOut: () => Promise<void>;
   resetPasswordForEmail: (email: string) => Promise<AuthResult>;
   updatePassword: (password: string) => Promise<AuthResult>;
-  signInWithOAuth: (provider: 'github' | 'google') => Promise<AuthResult>;
+  signInWithOAuth: (provider: "github" | "google") => Promise<AuthResult>;
 }
 
 const AuthContext = createContext<AuthContextValue | undefined>(undefined);
 
-export function AuthProvider({children}: {children: ReactNode}): ReactNode {
-  const {siteConfig} = useDocusaurusContext();
-  const {supabaseUrl, supabaseAnonKey, oauthEnabled} = siteConfig.customFields as {
+export function AuthProvider({ children }: { children: ReactNode }): ReactNode {
+  const { siteConfig } = useDocusaurusContext();
+  const { supabaseUrl, supabaseAnonKey, oauthEnabled } = siteConfig.customFields as {
     supabaseUrl: string;
     supabaseAnonKey: string;
     oauthEnabled: boolean;
@@ -35,14 +35,14 @@ export function AuthProvider({children}: {children: ReactNode}): ReactNode {
   useEffect(() => {
     const supabase = getSupabaseClient(supabaseUrl, supabaseAnonKey);
 
-    supabase.auth.getSession().then(({data}) => {
+    supabase.auth.getSession().then(({ data }) => {
       setSession(data.session);
       setUser(data.session?.user ?? null);
       setLoading(false);
     });
 
     const {
-      data: {subscription},
+      data: { subscription },
     } = supabase.auth.onAuthStateChange((_event, newSession) => {
       setSession(newSession);
       setUser(newSession?.user ?? null);
@@ -53,14 +53,14 @@ export function AuthProvider({children}: {children: ReactNode}): ReactNode {
 
   const signIn = async (email: string, password: string): Promise<AuthResult> => {
     const supabase = getSupabaseClient(supabaseUrl, supabaseAnonKey);
-    const {error} = await supabase.auth.signInWithPassword({email, password});
-    return {error: error?.message ?? null};
+    const { error } = await supabase.auth.signInWithPassword({ email, password });
+    return { error: error?.message ?? null };
   };
 
   const signUp = async (email: string, password: string): Promise<AuthResult> => {
     const supabase = getSupabaseClient(supabaseUrl, supabaseAnonKey);
-    const {error} = await supabase.auth.signUp({email, password});
-    return {error: error?.message ?? null};
+    const { error } = await supabase.auth.signUp({ email, password });
+    return { error: error?.message ?? null };
   };
 
   const signOut = async (): Promise<void> => {
@@ -71,23 +71,25 @@ export function AuthProvider({children}: {children: ReactNode}): ReactNode {
   const resetPasswordForEmail = async (email: string): Promise<AuthResult> => {
     const supabase = getSupabaseClient(supabaseUrl, supabaseAnonKey);
     const redirectTo = `${window.location.origin}/reset-password`;
-    const {error} = await supabase.auth.resetPasswordForEmail(email, {redirectTo});
-    return {error: error?.message ?? null};
+    const { error } = await supabase.auth.resetPasswordForEmail(email, { redirectTo });
+    return { error: error?.message ?? null };
   };
 
   const updatePassword = async (password: string): Promise<AuthResult> => {
     const supabase = getSupabaseClient(supabaseUrl, supabaseAnonKey);
-    const {error} = await supabase.auth.updateUser({password});
-    return {error: error?.message ?? null};
+    const { error } = await supabase.auth.updateUser({ password });
+    return { error: error?.message ?? null };
   };
 
-  const signInWithOAuth = async (provider: 'github' | 'google'): Promise<AuthResult> => {
+  const signInWithOAuth = async (provider: "github" | "google"): Promise<AuthResult> => {
     if (!oauthEnabled) {
-      return {error: `OAuth is not configured for ${provider}. Set oauthEnabled in docusaurus.config.ts.`};
+      return {
+        error: `OAuth is not configured for ${provider}. Set oauthEnabled in docusaurus.config.ts.`,
+      };
     }
     const supabase = getSupabaseClient(supabaseUrl, supabaseAnonKey);
-    const {error} = await supabase.auth.signInWithOAuth({provider});
-    return {error: error?.message ?? null};
+    const { error } = await supabase.auth.signInWithOAuth({ provider });
+    return { error: error?.message ?? null };
   };
 
   return (
@@ -103,7 +105,8 @@ export function AuthProvider({children}: {children: ReactNode}): ReactNode {
         resetPasswordForEmail,
         updatePassword,
         signInWithOAuth,
-      }}>
+      }}
+    >
       {children}
     </AuthContext.Provider>
   );
@@ -112,7 +115,7 @@ export function AuthProvider({children}: {children: ReactNode}): ReactNode {
 export function useAuth(): AuthContextValue {
   const ctx = useContext(AuthContext);
   if (!ctx) {
-    throw new Error('useAuth must be used within an AuthProvider');
+    throw new Error("useAuth must be used within an AuthProvider");
   }
   return ctx;
 }

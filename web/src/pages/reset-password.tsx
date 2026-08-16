@@ -1,13 +1,13 @@
-import React, {useState, type FormEvent, type ReactNode} from 'react';
-import Layout from '@theme/Layout';
-import Link from '@docusaurus/Link';
-import {useHistory} from '@docusaurus/router';
-import {useAuth} from '@site/src/contexts/AuthContext';
+import React, { useState, type FormEvent, type ReactNode } from "react";
+import Layout from "@theme/Layout";
+import Link from "@docusaurus/Link";
+import { useHistory } from "@docusaurus/router";
+import { useAuth } from "@site/src/contexts/AuthContext";
 
 export default function ResetPasswordPage(): ReactNode {
-  const {updatePassword, signOut, user, loading} = useAuth();
+  const { updatePassword, signOut, user, loading } = useAuth();
   const history = useHistory();
-  const [password, setPassword] = useState('');
+  const [password, setPassword] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const [success, setSuccess] = useState(false);
@@ -28,7 +28,7 @@ export default function ResetPasswordPage(): ReactNode {
     await signOut();
     setSubmitting(false);
     setSuccess(true);
-    setTimeout(() => history.replace('/login'), 1500);
+    setTimeout(() => history.replace("/login"), 1500);
   };
 
   return (
@@ -37,7 +37,7 @@ export default function ResetPasswordPage(): ReactNode {
         <h1>Choose a new password</h1>
         {!loading && !user && !success && (
           <p className="auth-form-error" data-testid="reset-password-no-session">
-            This password reset link is invalid or has expired. Request a new one from the{' '}
+            This password reset link is invalid or has expired. Request a new one from the{" "}
             <Link to="/forgot-password">forgot password</Link> page.
           </p>
         )}
@@ -65,7 +65,8 @@ export default function ResetPasswordPage(): ReactNode {
               type="submit"
               className="button button--primary"
               disabled={submitting}
-              data-testid="reset-password-submit">
+              data-testid="reset-password-submit"
+            >
               Update password
             </button>
           </form>

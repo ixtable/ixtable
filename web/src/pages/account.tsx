@@ -1,21 +1,21 @@
-import React, {useEffect, type ReactNode} from 'react';
-import Layout from '@theme/Layout';
-import {useHistory} from '@docusaurus/router';
-import {useAuth} from '@site/src/contexts/AuthContext';
+import React, { useEffect, type ReactNode } from "react";
+import Layout from "@theme/Layout";
+import { useHistory } from "@docusaurus/router";
+import { useAuth } from "@site/src/contexts/AuthContext";
 
 export default function AccountPage(): ReactNode {
-  const {user, loading, signOut} = useAuth();
+  const { user, loading, signOut } = useAuth();
   const history = useHistory();
 
   useEffect(() => {
     if (!loading && !user) {
-      history.replace('/login');
+      history.replace("/login");
     }
   }, [loading, user, history]);
 
   const handleSignOut = async () => {
     await signOut();
-    history.replace('/login');
+    history.replace("/login");
   };
 
   if (loading || !user) {
@@ -38,7 +38,8 @@ export default function AccountPage(): ReactNode {
           type="button"
           className="button button--secondary"
           onClick={handleSignOut}
-          data-testid="account-sign-out">
+          data-testid="account-sign-out"
+        >
           Sign out
         </button>
       </div>

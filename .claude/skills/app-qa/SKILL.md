@@ -10,6 +10,8 @@ Use this skill after changing `src/**`, UI-facing `src-tauri/**` commands, or sh
 ## Invariants
 
 - Render production components in jsdom. Do not build a lookalike fixture.
+- Never start Vite, Tauri dev, or another live server for `/app-qa` screenshots. Live-server screenshots belong only to `/service-qa` and `/web-qa`.
+- Serialize the jsdom-rendered production DOM with `captureDocument`; Chromium may rasterize that static capture, but it must not navigate to a running application URL.
 - Drive every interaction with `@testing-library/user-event`; never use `fireEvent`.
 - Use accessible roles/names where possible.
 - Keep real DOM assertions alongside screenshots.
@@ -29,3 +31,4 @@ Use this skill after changing `src/**`, UI-facing `src-tauri/**` commands, or sh
 
 Generated artifacts live under `scripts/screenshot/.generated/` and are intentionally ignored. `captureDocument` serializes jsdom's DOM, inlines the production Vite/Tailwind CSS, and uses Chromium only to rasterize pixels.
 
+If a browser-only widget cannot be captured from serialized jsdom, treat that as an App QA harness gap. Fix the harness or report the mismatch; do not replace the App QA proof with a live-server screenshot.

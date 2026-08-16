@@ -15,7 +15,11 @@
     "typecheck": "tsc",
     "test:e2e": "playwright test",
     "test:e2e:ui": "playwright test --ui",
-    "test:web-qa": "playwright test e2e/web-qa.spec.ts"
+    "test:web-qa": "playwright test e2e/web-qa.spec.ts",
+    "service-qa": "playwright test --config playwright.service-qa.config.ts",
+    "format": "biome format --write .",
+    "format:check": "biome format .",
+    "lint": "oxlint . && eslint ."
   },
   "dependencies": {
     "@docusaurus/core": "3.10.1",
@@ -29,12 +33,20 @@
     "react-dom": "^19.0.0"
   },
   "devDependencies": {
+    "@biomejs/biome": "2.5.8",
     "@docusaurus/module-type-aliases": "3.10.1",
     "@docusaurus/tsconfig": "3.10.1",
     "@docusaurus/types": "3.10.1",
+    "@eslint/js": "10.0.1",
     "@playwright/test": "^1.61.1",
     "@types/react": "^19.0.0",
-    "typescript": "~6.0.2"
+    "eslint": "10.8.1",
+    "eslint-plugin-react-hooks": "7.1.1",
+    "eslint-plugin-react-refresh": "0.5.4",
+    "globals": "17.11.0",
+    "oxlint": "1.78.0",
+    "typescript": "~6.0.2",
+    "typescript-eslint": "8.67.0"
   },
   "browserslist": {
     "production": [

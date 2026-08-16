@@ -1,16 +1,16 @@
-const MAILPIT_URL = process.env.MAILPIT_URL ?? 'http://127.0.0.1:54324';
+const MAILPIT_URL = process.env.MAILPIT_URL ?? "http://127.0.0.1:54324";
 
 export function supabaseAvailable(): boolean {
-  return process.env.E2E_SUPABASE_AVAILABLE === 'true';
+  return process.env.E2E_SUPABASE_AVAILABLE === "true";
 }
 
-export function uniqueEmail(prefix = 'e2e'): string {
+export function uniqueEmail(prefix = "e2e"): string {
   return `${prefix}-${Date.now()}-${Math.floor(Math.random() * 100000)}@example.com`;
 }
 
 interface MailpitMessageSummary {
   ID: string;
-  To: {Address: string}[];
+  To: { Address: string }[];
 }
 
 interface MailpitMessagesResponse {
@@ -38,11 +38,13 @@ export async function waitForRecoveryLink(email: string, timeoutMs = 15000): Pro
   const deadline = Date.now() + timeoutMs;
 
   while (Date.now() < deadline) {
-    const {messages} = await fetchJson<MailpitMessagesResponse>(`${MAILPIT_URL}/api/v1/messages`);
+    const { messages } = await fetchJson<MailpitMessagesResponse>(`${MAILPIT_URL}/api/v1/messages`);
     const match = messages.find((message) => message.To.some((to) => to.Address === email));
 
     if (match) {
-      const detail = await fetchJson<MailpitMessageDetail>(`${MAILPIT_URL}/api/v1/message/${match.ID}`);
+      const detail = await fetchJson<MailpitMessageDetail>(
+        `${MAILPIT_URL}/api/v1/message/${match.ID}`,
+      );
       const linkMatch = detail.Text.match(/https?:\/\/\S+/);
       if (linkMatch) {
         return linkMatch[0];

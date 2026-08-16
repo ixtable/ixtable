@@ -1,11 +1,11 @@
-import React, {useState, type FormEvent, type ReactNode} from 'react';
-import Layout from '@theme/Layout';
-import Link from '@docusaurus/Link';
-import {useAuth} from '@site/src/contexts/AuthContext';
+import React, { useState, type FormEvent, type ReactNode } from "react";
+import Layout from "@theme/Layout";
+import Link from "@docusaurus/Link";
+import { useAuth } from "@site/src/contexts/AuthContext";
 
 export default function ForgotPasswordPage(): ReactNode {
-  const {resetPasswordForEmail} = useAuth();
-  const [email, setEmail] = useState('');
+  const { resetPasswordForEmail } = useAuth();
+  const [email, setEmail] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [submitted, setSubmitted] = useState(false);
   const [submitting, setSubmitting] = useState(false);
@@ -52,7 +52,8 @@ export default function ForgotPasswordPage(): ReactNode {
               type="submit"
               className="button button--primary"
               disabled={submitting}
-              data-testid="forgot-password-submit">
+              data-testid="forgot-password-submit"
+            >
               Send reset link
             </button>
           </form>

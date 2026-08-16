@@ -1,5 +1,5 @@
-import {createClient, type SupabaseClient} from '@supabase/supabase-js';
-import ExecutionEnvironment from '@docusaurus/ExecutionEnvironment';
+import { createClient, type SupabaseClient } from "@supabase/supabase-js";
+import ExecutionEnvironment from "@docusaurus/ExecutionEnvironment";
 
 let client: SupabaseClient | null = null;
 
@@ -10,7 +10,7 @@ let client: SupabaseClient | null = null;
  */
 export function getSupabaseClient(url: string, anonKey: string): SupabaseClient {
   if (!ExecutionEnvironment.canUseDOM) {
-    throw new Error('getSupabaseClient() can only be called in the browser');
+    throw new Error("getSupabaseClient() can only be called in the browser");
   }
   if (!client) {
     client = createClient(url, anonKey, {

@@ -3,4 +3,3 @@
 fn main() {
     ixtable_lib::run();
 }
-

@@ -13,11 +13,15 @@ crate-type = ["staticlib", "cdylib", "rlib"]
 tauri-build = { version = "2", features = [] }
 napi-build = "2"
 
+[features]
+default = []
+test-bridge = ["dep:tauri-test", "dep:napi", "dep:napi-derive"]
+
 [dependencies]
 tauri = { version = "2", features = [] }
-tauri-test = "0.2.1"
-napi = { version = "2", default-features = false, features = ["napi8", "async", "serde-json"] }
-napi-derive = "2"
+tauri-test = { version = "0.2.1", optional = true }
+napi = { version = "2", default-features = false, features = ["napi8", "async", "serde-json"], optional = true }
+napi-derive = { version = "2", optional = true }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 rusqlite = { version = "0.32", features = ["bundled"] }
@@ -26,3 +30,8 @@ sha2 = "0.10"
 uuid = { version = "1", features = ["v4", "serde"] }
 chrono = { version = "0.4", features = ["serde"] }
 thiserror = "2"
+base64 = "0.22"
+duckdb = { version = "=1.10505.0", features = ["bundled"] }
+
+[dev-dependencies]
+proptest = "1.7"

@@ -1,9 +1,9 @@
-import React, {type ReactNode} from 'react';
-import Link from '@docusaurus/Link';
-import {useAuth} from '@site/src/contexts/AuthContext';
+import React, { type ReactNode } from "react";
+import Link from "@docusaurus/Link";
+import { useAuth } from "@site/src/contexts/AuthContext";
 
 export default function AuthNavbarItem(): ReactNode {
-  const {user, loading} = useAuth();
+  const { user, loading } = useAuth();
 
   if (loading) {
     return <span className="navbar__item" data-testid="navbar-auth-loading" />;

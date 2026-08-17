@@ -19,7 +19,8 @@
     "service-qa": "playwright test --config playwright.service-qa.config.ts",
     "format": "biome format --write .",
     "format:check": "biome format .",
-    "lint": "oxlint . && eslint ."
+    "lint:ast": "cd .. && ast-grep scan web --warning",
+    "lint": "oxlint . && eslint . && npm run lint:ast"
   },
   "dependencies": {
     "@docusaurus/core": "3.10.1",
@@ -33,6 +34,7 @@
     "react-dom": "^19.0.0"
   },
   "devDependencies": {
+    "@ast-grep/cli": "^0.38.7",
     "@biomejs/biome": "2.5.8",
     "@docusaurus/module-type-aliases": "3.10.1",
     "@docusaurus/tsconfig": "3.10.1",

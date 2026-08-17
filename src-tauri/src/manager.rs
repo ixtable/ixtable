@@ -1,5 +1,5 @@
 use crate::{
-    archive::{self, ArchiveDocument, DocumentConfig},
+    archive::{self, ArchiveDocument, DocumentConfig, SavedQuery},
     data::{self, ReadRuntime},
     storage::{GlobalStorage, RecoveryRecord},
 };
@@ -246,6 +246,31 @@ impl DocumentManager {
             .reader
             .query(sql)
             .map_err(|e| AppError::new("READ_ONLY", e))
+    }
+    pub fn save_query(
+        &self,
+        window: &str,
+        id: Option<String>,
+        name: String,
+        sql: String,
+        filter_state: Option<serde_json::Value>,
+    ) -> Result<DocumentConfig, AppError> {
+        self.read_query(window, &sql)?;
+        let mut config = self.config(window)?;
+        let id = id.unwrap_or_else(|| Uuid::new_v4().to_string());
+        let query = SavedQuery {
+            id: id.clone(),
+            name,
+            sql,
+            filter_state,
+        };
+        if let Some(saved) = config.saved_queries.iter_mut().find(|query| query.id == id) {
+            *saved = query;
+        } else {
+            config.saved_queries.push(query);
+        }
+        self.update_config(window, config.clone())?;
+        Ok(config)
     }
     pub fn update_config(&self, window: &str, c: DocumentConfig) -> Result<SessionState, AppError> {
         let mut all = self.sessions.lock().unwrap();

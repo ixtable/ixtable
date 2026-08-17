@@ -234,22 +234,7 @@ fn save_query(
     sql: String,
     filter_state: Option<Value>,
 ) -> Result<DocumentConfig, AppError> {
-    manager()?.read_query(&window_label, &sql)?;
-    let mut c = manager()?.config(&window_label)?;
-    let id = id.unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
-    let query = archive::SavedQuery {
-        id: id.clone(),
-        name,
-        sql,
-        filter_state,
-    };
-    if let Some(old) = c.saved_queries.iter_mut().find(|x| x.id == id) {
-        *old = query
-    } else {
-        c.saved_queries.push(query)
-    };
-    manager()?.update_config(&window_label, c.clone())?;
-    Ok(c)
+    manager()?.save_query(&window_label, id, name, sql, filter_state)
 }
 #[tauri::command]
 fn delete_saved_query(window_label: String, id: String) -> Result<DocumentConfig, AppError> {

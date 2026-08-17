@@ -25,7 +25,9 @@
     "web-qa": "npm run test:web-qa --prefix web",
     "format": "biome format --write .",
     "format:check": "biome format .",
-    "lint": "oxlint . && eslint ."
+    "lint:ast": "ast-grep scan --warning",
+    "lint:ast:test": "ast-grep test",
+    "lint": "oxlint . && eslint . && npm run lint:ast"
   },
   "dependencies": {
     "@monaco-editor/react": "^4.7.0",
@@ -41,6 +43,7 @@
     "tailwind-merge": "^3.3.1"
   },
   "devDependencies": {
+    "@ast-grep/cli": "^0.38.7",
     "@biomejs/biome": "2.5.8",
     "@eslint/js": "10.0.1",
     "@tailwindcss/vite": "^4.1.12",

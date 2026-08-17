@@ -7,3 +7,5 @@ src-tauri/target/
 scripts/screenshot/.generated/
 web/web-qa/.generated/
 web/e2e/.generated/
+.agents/skills/treq*/
+.claude/skills/treq*/

@@ -37,6 +37,7 @@ import {
   X,
 } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
+import { chooseDocumentDestination, chooseDocumentToOpen } from "./lib/dialog";
 
 type Mode = "data" | "design";
 export interface SessionState {
@@ -194,11 +195,27 @@ export default function App() {
       setPending("");
     }
   };
-  const open = () =>
-    setError({
-      code: "FILE_PICKER_REQUIRED",
-      message: "Choose Open from the desktop window to select an .ixt file.",
-    });
+  const open = async () => {
+    setPending("Choosing document…");
+    setError(null);
+    setNotice("");
+    try {
+      const path = await chooseDocumentToOpen();
+      if (!path) {
+        setNotice("Open canceled.");
+        return;
+      }
+      const state = await invoke<SessionState>("open_document", {
+        windowLabel: "main",
+        path,
+      });
+      setDoc(fromSession(state));
+    } catch (reason) {
+      setError(asTauriError(reason));
+    } finally {
+      setPending("");
+    }
+  };
   const update = (patch: Partial<Doc>) =>
     setDoc((d) => (d ? { ...d, ...patch, dirty: patch.dirty ?? true } : d));
   const changeMode = async (mode: Mode) => {
@@ -218,12 +235,26 @@ export default function App() {
       setPending("");
     }
   };
-  const save = async () => {
+  const save = async (forceDestination = false) => {
     if (!doc) return;
     setPending("Saving document…");
     setError(null);
+    setNotice("");
     try {
-      setDoc(fromSession(await invoke<SessionState>("save_document", { windowLabel: "main" })));
+      if (forceDestination || !doc.path) {
+        const path = await chooseDocumentDestination(doc.name);
+        if (!path) {
+          setNotice("Save canceled.");
+          return;
+        }
+        setDoc(
+          fromSession(
+            await invoke<SessionState>("save_document_as", { windowLabel: "main", path }),
+          ),
+        );
+      } else {
+        setDoc(fromSession(await invoke<SessionState>("save_document", { windowLabel: "main" })));
+      }
     } catch (reason) {
       setError(asTauriError(reason));
     } finally {
@@ -317,7 +348,10 @@ export default function App() {
         <div className="doc-brand">
           <span>ix</span>
           <div className="project-actions">
-            <button aria-label="Save project" disabled={!!pending} onClick={save}>
+            <button aria-label="Save project" disabled={!!pending} onClick={() => save()}>
+              <Save />
+            </button>
+            <button aria-label="Save project as" disabled={!!pending} onClick={() => save(true)}>
               <Save />
             </button>
             <button aria-label="Close project" disabled={!!pending} onClick={close}>
@@ -382,7 +416,7 @@ export default function App() {
               <button onClick={() => setDesignPreview((value) => !value)}>
                 {designPreview ? "Back to editor" : "Preview app"}
               </button>
-              <button className="save" onClick={save}>
+              <button className="save" onClick={() => save()}>
                 <Save />
                 Save
               </button>

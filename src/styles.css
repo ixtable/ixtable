@@ -1644,7 +1644,6 @@ button {
 .column-design svg {
   width: 16px;
 }
-
 /* Database object browser used by the live data workbench. */
 .relationship-pane {
   display: flex;

@@ -183,6 +183,17 @@ it("captures the document lifecycle shell", async () => {
       "Document mode and save status remain visible.",
     ],
   });
+  await user.click(screen.getByRole("button", { name: "Design table" }));
+  await screen.findByRole("heading", { name: "Design Customers" });
+  await captureDocument(document, {
+    name: "app-qa-03-table-design",
+    expectations: [
+      "Selected table metadata is editable in the table designer.",
+      "Direct SQLite changes and safe rebuild migrations are visually distinct.",
+      "Column constraints and relationship implications remain visible.",
+    ],
+  });
+  await user.click(screen.getByRole("button", { name: "Close" }));
   await captureDocument(document, {
     name: "app-qa-03-data-canvas",
     selector: ".flow-browser",

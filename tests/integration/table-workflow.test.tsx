@@ -1,6 +1,7 @@
-import { screen } from "@testing-library/react";
+import { screen, waitFor } from "@testing-library/react";
 import { invoke } from "@tauri-apps/api/core";
 import { expect, it } from "vitest";
+import { vi } from "vitest";
 import { createTable, insertRow, readPage, renderNewDocument, value } from "./helpers";
 
 it("renders a typed table and persists sorted CRUD mutations", async () => {
@@ -52,4 +53,53 @@ it("reports invalid typed input without partially inserting a row", async () => 
   await user.click(screen.getByRole("button", { name: "Insert row" }));
   expect(await screen.findByRole("alert")).toHaveTextContent("id requires an integer");
   expect((await readPage("items")).total).toBe(0);
+});
+
+it("designs a selected table with typed alterations and destructive confirmation", async () => {
+  const user = await renderNewDocument();
+  await createTable("inventory", [
+    { name: "id", declaredType: "INTEGER", nullable: false, primaryKeyPosition: 1 },
+    { name: "label", declaredType: "TEXT" },
+  ]);
+
+  await user.click(await screen.findByRole("button", { name: "Design table" }));
+  const tableName = screen.getByLabelText("Table name");
+  await user.clear(tableName);
+  await user.type(tableName, "products");
+  await user.click(screen.getByRole("button", { name: "Rename table" }));
+  // Await the designer closing so metadata and selection have both settled.
+  await waitFor(() => expect(screen.queryByRole("heading", { name: "Design inventory" })).toBeNull());
+  expect(await screen.findByRole("button", { name: /^products\b/ })).toHaveAttribute(
+    "aria-pressed",
+    "true",
+  );
+
+  await user.click(screen.getByRole("button", { name: "Design table" }));
+  const labelName = screen.getByRole("textbox", { name: "New name for label" });
+  await user.clear(labelName);
+  await user.type(labelName, "title");
+  await user.click(screen.getByRole("button", { name: "Rename" }));
+
+  await user.click(await screen.findByRole("button", { name: "Design table" }));
+  await user.type(screen.getByRole("textbox", { name: "New column name" }), "price");
+  await user.selectOptions(screen.getByRole("combobox", { name: "New column type" }), "REAL");
+  await user.click(screen.getByRole("button", { name: "Add column" }));
+  expect((await readPage("products")).columns.map((column) => column.name)).toEqual([
+    "id",
+    "title",
+    "price",
+  ]);
+
+  await user.click(await screen.findByRole("button", { name: "Design table" }));
+  const confirm = vi.spyOn(window, "confirm").mockReturnValue(false);
+  await user.click(screen.getByRole("button", { name: "Drop price" }));
+  expect(confirm).toHaveBeenCalledWith(expect.stringContaining("permanently delete its data"));
+  expect((await readPage("products")).columns).toHaveLength(3);
+  confirm.mockReturnValue(true);
+  await user.click(screen.getByRole("button", { name: "Drop price" }));
+  expect((await readPage("products")).columns.map((column) => column.name)).toEqual([
+    "id",
+    "title",
+  ]);
+  confirm.mockRestore();
 });

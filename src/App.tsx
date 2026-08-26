@@ -73,6 +73,14 @@ type Doc = {
   sessionId: string;
   documentId: string;
 };
+type RecentFile = { path: string; openedAt: string };
+type RecoverySession = {
+  sessionId: string;
+  documentId: string;
+  workspace: string;
+  documentPath?: string | null;
+  updatedAt: string;
+};
 type DataValue = {
   type: "null" | "integer" | "real" | "text" | "blob" | "boolean" | "date" | "timestamp";
   value?: string | number | boolean;
@@ -141,6 +149,9 @@ export default function App() {
   const [designPreview, setDesignPreview] = useState(false);
   const [pending, setPending] = useState("");
   const [error, setError] = useState<TauriError | null>(null);
+  const [recentFiles, setRecentFiles] = useState<RecentFile[]>([]);
+  const [recoveries, setRecoveries] = useState<RecoverySession[]>([]);
+  const [showAllRecent, setShowAllRecent] = useState(false);
   const [objects, setObjects] = useState<DbObject[]>([]),
     [savedQueries, setSavedQueries] = useState<SavedQuery[]>([]),
     [metadataLoading, setMetadataLoading] = useState(false),
@@ -149,6 +160,21 @@ export default function App() {
     kind: "table" | "view" | "query" | "new-query";
     id: string;
   } | null>(null);
+  const refreshStartLists = async () => {
+    try {
+      const [recent, recovery] = await Promise.all([
+        invoke<RecentFile[]>("list_recent_files"),
+        invoke<RecoverySession[]>("list_recovery_sessions"),
+      ]);
+      setRecentFiles(recent);
+      setRecoveries(recovery);
+    } catch (reason) {
+      setError(asTauriError(reason));
+    }
+  };
+  useEffect(() => {
+    void refreshStartLists();
+  }, []);
   const loadMetadata = async () => {
     if (!doc) return;
     setMetadataLoading(true);
@@ -188,6 +214,7 @@ export default function App() {
     try {
       const state = await invoke<SessionState>("new_document", { windowLabel: "main" });
       setDoc(fromSession(state));
+      await refreshStartLists();
     } catch (reason) {
       setError(asTauriError(reason));
     } finally {
@@ -199,6 +226,48 @@ export default function App() {
       code: "FILE_PICKER_REQUIRED",
       message: "Choose Open from the desktop window to select an .ixt file.",
     });
+  const openPath = async (path: string) => {
+    setPending("Opening document…");
+    setError(null);
+    try {
+      setDoc(
+        fromSession(await invoke<SessionState>("open_document", { windowLabel: "main", path })),
+      );
+    } catch (reason) {
+      setError(asTauriError(reason));
+    } finally {
+      setPending("");
+      await refreshStartLists();
+    }
+  };
+  const recover = async (sessionId: string) => {
+    setPending("Recovering document…");
+    setError(null);
+    try {
+      setDoc(
+        fromSession(
+          await invoke<SessionState>("reopen_recovery_session", { windowLabel: "main", sessionId }),
+        ),
+      );
+    } catch (reason) {
+      setError(asTauriError(reason));
+    } finally {
+      setPending("");
+      await refreshStartLists();
+    }
+  };
+  const discardRecovery = async (sessionId: string) => {
+    setPending("Discarding recovery…");
+    setError(null);
+    try {
+      await invoke("discard_recovery", { sessionId });
+    } catch (reason) {
+      setError(asTauriError(reason));
+    } finally {
+      setPending("");
+      await refreshStartLists();
+    }
+  };
   const update = (patch: Partial<Doc>) =>
     setDoc((d) => (d ? { ...d, ...patch, dirty: patch.dirty ?? true } : d));
   const changeMode = async (mode: Mode) => {
@@ -224,6 +293,7 @@ export default function App() {
     setError(null);
     try {
       setDoc(fromSession(await invoke<SessionState>("save_document", { windowLabel: "main" })));
+      await refreshStartLists();
     } catch (reason) {
       setError(asTauriError(reason));
     } finally {
@@ -242,6 +312,7 @@ export default function App() {
       await invoke("close_document", { windowLabel: "main", force: discard });
       setDoc(null);
       setDesignPreview(false);
+      await refreshStartLists();
     } catch (reason) {
       setError(asTauriError(reason));
     } finally {
@@ -297,14 +368,69 @@ export default function App() {
           <section className="start-section">
             <div>
               <h2>Recent documents</h2>
-              <button className="text-button">View all</button>
+              {recentFiles.length > 5 && (
+                <button className="text-button" onClick={() => setShowAllRecent((value) => !value)}>
+                  {showAllRecent ? "Show less" : "View all"}
+                </button>
+              )}
             </div>
-            <div className="empty-recent">
-              <Database />
-              <b>No recent documents</b>
-              <span>Documents you open will appear here.</span>
-            </div>
+            {recentFiles.length === 0 ? (
+              <div className="empty-recent">
+                <Database />
+                <b>No recent documents</b>
+                <span>Documents you open will appear here.</span>
+              </div>
+            ) : (
+              <div className="start-list">
+                {recentFiles.slice(0, showAllRecent ? undefined : 5).map((recent) => (
+                  <button
+                    key={recent.path}
+                    disabled={!!pending}
+                    onClick={() => void openPath(recent.path)}
+                  >
+                    <FolderOpen />
+                    <span>
+                      <b>{recent.path.split(/[\\/]/).pop()}</b>
+                      <small>{recent.path}</small>
+                    </span>
+                    <time>{new Date(recent.openedAt).toLocaleString()}</time>
+                  </button>
+                ))}
+              </div>
+            )}
           </section>
+          {recoveries.length > 0 && (
+            <section className="start-section recovery-section">
+              <div>
+                <h2>Recover unsaved work</h2>
+              </div>
+              <div className="start-list">
+                {recoveries.map((recovery) => (
+                  <article key={recovery.sessionId}>
+                    <Archive />
+                    <span>
+                      <b>{recovery.documentPath?.split(/[\\/]/).pop() ?? "Untitled document"}</b>
+                      <small>
+                        {recovery.documentPath ?? `Document ${recovery.documentId.slice(0, 8)}`}
+                      </small>
+                      <time>Last updated {new Date(recovery.updatedAt).toLocaleString()}</time>
+                    </span>
+                    <div>
+                      <button disabled={!!pending} onClick={() => void recover(recovery.sessionId)}>
+                        Recover
+                      </button>
+                      <button
+                        disabled={!!pending}
+                        onClick={() => void discardRecovery(recovery.sessionId)}
+                      >
+                        Discard
+                      </button>
+                    </div>
+                  </article>
+                ))}
+              </div>
+            </section>
+          )}
         </main>
         <footer>
           ixtable <span>Local-first document database</span>

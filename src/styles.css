@@ -133,6 +133,64 @@ button {
 .empty-recent span {
   font-size: 12px;
 }
+.start-list {
+  display: grid !important;
+  gap: 7px;
+}
+.start-list > button,
+.start-list > article {
+  width: 100%;
+  min-height: 58px;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 13px;
+  border: 1px solid #deded7;
+  border-radius: 9px;
+  background: #fff;
+  color: #343530;
+  text-align: left;
+}
+.start-list svg {
+  width: 19px;
+  color: #77766e;
+}
+.start-list span {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+}
+.start-list b {
+  font-size: 13px;
+}
+.start-list small {
+  color: #77766e;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.start-list time {
+  margin-left: auto;
+  color: #89887f;
+  font-size: 11px;
+  white-space: nowrap;
+}
+.recovery-section {
+  margin-top: 35px;
+}
+.start-list article > div {
+  margin-left: auto;
+  display: flex;
+  gap: 6px;
+}
+.start-list article button {
+  border: 1px solid #d7d7d0;
+  border-radius: 6px;
+  padding: 6px 9px;
+  background: #f7f7f4;
+}
+.start-list article span time {
+  margin: 0;
+}
 .start-screen > footer {
   margin-top: auto;
   padding: 24px 42px;

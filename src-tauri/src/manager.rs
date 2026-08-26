@@ -126,6 +126,44 @@ impl DocumentManager {
             .map_err(|e| AppError::new("IO_ERROR", e))?;
         self.install(window, Some(path.to_owned()), doc)
     }
+    pub fn reopen_recovery(
+        &self,
+        window: &str,
+        session_id: &str,
+    ) -> Result<SessionState, AppError> {
+        let record = self
+            .global
+            .recoveries()
+            .map_err(|e| AppError::new("IO_ERROR", e))?
+            .into_iter()
+            .find(|record| record.session_id == session_id)
+            .ok_or_else(|| AppError::new("NOT_FOUND", "Recovery session not found"))?;
+        let doc = archive::read_workspace(Path::new(&record.workspace), record.document_id)?;
+        let reader = ReadRuntime::new(Path::new(&record.workspace), &sqlite_extension_path()?)
+            .map_err(|e| AppError::new("EXTENSION_STARTUP", e))?;
+        let path = record.document_path.map(PathBuf::from);
+        let fingerprint = path
+            .as_ref()
+            .filter(|path| path.exists())
+            .map(|path| fingerprint(path, &doc.metadata.document_id))
+            .transpose()?;
+        let session = Session {
+            id: record.session_id,
+            window: window.into(),
+            path,
+            workspace: PathBuf::from(record.workspace),
+            doc,
+            reader,
+            dirty: true,
+            conflict: false,
+            saving: false,
+            last_saved: SystemTime::now(),
+            fingerprint,
+        };
+        let state = session.state();
+        self.sessions.lock().unwrap().insert(window.into(), session);
+        Ok(state)
+    }
     fn install(
         &self,
         window: &str,

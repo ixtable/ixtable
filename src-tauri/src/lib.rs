@@ -115,6 +115,13 @@ fn list_recovery_sessions() -> Result<Vec<storage::RecoveryRecord>, AppError> {
         .map_err(|e| AppError::new("IO_ERROR", e))
 }
 #[tauri::command]
+fn reopen_recovery_session(
+    window_label: String,
+    session_id: String,
+) -> Result<SessionState, AppError> {
+    manager()?.reopen_recovery(&window_label, &session_id)
+}
+#[tauri::command]
 fn discard_recovery(session_id: String) -> Result<(), AppError> {
     let m = manager()?;
     if let Some(r) = m
@@ -270,6 +277,7 @@ pub fn run() {
             set_preference,
             list_recent_files,
             list_recovery_sessions,
+            reopen_recovery_session,
             discard_recovery,
             list_database_objects,
             inspect_table,

@@ -296,6 +296,39 @@ pub fn extract(doc: &ArchiveDocument, root: &Path) -> Result<PathBuf, ArchiveErr
     Ok(work)
 }
 
+/// Rebuild an archive document from the durable files left in a recovery workspace.
+pub fn read_workspace(
+    workspace: &Path,
+    document_id: String,
+) -> Result<ArchiveDocument, ArchiveError> {
+    let config = serde_json::from_slice(&fs::read(workspace.join("document.json"))?)
+        .map_err(|error| ArchiveError::Invalid(error.to_string()))?;
+    let mut attachments = Vec::new();
+    let attachment_root = workspace.join("attachments");
+    if attachment_root.is_dir() {
+        for entry in fs::read_dir(attachment_root)? {
+            let directory = entry?.path();
+            let mut attachment: Attachment =
+                serde_json::from_slice(&fs::read(directory.join("metadata.json"))?)
+                    .map_err(|error| ArchiveError::Invalid(error.to_string()))?;
+            attachment.contents = fs::read(directory.join("content"))?;
+            attachments.push(attachment);
+        }
+    }
+    let now = Utc::now().to_rfc3339();
+    Ok(ArchiveDocument {
+        metadata: ArchiveMetadata {
+            document_id,
+            created_at: now.clone(),
+            updated_at: now,
+            application_version: env!("CARGO_PKG_VERSION").into(),
+        },
+        data: fs::read(workspace.join("data.db"))?,
+        config,
+        attachments,
+    })
+}
+
 pub fn add_attachment(
     doc: &mut ArchiveDocument,
     display_name: String,

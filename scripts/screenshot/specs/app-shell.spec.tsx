@@ -254,13 +254,52 @@ it("captures the document lifecycle shell", async () => {
       "The saved query appears selected in the sidebar without replacing table metadata.",
     ],
   });
+  const currentConfig = await invoke<DocumentConfig>("read_document_config", {
+    windowLabel: "main",
+  });
+  await invoke("update_document_config", {
+    windowLabel: "main",
+    config: {
+      ...currentConfig,
+      design: {
+        version: 1,
+        forms: [
+          {
+            id: "products",
+            name: "Products",
+            table: "Products",
+            layout: { columns: 2, gap: 16 },
+            controls: [
+              {
+                id: "name",
+                kind: "text",
+                label: "Product name",
+                binding: { table: "Products", column: "Product Name" },
+                validation: { required: true },
+                width: "full",
+              },
+              {
+                id: "price",
+                kind: "number",
+                label: "Price",
+                binding: { table: "Products", column: "Price" },
+                validation: { required: false },
+                width: "half",
+              },
+            ],
+          },
+        ],
+        navigation: [{ id: "products", label: "Products", formId: "products" }],
+      },
+    },
+  });
   await user.click(screen.getByRole("button", { name: "Design" }));
   await screen.findByRole("heading", { name: "Form builder" });
   const designConfig = await invoke<DocumentConfig>("read_document_config", {
     windowLabel: "main",
   });
   expect(designConfig.activeMode).toBe("design");
-  expect(screen.getByRole("region", { name: "Product form builder" })).toBeInTheDocument();
+  expect(screen.getByRole("region", { name: "Form builder" })).toBeInTheDocument();
   await captureDocument(document, {
     name: "app-qa-06-form-builder",
     expectations: [
@@ -269,12 +308,12 @@ it("captures the document lifecycle shell", async () => {
     ],
   });
   await user.click(screen.getByRole("button", { name: "Preview app" }));
-  expect(screen.getByRole("region", { name: "Published inventory app" })).toBeInTheDocument();
+  expect(screen.getByRole("region", { name: "Products preview" })).toBeInTheDocument();
   await captureDocument(document, {
     name: "app-qa-07-app-preview",
     expectations: [
-      "The built inventory app is shown in its usable runtime view.",
-      "Metrics, search, filters, and product records are visible.",
+      "The saved Products design is shown in its runtime view.",
+      "Bound labels and live product records are visible.",
     ],
   });
   await user.click(screen.getByRole("button", { name: "Save project" }));

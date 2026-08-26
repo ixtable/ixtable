@@ -37,6 +37,8 @@ import {
   X,
 } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
+import { DesignStudio } from "./design/DesignStudio";
+import type { DesignSchema } from "./design/schema";
 import { chooseDocumentDestination, chooseDocumentToOpen } from "./lib/dialog";
 
 type Mode = "data" | "design";
@@ -61,6 +63,7 @@ export interface DocumentConfig {
   navigationState: unknown;
   settings: unknown;
   savedQueries: SavedQuery[];
+  design: DesignSchema;
 }
 export interface TauriError {
   code: string;
@@ -74,12 +77,12 @@ type Doc = {
   sessionId: string;
   documentId: string;
 };
-type DataValue = {
+export type DataValue = {
   type: "null" | "integer" | "real" | "text" | "blob" | "boolean" | "date" | "timestamp";
   value?: string | number | boolean;
 };
-type DbObject = { name: string; objectType: string; rowCount: number | null };
-type DbColumn = {
+export type DbObject = { name: string; objectType: string; rowCount: number | null };
+export type DbColumn = {
   name: string;
   declaredType: string;
   nullable: boolean;
@@ -101,7 +104,7 @@ type DbSchema = {
   foreignKeys: DbForeignKey[];
   withoutRowid: boolean;
 };
-type DbPage = {
+export type DbPage = {
   columns: DbColumn[];
   rows: DataValue[][];
   identities: DataValue[][];
@@ -182,7 +185,7 @@ export default function App() {
     }
   };
   useEffect(() => {
-    if (doc && doc.mode === "data") void loadMetadata();
+    if (doc) void loadMetadata();
     else if (!doc) {
       setObjects([]);
       setSavedQueries([]);
@@ -526,7 +529,11 @@ export default function App() {
             onDirty={() => update({ dirty: true })}
           />
         ) : (
-          <DesignStudio preview={designPreview} />
+          <DesignStudio
+            preview={designPreview}
+            objects={objects}
+            onDirty={() => update({ dirty: true })}
+          />
         )}
       </main>
     </div>
@@ -1583,146 +1590,6 @@ function ResultGrid({ result }: { result: { columns: string[]; rows: DataValue[]
         </div>
       )}
     </div>
-  );
-}
-
-function DesignStudio({ preview }: { preview: boolean }) {
-  if (preview)
-    return (
-      <section className="app-preview" aria-label="Published inventory app">
-        <div className="preview-app-head">
-          <div>
-            <small>INVENTORY APP</small>
-            <h2>Products</h2>
-          </div>
-          <button>
-            <Plus />
-            Add product
-          </button>
-        </div>
-        <div className="preview-metrics">
-          <div>
-            <small>TOTAL VALUE</small>
-            <b>$48,290</b>
-          </div>
-          <div>
-            <small>LOW STOCK</small>
-            <b>3</b>
-          </div>
-          <div>
-            <small>CATEGORIES</small>
-            <b>8</b>
-          </div>
-        </div>
-        <div className="preview-toolbar">
-          <label>
-            <Search />
-            <input placeholder="Search inventory" />
-          </label>
-          <button>
-            All categories <ChevronDown />
-          </button>
-        </div>
-        <div className="preview-records">
-          <div className="preview-record-head">
-            <span>PRODUCT</span>
-            <span>CATEGORY</span>
-            <span>STOCK</span>
-            <span>STATUS</span>
-          </div>
-          {[
-            ["Ceramic Pour-over Set", "Kitchen", "24", "In stock"],
-            ["Linen Table Runner", "Textiles", "7", "Low stock"],
-            ["Oak Serving Board", "Kitchen", "16", "In stock"],
-            ["Brass Desk Lamp", "Lighting", "31", "In stock"],
-          ].map((row) => (
-            <div className="preview-record" key={row[0]}>
-              {row.map((cell, index) => (
-                <span className={index === 3 ? "record-status" : ""} key={cell}>
-                  {cell}
-                </span>
-              ))}
-            </div>
-          ))}
-        </div>
-      </section>
-    );
-  return (
-    <section className="form-studio" aria-label="Product form builder">
-      <aside className="studio-components">
-        <small>COMPONENTS</small>
-        <button>
-          <Rows3 />
-          Text field
-        </button>
-        <button>
-          <ListFilter />
-          Select
-        </button>
-        <button>
-          <Columns3 />
-          Number
-        </button>
-        <button>
-          <Shapes />
-          Section
-        </button>
-      </aside>
-      <div className="studio-canvas">
-        <div className="form-card">
-          <small>PRODUCT FORM</small>
-          <h2>Product details</h2>
-          <p>Create and edit product information.</p>
-          <label>
-            Name <span>Enter product name</span>
-          </label>
-          <label>
-            Category{" "}
-            <span>
-              Select category <ChevronDown />
-            </span>
-          </label>
-          <div className="studio-field-row">
-            <label>
-              Price <span>$ 0.00</span>
-            </label>
-            <label>
-              Stock <span>0</span>
-            </label>
-          </div>
-          <div className="form-actions">
-            <button>Cancel</button>
-            <button className="save">Save product</button>
-          </div>
-        </div>
-        <button className="add-section">
-          <Plus />
-          Add section
-        </button>
-      </div>
-      <aside className="studio-properties">
-        <small>PROPERTIES</small>
-        <b>Form</b>
-        <label>
-          Layout
-          <span>
-            Single column <ChevronDown />
-          </span>
-        </label>
-        <label>
-          Spacing
-          <span>
-            Comfortable <ChevronDown />
-          </span>
-        </label>
-        <label>
-          Permissions
-          <span>
-            Team members <ChevronDown />
-          </span>
-        </label>
-      </aside>
-    </section>
   );
 }
 

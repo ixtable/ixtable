@@ -1,3 +1,4 @@
+use crate::design::DesignSchema;
 use chrono::Utc;
 use rusqlite::{params, Connection};
 use serde::{Deserialize, Serialize};
@@ -36,6 +37,8 @@ pub struct DocumentConfig {
     pub settings: serde_json::Value,
     #[serde(default)]
     pub saved_queries: Vec<SavedQuery>,
+    #[serde(default)]
+    pub design: DesignSchema,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -57,6 +60,7 @@ impl Default for DocumentConfig {
             navigation_state: serde_json::json!({}),
             settings: serde_json::json!({}),
             saved_queries: vec![],
+            design: DesignSchema::default(),
         }
     }
 }
@@ -140,6 +144,10 @@ fn schema(conn: &Connection) -> Result<(), ArchiveError> {
 }
 
 pub fn write_archive(path: &Path, doc: &ArchiveDocument) -> Result<(), ArchiveError> {
+    doc.config
+        .design
+        .validate()
+        .map_err(ArchiveError::Invalid)?;
     let parent = path.parent().unwrap_or_else(|| Path::new("."));
     fs::create_dir_all(parent)?;
     let tmp = parent.join(format!(
@@ -234,7 +242,9 @@ pub fn read_archive(path: &Path) -> Result<ArchiveDocument, ArchiveError> {
     let json: String = conn.query_row("SELECT json FROM document_config WHERE id=1", [], |r| {
         r.get(0)
     })?;
-    let config = serde_json::from_str(&json).map_err(|e| ArchiveError::Invalid(e.to_string()))?;
+    let config: DocumentConfig =
+        serde_json::from_str(&json).map_err(|e| ArchiveError::Invalid(e.to_string()))?;
+    config.design.validate().map_err(ArchiveError::Invalid)?;
     let mut stmt=conn.prepare("SELECT id,display_name,media_type,checksum,uncompressed_size,created_at,updated_at,contents FROM attachments ORDER BY created_at,id")?;
     let rows = stmt.query_map([], |r| {
         Ok((
@@ -315,4 +325,41 @@ pub fn add_attachment(
         contents,
     });
     id
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::design::{Control, ControlKind, ControlWidth, Validation};
+
+    #[test]
+    fn design_survives_archive_round_trip() {
+        let path = std::env::temp_dir().join(format!("design-round-trip-{}.ixt", Uuid::new_v4()));
+        let mut document = create_document("Designed").unwrap();
+        document.config.design.forms[0].controls.push(Control {
+            id: "name".into(),
+            kind: ControlKind::Text,
+            label: "Name".into(),
+            binding: None,
+            validation: Validation {
+                required: true,
+                ..Default::default()
+            },
+            width: ControlWidth::Full,
+        });
+        write_archive(&path, &document).unwrap();
+        let reopened = read_archive(&path).unwrap();
+        fs::remove_file(path).unwrap();
+        assert_eq!(reopened.config.design, document.config.design);
+    }
+
+    #[test]
+    fn legacy_config_without_design_gets_current_default() {
+        let config: DocumentConfig = serde_json::from_value(serde_json::json!({
+            "version": 2, "name": "Legacy", "activeMode": "data"
+        }))
+        .unwrap();
+        assert_eq!(config.design.version, crate::design::DESIGN_SCHEMA_VERSION);
+        assert!(config.design.validate().is_ok());
+    }
 }

@@ -52,12 +52,30 @@ export interface SessionState {
   attachmentCount: number;
   autosaveEligible: boolean;
 }
-type SavedQuery = { id: string; name: string; sql: string; filterState?: unknown };
+type SortCriterion = { column: string; descending: boolean };
+type FilterOperator =
+  | "eq"
+  | "ne"
+  | "lt"
+  | "lte"
+  | "gt"
+  | "gte"
+  | "contains"
+  | "starts_with"
+  | "is_null"
+  | "is_not_null";
+type FilterCriterion = { id: string; column: string; operator: FilterOperator; value: string };
+type VisualFilterState = { table: string; filters: FilterCriterion[]; sorts: SortCriterion[] };
+type SavedQuery = { id: string; name: string; sql: string; filterState?: VisualFilterState | null };
+type NavigationState = {
+  active?: { kind: "table" | "view" | "query"; id: string };
+  tables?: Record<string, { offset: number; filters: FilterCriterion[]; sorts: SortCriterion[] }>;
+};
 export interface DocumentConfig {
   version: number;
   name: string;
   activeMode: string;
-  navigationState: unknown;
+  navigationState: NavigationState;
   settings: unknown;
   savedQueries: SavedQuery[];
 }
@@ -143,6 +161,7 @@ export default function App() {
   const [error, setError] = useState<TauriError | null>(null);
   const [objects, setObjects] = useState<DbObject[]>([]),
     [savedQueries, setSavedQueries] = useState<SavedQuery[]>([]),
+    [documentConfig, setDocumentConfig] = useState<DocumentConfig | null>(null),
     [metadataLoading, setMetadataLoading] = useState(false),
     [metadataError, setMetadataError] = useState("");
   const [activeObject, setActiveObject] = useState<{
@@ -160,6 +179,9 @@ export default function App() {
       ]);
       setObjects(next);
       setSavedQueries(config.savedQueries ?? []);
+      setDocumentConfig(config);
+      if (!activeObject && config.navigationState?.active)
+        setActiveObject(config.navigationState.active);
     } catch (reason) {
       setMetadataError(asTauriError(reason).message);
     } finally {
@@ -475,6 +497,8 @@ export default function App() {
               if (!preserve) setActiveObject(null);
             }}
             queries={savedQueries}
+            config={documentConfig}
+            onConfig={setDocumentConfig}
             onDirty={() => update({ dirty: true })}
           />
         ) : (
@@ -594,6 +618,8 @@ function DatabaseWorkbench({
   onSelect,
   onMetadata,
   onDirty,
+  config,
+  onConfig,
 }: {
   objects: DbObject[];
   queries: SavedQuery[];
@@ -601,6 +627,8 @@ function DatabaseWorkbench({
   onSelect: (value: { kind: "table" | "view" | "query" | "new-query"; id: string } | null) => void;
   onMetadata: (preserve: boolean) => Promise<void>;
   onDirty: () => void;
+  config: DocumentConfig | null;
+  onConfig: (config: DocumentConfig) => void;
 }) {
   const [schemas, setSchemas] = useState<DbSchema[]>([]),
     [page, setPage] = useState<DbPage | null>(null),
@@ -608,11 +636,15 @@ function DatabaseWorkbench({
     [error, setError] = useState(""),
     [offset, setOffset] = useState(0),
     [revision, setRevision] = useState(0);
-  const selected = active?.kind === "table" || active?.kind === "view" ? active.id : "";
+  const activeQuery =
+    active?.kind === "query" ? queries.find((query) => query.id === active.id) : undefined;
+  const visualQuery = activeQuery?.filterState;
+  const selected =
+    visualQuery?.table ?? (active?.kind === "table" || active?.kind === "view" ? active.id : "");
   const readOnly = active?.kind === "view";
-  const sqlMode = active?.kind === "query" || active?.kind === "new-query";
-  const [sorts, setSorts] = useState<Array<{ column: string; descending: boolean }>>([]),
-    [filter, setFilter] = useState(""),
+  const sqlMode = (active?.kind === "query" && !visualQuery) || active?.kind === "new-query";
+  const [sorts, setSorts] = useState<SortCriterion[]>([]),
+    [filters, setFilters] = useState<FilterCriterion[]>([]),
     [sql, setSql] = useState("SELECT 1 AS example"),
     [queryName, setQueryName] = useState("Untitled Query"),
     [queryId, setQueryId] = useState<string | null>(null),
@@ -626,6 +658,77 @@ function DatabaseWorkbench({
       { name: "name", type: "TEXT", pk: false, nullable: true },
     ]);
   const refresh = () => setRevision((x) => x + 1);
+  const tableColumn = (name: string) => page?.columns.find((column) => column.name === name);
+  const columnKind = (column?: DbColumn) => {
+    const type = column?.declaredType.toUpperCase() ?? "";
+    if (/BOOL/.test(type)) return "boolean";
+    if (/DATE|TIME/.test(type)) return "date";
+    if (/INT|REAL|FLOA|DOUB|NUM|DEC/.test(type)) return "number";
+    return "text";
+  };
+  const operatorsFor = (column?: DbColumn): Array<{ value: FilterOperator; label: string }> => {
+    const common: Array<{ value: FilterOperator; label: string }> = [
+      { value: "eq", label: "equals" },
+      { value: "ne", label: "does not equal" },
+    ];
+    const nulls: Array<{ value: FilterOperator; label: string }> = [
+      { value: "is_null", label: "is null" },
+      { value: "is_not_null", label: "is not null" },
+    ];
+    if (columnKind(column) === "text")
+      return [
+        ...common,
+        { value: "contains", label: "contains" },
+        { value: "starts_with", label: "starts with" },
+        ...nulls,
+      ];
+    if (columnKind(column) === "boolean") return [...common, ...nulls];
+    return [
+      ...common,
+      { value: "lt", label: "is less than" },
+      { value: "lte", label: "is at most" },
+      { value: "gt", label: "is greater than" },
+      { value: "gte", label: "is at least" },
+      ...nulls,
+    ];
+  };
+  const backendFilters = () =>
+    filters.map((filter) => {
+      const column = tableColumn(filter.column);
+      if (!column || !operatorsFor(column).some((operator) => operator.value === filter.operator))
+        throw new Error(`Operator is not supported for ${filter.column}`);
+      if (filter.operator === "is_null" || filter.operator === "is_not_null")
+        return { column: filter.column, operator: filter.operator, value: null };
+      if (!filter.value.trim()) throw new Error(`${filter.column} requires a filter value`);
+      const kind = columnKind(column);
+      if (kind === "number") {
+        const number = Number(filter.value);
+        if (!Number.isFinite(number)) throw new Error(`${filter.column} requires a number`);
+        return {
+          column: filter.column,
+          operator: filter.operator,
+          value: { type: Number.isInteger(number) ? "integer" : "real", value: number },
+        };
+      }
+      if (kind === "boolean") {
+        if (!/^(true|false)$/i.test(filter.value))
+          throw new Error(`${filter.column} requires true or false`);
+        return {
+          column: filter.column,
+          operator: filter.operator,
+          value: { type: "boolean", value: filter.value.toLowerCase() === "true" },
+        };
+      }
+      return {
+        column: filter.column,
+        operator: filter.operator,
+        value: {
+          type:
+            kind === "date" ? (/TIME/i.test(column.declaredType) ? "timestamp" : "date") : "text",
+          value: filter.value,
+        },
+      };
+    });
   useEffect(() => {
     Promise.all(
       objects
@@ -654,33 +757,69 @@ function DatabaseWorkbench({
     }
   }, [active?.kind, active?.id, queries]);
   useEffect(() => {
+    if (!selected) return;
+    const restored = visualQuery ?? config?.navigationState?.tables?.[selected];
+    setSorts(restored?.sorts ?? []);
+    setFilters(restored?.filters ?? []);
+    setOffset("offset" in (restored ?? {}) ? (restored as { offset: number }).offset : 0);
+  }, [selected, active?.id]);
+  useEffect(() => {
+    if (!selected || !config) return;
+    const timer = window.setTimeout(async () => {
+      const navigationState: NavigationState = {
+        ...config.navigationState,
+        active:
+          active && active.kind !== "new-query" ? { kind: active.kind, id: active.id } : undefined,
+        tables: { ...config.navigationState?.tables, [selected]: { offset, filters, sorts } },
+      };
+      try {
+        const state = await invoke<SessionState>("update_document_config", {
+          windowLabel: "main",
+          config: { ...config, navigationState },
+        });
+        onConfig({ ...config, navigationState });
+        if (state.dirty) onDirty();
+      } catch (reason) {
+        setError(asTauriError(reason).message);
+      }
+    }, 150);
+    return () => window.clearTimeout(timer);
+  }, [selected, active?.kind, active?.id, offset, filters, sorts]);
+  useEffect(() => {
     if (!selected || sqlMode) {
       setPage(null);
       return;
     }
     setLoading(true);
-    const filters =
-      filter && page?.columns[0]
-        ? [
-            {
-              column: page.columns[0].name,
-              operator: "contains",
-              value: { type: "text", value: filter },
-            },
-          ]
-        : [];
+    let validatedFilters: ReturnType<typeof backendFilters>;
+    try {
+      validatedFilters = page ? backendFilters() : [];
+      setError("");
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : String(reason));
+      setLoading(false);
+      return;
+    }
     invoke<DbPage>("read_table_page", {
       windowLabel: "main",
       table: selected,
       offset,
       limit: 100,
       sorts,
-      filters,
+      filters: validatedFilters,
     })
       .then(setPage)
       .catch((e) => setError(asTauriError(e).message))
       .finally(() => setLoading(false));
-  }, [selected, offset, sorts, filter, revision, sqlMode]);
+  }, [
+    selected,
+    offset,
+    sorts,
+    filters,
+    revision,
+    sqlMode,
+    page?.columns.map((column) => column.name).join("|"),
+  ]);
   const createTable = async () => {
     if (!tableName.trim() || columns.some((c) => !c.name.trim())) {
       setError("Table and column names are required.");
@@ -746,6 +885,30 @@ function DatabaseWorkbench({
       await onMetadata(true);
     } catch (e) {
       setError(asTauriError(e).message);
+    } finally {
+      setLoading(false);
+    }
+  };
+  const saveVisualQuery = async () => {
+    if (!selected) return;
+    const name = window.prompt("Saved filter name", `${selected} filter`)?.trim();
+    if (!name) return;
+    setLoading(true);
+    setError("");
+    try {
+      backendFilters();
+      const config = await invoke<DocumentConfig>("save_query", {
+        windowLabel: "main",
+        id: null,
+        name,
+        sql: `SELECT * FROM "${selected.replaceAll('"', '""')}"`,
+        filterState: { table: selected, filters, sorts },
+      });
+      onConfig(config);
+      onDirty();
+      await onMetadata(true);
+    } catch (reason) {
+      setError(asTauriError(reason).message);
     } finally {
       setLoading(false);
     }
@@ -999,23 +1162,151 @@ function DatabaseWorkbench({
                     <span>{selected}</span>
                     {readOnly && <b>Read-only view</b>}
                     <b>{page?.total.toLocaleString() ?? "—"} records</b>
-                    <label className="grid-search">
-                      <Search />
-                      <input
-                        placeholder="Filter first column"
-                        value={filter}
-                        onChange={(e) => {
-                          setFilter(e.target.value);
+                    <button
+                      onClick={() => {
+                        const column = page?.columns[0];
+                        if (column) {
+                          setFilters((current) => [
+                            ...current,
+                            {
+                              id: crypto.randomUUID(),
+                              column: column.name,
+                              operator: "eq",
+                              value: "",
+                            },
+                          ]);
                           setOffset(0);
-                        }}
-                      />
-                    </label>
+                        }
+                      }}
+                    >
+                      <ListFilter /> Add filter
+                    </button>
+                    <button
+                      disabled={!filters.length || loading}
+                      onClick={() => void saveVisualQuery()}
+                    >
+                      <Save /> Save filter
+                    </button>
                     <button onClick={refresh}>
                       <Search />
                       Refresh
                     </button>
                   </div>
                 </div>
+                {!!filters.length && (
+                  <div className="filter-builder" aria-label="Filters">
+                    {filters.map((filter, index) => {
+                      const column = tableColumn(filter.column);
+                      const noValue =
+                        filter.operator === "is_null" || filter.operator === "is_not_null";
+                      return (
+                        <div className="filter-condition" key={filter.id}>
+                          <span>{index ? "AND" : "WHERE"}</span>
+                          <select
+                            aria-label={`Filter ${index + 1} column`}
+                            value={filter.column}
+                            onChange={(event) => {
+                              const nextColumn = page?.columns.find(
+                                (item) => item.name === event.target.value,
+                              );
+                              setFilters((current) =>
+                                current.map((item) =>
+                                  item.id === filter.id
+                                    ? {
+                                        ...item,
+                                        column: event.target.value,
+                                        operator: operatorsFor(nextColumn)[0].value,
+                                        value: "",
+                                      }
+                                    : item,
+                                ),
+                              );
+                              setOffset(0);
+                            }}
+                          >
+                            {page?.columns.map((item) => (
+                              <option key={item.name}>{item.name}</option>
+                            ))}
+                          </select>
+                          <select
+                            aria-label={`Filter ${index + 1} operator`}
+                            value={filter.operator}
+                            onChange={(event) => {
+                              setFilters((current) =>
+                                current.map((item) =>
+                                  item.id === filter.id
+                                    ? { ...item, operator: event.target.value as FilterOperator }
+                                    : item,
+                                ),
+                              );
+                              setOffset(0);
+                            }}
+                          >
+                            {operatorsFor(column).map((operator) => (
+                              <option key={operator.value} value={operator.value}>
+                                {operator.label}
+                              </option>
+                            ))}
+                          </select>
+                          {!noValue &&
+                            (columnKind(column) === "boolean" ? (
+                              <select
+                                aria-label={`Filter ${index + 1} value`}
+                                value={filter.value}
+                                onChange={(event) => {
+                                  setFilters((current) =>
+                                    current.map((item) =>
+                                      item.id === filter.id
+                                        ? { ...item, value: event.target.value }
+                                        : item,
+                                    ),
+                                  );
+                                  setOffset(0);
+                                }}
+                              >
+                                <option value="">Choose…</option>
+                                <option value="true">true</option>
+                                <option value="false">false</option>
+                              </select>
+                            ) : (
+                              <input
+                                aria-label={`Filter ${index + 1} value`}
+                                type={
+                                  columnKind(column) === "number"
+                                    ? "number"
+                                    : columnKind(column) === "date"
+                                      ? "date"
+                                      : "text"
+                                }
+                                value={filter.value}
+                                onChange={(event) => {
+                                  setFilters((current) =>
+                                    current.map((item) =>
+                                      item.id === filter.id
+                                        ? { ...item, value: event.target.value }
+                                        : item,
+                                    ),
+                                  );
+                                  setOffset(0);
+                                }}
+                              />
+                            ))}
+                          <button
+                            aria-label={`Remove filter ${index + 1}`}
+                            onClick={() => {
+                              setFilters((current) =>
+                                current.filter((item) => item.id !== filter.id),
+                              );
+                              setOffset(0);
+                            }}
+                          >
+                            <X />
+                          </button>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
                 {error && (
                   <div className="error" role="alert">
                     {error}
@@ -1034,18 +1325,25 @@ function DatabaseWorkbench({
                         {page?.columns.map((c) => (
                           <th key={c.name}>
                             <button
-                              onClick={() =>
-                                setSorts((old) => [
-                                  {
-                                    column: c.name,
-                                    descending:
-                                      old[0]?.column === c.name ? !old[0].descending : false,
-                                  },
-                                ])
-                              }
+                              aria-label={`Sort by ${c.name}${sorts.find((sort) => sort.column === c.name) ? `, ${sorts.find((sort) => sort.column === c.name)?.descending ? "descending" : "ascending"}` : ""}`}
+                              onClick={() => {
+                                setSorts((old) => {
+                                  const existing = old.find((sort) => sort.column === c.name);
+                                  if (!existing)
+                                    return [...old, { column: c.name, descending: false }];
+                                  if (!existing.descending)
+                                    return old.map((sort) =>
+                                      sort.column === c.name ? { ...sort, descending: true } : sort,
+                                    );
+                                  return old.filter((sort) => sort.column !== c.name);
+                                });
+                                setOffset(0);
+                              }}
                             >
                               {c.name}{" "}
-                              {sorts[0]?.column === c.name ? (sorts[0].descending ? "↓" : "↑") : ""}
+                              {sorts.findIndex((sort) => sort.column === c.name) >= 0
+                                ? `${sorts.find((sort) => sort.column === c.name)?.descending ? "↓" : "↑"}${sorts.length > 1 ? sorts.findIndex((sort) => sort.column === c.name) + 1 : ""}`
+                                : "↕"}
                             </button>
                             <small>{c.declaredType}</small>
                           </th>

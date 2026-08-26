@@ -1577,6 +1577,37 @@ button {
   border: 1px solid #ccd4cb;
   border-radius: 4px;
 }
+.filter-builder {
+  display: grid;
+  gap: 6px;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--border);
+  background: color-mix(in srgb, var(--panel) 92%, var(--accent));
+}
+.filter-condition {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.filter-condition > span {
+  width: 48px;
+  color: var(--muted);
+  font-size: 10px;
+  font-weight: 700;
+}
+.filter-condition select,
+.filter-condition input {
+  min-width: 120px;
+  height: 28px;
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  background: var(--panel);
+  color: inherit;
+}
+.filter-condition button svg {
+  width: 14px;
+  height: 14px;
+}
 .data-grid td input {
   width: 100%;
   min-width: 110px;

@@ -1,25 +1,28 @@
-import { useEffect, useMemo, useState } from "react";
-import { invoke } from "@tauri-apps/api/core";
 import Editor from "@monaco-editor/react";
 import * as DropdownMenu from "@radix-ui/react-dropdown-menu";
+import { invoke } from "@tauri-apps/api/core";
+import { open as openPicker, save as savePicker } from "@tauri-apps/plugin-dialog";
 import {
   Background,
   Controls,
+  type Edge,
   Handle,
   MiniMap,
-  Position,
-  ReactFlow,
-  type Edge,
   type Node,
   type NodeProps,
+  Position,
+  ReactFlow,
 } from "@xyflow/react";
+import { useEffect, useMemo, useState } from "react";
 import "@xyflow/react/dist/style.css";
+import type { LucideIcon } from "lucide-react";
 import {
   Archive,
   ChevronDown,
   Code2,
   Columns3,
   Database,
+  Download,
   Eye,
   FilePlus2,
   FolderOpen,
@@ -36,7 +39,6 @@ import {
   Upload,
   X,
 } from "lucide-react";
-import type { LucideIcon } from "lucide-react";
 
 type Mode = "data" | "design";
 export interface SessionState {
@@ -72,6 +74,15 @@ type Doc = {
   mode: Mode;
   sessionId: string;
   documentId: string;
+  attachmentCount: number;
+};
+type Attachment = {
+  id: string;
+  displayName: string;
+  mediaType: string;
+  size: number;
+  createdAt: string;
+  updatedAt: string;
 };
 type DataValue = {
   type: "null" | "integer" | "real" | "text" | "blob" | "boolean" | "date" | "timestamp";
@@ -133,10 +144,13 @@ const fromSession = (state: SessionState): Doc => ({
   mode: state.activeMode === "design" ? "design" : "data",
   sessionId: state.sessionId,
   documentId: state.documentId,
+  attachmentCount: state.attachmentCount,
 });
 export default function App() {
   const [doc, setDoc] = useState<Doc | null>(null);
   const [notice, setNotice] = useState("");
+  const [attachments, setAttachments] = useState<Attachment[]>([]);
+  const [attachmentsLoading, setAttachmentsLoading] = useState(false);
   const [view, setView] = useState("Data view");
   const [designPreview, setDesignPreview] = useState(false);
   const [pending, setPending] = useState("");
@@ -166,6 +180,17 @@ export default function App() {
       setMetadataLoading(false);
     }
   };
+  const loadAttachments = async () => {
+    if (!doc) return;
+    setAttachmentsLoading(true);
+    try {
+      setAttachments(await invoke<Attachment[]>("list_attachments", { windowLabel: "main" }));
+    } catch (reason) {
+      setError(asTauriError(reason));
+    } finally {
+      setAttachmentsLoading(false);
+    }
+  };
   useEffect(() => {
     if (doc && doc.mode === "data") void loadMetadata();
     else if (!doc) {
@@ -174,6 +199,10 @@ export default function App() {
       setActiveObject(null);
     }
   }, [doc?.sessionId, doc?.mode]);
+  useEffect(() => {
+    if (doc) void loadAttachments();
+    else setAttachments([]);
+  }, [doc?.sessionId]);
   useEffect(() => {
     const reload = () => void loadMetadata();
     window.addEventListener("ixtable:database-changed", reload);
@@ -367,6 +396,19 @@ export default function App() {
             </button>
           </nav>
         )}
+        <Attachments
+          items={attachments}
+          count={doc.attachmentCount}
+          loading={attachmentsLoading}
+          disabled={!!pending}
+          onChanged={(state) => {
+            setDoc(fromSession(state));
+            void loadAttachments();
+          }}
+          onPending={setPending}
+          onError={setError}
+          onNotice={setNotice}
+        />
         <div className="sidebar-bottom">
           <span className="status-dot" /> {doc.dirty ? "Unsaved changes" : "All changes saved"}
         </div>
@@ -482,6 +524,172 @@ export default function App() {
         )}
       </main>
     </div>
+  );
+}
+
+const mediaTypes: Record<string, string> = {
+  csv: "text/csv",
+  gif: "image/gif",
+  jpeg: "image/jpeg",
+  jpg: "image/jpeg",
+  json: "application/json",
+  pdf: "application/pdf",
+  png: "image/png",
+  svg: "image/svg+xml",
+  txt: "text/plain",
+  webp: "image/webp",
+  xml: "application/xml",
+  zip: "application/zip",
+};
+const fileName = (path: string) => path.split(/[\\/]/).at(-1) || "";
+const mediaTypeFor = (path: string) => {
+  const extension = fileName(path).split(".").at(-1)?.toLowerCase() || "";
+  return mediaTypes[extension] || "application/octet-stream";
+};
+const formatBytes = (bytes: number) => {
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+};
+const formatTimestamp = (value: string) => {
+  const date = new Date(value);
+  return Number.isNaN(date.valueOf()) ? "Unknown" : date.toLocaleString();
+};
+function Attachments({
+  items,
+  count,
+  loading,
+  disabled,
+  onChanged,
+  onPending,
+  onError,
+  onNotice,
+}: {
+  items: Attachment[];
+  count: number;
+  loading: boolean;
+  disabled: boolean;
+  onChanged: (state: SessionState) => void;
+  onPending: (message: string) => void;
+  onError: (error: TauriError | null) => void;
+  onNotice: (message: string) => void;
+}) {
+  const importFile = async () => {
+    onError(null);
+    try {
+      const selected = await openPicker({ multiple: false, directory: false });
+      if (!selected || Array.isArray(selected)) return;
+      const name = fileName(selected);
+      if (!name) {
+        onError({ code: "DESTINATION_REQUIRED", message: "Choose a file to import." });
+        return;
+      }
+      if (
+        items.some((attachment) => attachment.displayName.toLowerCase() === name.toLowerCase()) &&
+        !window.confirm(`${name} is already attached. Import another copy?`)
+      )
+        return;
+      const mediaType = mediaTypeFor(selected);
+      if (mediaType === "application/octet-stream")
+        onNotice(`${name} has an unknown file type and will be stored as binary data.`);
+      onPending(`Importing ${name}…`);
+      const state = await invoke<SessionState>("import_attachment", {
+        windowLabel: "main",
+        path: selected,
+        mediaType,
+      });
+      onChanged(state);
+    } catch (reason) {
+      onError(asTauriError(reason));
+    } finally {
+      onPending("");
+    }
+  };
+  const exportFile = async (attachment: Attachment) => {
+    onError(null);
+    try {
+      const destination = await savePicker({ defaultPath: attachment.displayName });
+      if (!destination) return;
+      if (!fileName(destination)) {
+        onError({ code: "DESTINATION_REQUIRED", message: "Choose an export destination." });
+        return;
+      }
+      onPending(`Exporting ${attachment.displayName}…`);
+      await invoke("export_attachment", {
+        windowLabel: "main",
+        id: attachment.id,
+        path: destination,
+      });
+      onNotice(`${attachment.displayName} exported.`);
+    } catch (reason) {
+      onError(asTauriError(reason));
+    } finally {
+      onPending("");
+    }
+  };
+  const remove = async (attachment: Attachment) => {
+    if (!window.confirm(`Remove ${attachment.displayName} from this project?`)) return;
+    onPending(`Removing ${attachment.displayName}…`);
+    onError(null);
+    try {
+      onChanged(
+        await invoke<SessionState>("remove_attachment", {
+          windowLabel: "main",
+          id: attachment.id,
+        }),
+      );
+    } catch (reason) {
+      onError(asTauriError(reason));
+    } finally {
+      onPending("");
+    }
+  };
+  return (
+    <section className="attachments" aria-labelledby="attachments-heading">
+      <div className="attachments-heading">
+        <strong id="attachments-heading">ATTACHMENTS</strong>
+        <span>{count}</span>
+        <button aria-label="Import attachment" disabled={disabled} onClick={importFile}>
+          <Plus />
+        </button>
+      </div>
+      {loading ? (
+        <small role="status">Loading attachments…</small>
+      ) : (
+        <ul>
+          {items.map((attachment) => (
+            <li key={attachment.id}>
+              <div>
+                <b title={attachment.displayName}>{attachment.displayName}</b>
+                <small>{attachment.mediaType || "Unknown media type"}</small>
+                <small>{formatBytes(attachment.size)}</small>
+                <time
+                  dateTime={attachment.createdAt}
+                  title={`Updated ${formatTimestamp(attachment.updatedAt)}`}
+                >
+                  Added {formatTimestamp(attachment.createdAt)}
+                </time>
+              </div>
+              <button
+                aria-label={`Export ${attachment.displayName}`}
+                disabled={disabled}
+                onClick={() => exportFile(attachment)}
+              >
+                <Download />
+              </button>
+              <button
+                aria-label={`Remove ${attachment.displayName}`}
+                disabled={disabled}
+                onClick={() => remove(attachment)}
+              >
+                <Trash2 />
+              </button>
+            </li>
+          ))}
+        </ul>
+      )}
+      {!loading && !items.length && <small>No attachments</small>}
+    </section>
   );
 }
 

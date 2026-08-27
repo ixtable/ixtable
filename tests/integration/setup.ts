@@ -1,11 +1,11 @@
 import "@testing-library/jest-dom/vitest";
-import { cleanup } from "@testing-library/react";
-import { createRequire } from "node:module";
 import { mkdtempSync, rmSync } from "node:fs";
+import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, afterAll, vi } from "vitest";
+import { cleanup } from "@testing-library/react";
 import { createElement } from "react";
+import { afterAll, afterEach, vi } from "vitest";
 
 // This must be set before loading the native module: Rust initializes its
 // process-wide DocumentManager on the first command.
@@ -17,6 +17,7 @@ export const testBridge = require("../../src-tauri/target/index.cjs") as {
 };
 
 vi.mock("@tauri-apps/api/core", () => ({ invoke: testBridge.invoke }));
+vi.mock("@tauri-apps/plugin-dialog", () => ({ open: vi.fn(), save: vi.fn() }));
 vi.mock("@monaco-editor/react", () => ({
   default: ({ value, onChange }: { value: string; onChange: (value: string) => void }) =>
     createElement("textarea", {

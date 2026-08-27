@@ -1,9 +1,13 @@
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { invoke } from "@tauri-apps/api/core";
+import { open } from "@tauri-apps/plugin-dialog";
 import { act, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { expect, it, vi } from "vitest";
-import { invoke } from "@tauri-apps/api/core";
-import App from "../../../src/App";
 import type { DocumentConfig, SessionState } from "../../../src/App";
+import App from "../../../src/App";
 import { captureDocument } from "../capture";
 
 const column = (name: string, type = "TEXT", primaryKeyPosition = 0) => ({
@@ -163,6 +167,21 @@ it("captures the document lifecycle shell", async () => {
   expect(document.querySelector(".data-pane")).not.toBeInTheDocument();
   expect(screen.getByRole("textbox", { name: "Search database objects" })).toBeInTheDocument();
   expect(screen.getByText("Workflow scripts are not available yet")).toBeInTheDocument();
+  const attachmentDirectory = mkdtempSync(join(tmpdir(), "ixtable-app-qa-"));
+  const attachmentPath = join(attachmentDirectory, "inventory-import-guide.pdf");
+  writeFileSync(attachmentPath, "App QA attachment fixture");
+  vi.mocked(open).mockResolvedValueOnce(attachmentPath);
+  await user.click(screen.getByRole("button", { name: "Import attachment" }));
+  expect(await screen.findByText("inventory-import-guide.pdf")).toBeInTheDocument();
+  await captureDocument(document, {
+    name: "app-qa-02-attachments",
+    expectations: [
+      "The project sidebar shows the attachment name, media type, size, and timestamp.",
+      "Import, export, and removal controls remain accessible without obscuring database objects.",
+      "The unsaved state and attachment count reflect the imported file.",
+    ],
+  });
+  rmSync(attachmentDirectory, { recursive: true, force: true });
   await captureDocument(document, {
     name: "app-qa-02-object-browser",
     expectations: [

@@ -32,6 +32,7 @@ chrono = { version = "0.4", features = ["serde"] }
 thiserror = "2"
 base64 = "0.22"
 duckdb = { version = "=1.10505.0", features = ["bundled"] }
+tauri-plugin-dialog = { version = "2", default-features = false, features = ["xdg-portal"] }
 
 [dev-dependencies]
 proptest = "1.7"

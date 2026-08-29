@@ -273,6 +273,9 @@ impl DocumentManager {
         Ok(config)
     }
     pub fn update_config(&self, window: &str, c: DocumentConfig) -> Result<SessionState, AppError> {
+        c.design
+            .validate()
+            .map_err(|e| AppError::new("INVALID_DESIGN_SCHEMA", e))?;
         let mut all = self.sessions.lock().unwrap();
         let s = all
             .get_mut(window)

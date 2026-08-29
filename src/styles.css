@@ -1289,6 +1289,68 @@ button {
 .studio-components svg {
   width: 15px;
 }
+.studio-history {
+  display: flex;
+  gap: 6px;
+  margin-top: 10px;
+}
+.studio-history button {
+  flex: 1;
+  justify-content: center;
+}
+.studio-history button:disabled {
+  opacity: 0.4;
+}
+.studio-properties input,
+.studio-properties select {
+  border: 1px solid #d9dce1;
+  border-radius: 5px;
+  padding: 8px;
+  background: #fff;
+}
+.studio-properties button {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  border: 1px solid #d9dce1;
+  border-radius: 5px;
+  padding: 8px;
+  background: #fff;
+}
+.studio-properties button svg {
+  width: 14px;
+}
+.design-control {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 6px;
+  min-height: 66px;
+  padding: 12px;
+  border: 1px solid #d9dce1;
+  border-radius: 5px;
+  background: #fff;
+  cursor: pointer;
+}
+.design-control.selected {
+  border-color: #62738a;
+  box-shadow: 0 0 0 2px #62738a20;
+}
+.design-control > span {
+  color: #818791;
+  font-size: 11px;
+}
+.design-control .move-controls {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+}
+.move-controls button {
+  border: 0;
+  background: transparent;
+  padding: 3px;
+}
 .studio-canvas {
   padding: 28px;
   overflow: auto;

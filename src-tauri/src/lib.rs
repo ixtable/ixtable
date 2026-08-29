@@ -1,5 +1,6 @@
 pub mod archive;
 pub mod data;
+pub mod design;
 pub mod manager;
 pub mod storage;
 

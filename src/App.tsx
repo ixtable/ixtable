@@ -1,19 +1,20 @@
-import { useEffect, useMemo, useState } from "react";
-import { invoke } from "@tauri-apps/api/core";
 import Editor from "@monaco-editor/react";
 import * as DropdownMenu from "@radix-ui/react-dropdown-menu";
+import { invoke } from "@tauri-apps/api/core";
 import {
   Background,
   Controls,
+  type Edge,
   Handle,
   MiniMap,
-  Position,
-  ReactFlow,
-  type Edge,
   type Node,
   type NodeProps,
+  Position,
+  ReactFlow,
 } from "@xyflow/react";
+import { useEffect, useMemo, useState } from "react";
 import "@xyflow/react/dist/style.css";
+import type { LucideIcon } from "lucide-react";
 import {
   Archive,
   ChevronDown,
@@ -36,10 +37,11 @@ import {
   Upload,
   X,
 } from "lucide-react";
-import type { LucideIcon } from "lucide-react";
 import { DesignStudio } from "./design/DesignStudio";
 import type { DesignSchema } from "./design/schema";
 import { chooseDocumentDestination, chooseDocumentToOpen } from "./lib/dialog";
+import { LogsTab } from "./logs/LogsTab";
+import { logStore } from "./logs/store";
 
 type Mode = "data" | "design";
 export interface SessionState {
@@ -156,6 +158,7 @@ export default function App() {
   const [doc, setDoc] = useState<Doc | null>(null);
   const [notice, setNotice] = useState("");
   const [view, setView] = useState("Data view");
+  const [ribbonTab, setRibbonTab] = useState<"home" | "logs">("home");
   const [designPreview, setDesignPreview] = useState(false);
   const [pending, setPending] = useState("");
   const [error, setError] = useState<TauriError | null>(null);
@@ -290,6 +293,8 @@ export default function App() {
       await invoke("close_document", { windowLabel: "main", force: discard });
       setDoc(null);
       setDesignPreview(false);
+      setRibbonTab("home");
+      logStore.reset();
     } catch (reason) {
       setError(asTauriError(reason));
     } finally {
@@ -441,59 +446,72 @@ export default function App() {
           </header>
         )}
         <div className="ribbon-tabs">
-          <button className="active">Home</button>
+          <button
+            className={ribbonTab === "home" ? "active" : ""}
+            onClick={() => setRibbonTab("home")}
+          >
+            Home
+          </button>
+          <button
+            className={ribbonTab === "logs" ? "active" : ""}
+            onClick={() => setRibbonTab("logs")}
+          >
+            Logs
+          </button>
           <button>Create</button>
           <button>External Data</button>
           <button>Database Tools</button>
         </div>
-        <section className="ribbon" aria-label="Data tools">
-          <div className="ribbon-group view-group">
-            <DropdownMenu.Root>
-              <DropdownMenu.Trigger asChild>
-                <button className="ribbon-big">
-                  <Grid3X3 />
-                  <span>{view}</span>
-                  <ChevronDown />
-                </button>
-              </DropdownMenu.Trigger>
-              <DropdownMenu.Portal>
-                <DropdownMenu.Content className="view-menu" sideOffset={6}>
-                  <DropdownMenu.Label>Switch view</DropdownMenu.Label>
-                  {["Data view", "Design view", "SQL view"].map((v) => (
-                    <DropdownMenu.Item
-                      key={v}
-                      onSelect={() => setView(v)}
-                      className={view === v ? "checked" : ""}
-                    >
-                      {v}
-                      <span>{view === v ? "✓" : ""}</span>
-                    </DropdownMenu.Item>
-                  ))}
-                </DropdownMenu.Content>
-              </DropdownMenu.Portal>
-            </DropdownMenu.Root>
-            <small>View</small>
-          </div>
-          <RibbonGroup
-            label="Manage table"
-            items={[
-              [ListFilter, "Select"],
-              [Archive, "Make Table"],
-              [Upload, "Append"],
-              [Columns3, "Update"],
-              [Trash2, "Delete"],
-            ]}
-            action={runAction}
-          />
-          <RibbonGroup
-            label="Query Setup"
-            items={[
-              [GitBranch, "Show Table"],
-              [Rows3, "Insert Rows"],
-            ]}
-            action={runAction}
-          />
-        </section>
+        {ribbonTab === "home" && (
+          <section className="ribbon" aria-label="Data tools">
+            <div className="ribbon-group view-group">
+              <DropdownMenu.Root>
+                <DropdownMenu.Trigger asChild>
+                  <button className="ribbon-big">
+                    <Grid3X3 />
+                    <span>{view}</span>
+                    <ChevronDown />
+                  </button>
+                </DropdownMenu.Trigger>
+                <DropdownMenu.Portal>
+                  <DropdownMenu.Content className="view-menu" sideOffset={6}>
+                    <DropdownMenu.Label>Switch view</DropdownMenu.Label>
+                    {["Data view", "Design view", "SQL view"].map((v) => (
+                      <DropdownMenu.Item
+                        key={v}
+                        onSelect={() => setView(v)}
+                        className={view === v ? "checked" : ""}
+                      >
+                        {v}
+                        <span>{view === v ? "✓" : ""}</span>
+                      </DropdownMenu.Item>
+                    ))}
+                  </DropdownMenu.Content>
+                </DropdownMenu.Portal>
+              </DropdownMenu.Root>
+              <small>View</small>
+            </div>
+            <RibbonGroup
+              label="Manage table"
+              items={[
+                [ListFilter, "Select"],
+                [Archive, "Make Table"],
+                [Upload, "Append"],
+                [Columns3, "Update"],
+                [Trash2, "Delete"],
+              ]}
+              action={runAction}
+            />
+            <RibbonGroup
+              label="Query Setup"
+              items={[
+                [GitBranch, "Show Table"],
+                [Rows3, "Insert Rows"],
+              ]}
+              action={runAction}
+            />
+          </section>
+        )}
         {pending && (
           <div className="progress" role="status">
             {pending}
@@ -516,7 +534,9 @@ export default function App() {
             </button>
           </div>
         )}
-        {doc.mode === "data" ? (
+        {ribbonTab === "logs" ? (
+          <LogsTab />
+        ) : doc.mode === "data" ? (
           <DatabaseWorkbench
             objects={objects}
             active={activeObject}

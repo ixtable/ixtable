@@ -1936,3 +1936,57 @@ button {
 .workbench.relationship-only .flow-browser {
   height: calc(100% - 30px);
 }
+.logs-tab {
+  height: calc(100vh - 125px);
+  min-height: 490px;
+  display: grid;
+  grid-template-columns: 220px minmax(0, 1fr);
+  border-top: 1px solid #dfe2dd;
+  background: #fff;
+}
+.logs-sources {
+  border-right: 1px solid #dfe2dd;
+  background: #1c211c;
+  color: #cfd6cf;
+  padding: 10px 8px 16px;
+  overflow: auto;
+}
+.logs-sources .object-group-heading {
+  color: #cfd6cf;
+}
+.logs-transcript {
+  overflow: auto;
+  padding: 18px 22px 28px;
+  display: grid;
+  align-content: start;
+  gap: 12px;
+}
+.logs-empty {
+  margin: 28px auto;
+  max-width: 420px;
+  text-align: center;
+}
+.log-message {
+  border: 1px solid #e4e7e1;
+  border-radius: 8px;
+  padding: 10px 14px;
+  background: #fbfcf9;
+}
+.log-message header {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  color: #6b726b;
+  margin-bottom: 6px;
+  text-transform: uppercase;
+}
+.log-message.log-user {
+  background: #eef3ef;
+}
+.log-message pre {
+  margin: 0;
+  white-space: pre-wrap;
+  font-family: inherit;
+  font-size: 13px;
+  line-height: 1.45;
+}

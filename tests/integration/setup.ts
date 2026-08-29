@@ -1,11 +1,12 @@
 import "@testing-library/jest-dom/vitest";
-import { cleanup } from "@testing-library/react";
-import { createRequire } from "node:module";
 import { mkdtempSync, rmSync } from "node:fs";
+import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, afterAll, vi } from "vitest";
+import { cleanup } from "@testing-library/react";
 import { createElement } from "react";
+import { afterAll, afterEach, vi } from "vitest";
+import { logStore } from "../../src/logs/store";
 
 // This must be set before loading the native module: Rust initializes its
 // process-wide DocumentManager on the first command.
@@ -72,6 +73,7 @@ afterEach(async () => {
   vi.restoreAllMocks();
   dialogMock.open.mockReset();
   dialogMock.save.mockReset();
+  logStore.reset();
   try {
     await testBridge.invoke("close_document", { windowLabel: "main", force: true });
   } catch {

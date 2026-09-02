@@ -16,7 +16,13 @@ export const testBridge = require("../../src-tauri/target/index.cjs") as {
   invoke: (command: string, args?: Record<string, unknown>) => Promise<unknown>;
 };
 
+export const dialogMock = {
+  open: vi.fn<() => Promise<string | null>>(),
+  save: vi.fn<() => Promise<string | null>>(),
+};
+
 vi.mock("@tauri-apps/api/core", () => ({ invoke: testBridge.invoke }));
+vi.mock("@tauri-apps/plugin-dialog", () => dialogMock);
 vi.mock("@monaco-editor/react", () => ({
   default: ({ value, onChange }: { value: string; onChange: (value: string) => void }) =>
     createElement("textarea", {
@@ -64,6 +70,8 @@ if (!window.DOMMatrixReadOnly)
 afterEach(async () => {
   cleanup();
   vi.restoreAllMocks();
+  dialogMock.open.mockReset();
+  dialogMock.save.mockReset();
   try {
     await testBridge.invoke("close_document", { windowLabel: "main", force: true });
   } catch {

@@ -326,7 +326,11 @@ pub struct CreateTable {
     pub without_rowid: bool,
 }
 #[derive(Debug, Clone, Deserialize)]
-#[serde(tag = "operation", rename_all = "snake_case")]
+#[serde(
+    tag = "operation",
+    rename_all = "snake_case",
+    rename_all_fields = "camelCase"
+)]
 pub enum AlterTable {
     RenameTable { new_name: String },
     RenameColumn { column: String, new_name: String },

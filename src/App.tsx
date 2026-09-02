@@ -37,6 +37,7 @@ import {
   X,
 } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
+import { chooseDocumentDestination, chooseDocumentToOpen } from "./lib/dialog";
 
 type Mode = "data" | "design";
 export interface SessionState {
@@ -116,6 +117,20 @@ type DbPage = {
   offset: number;
   limit: number;
 };
+type CreateColumnSpec = {
+  name: string;
+  declaredType: string;
+  nullable: boolean;
+  primaryKeyPosition: number;
+  unique: boolean;
+  defaultExpression: string | null;
+  generatedExpression: string | null;
+};
+type AlterTableOperation =
+  | { operation: "rename_table"; newName: string }
+  | { operation: "rename_column"; column: string; newName: string }
+  | { operation: "add_column"; column: CreateColumnSpec }
+  | { operation: "drop_column"; column: string };
 const asTauriError = (error: unknown): TauriError => {
   if (error && typeof error === "object" && "code" in error && "message" in error) {
     const structured = error as TauriError;
@@ -221,11 +236,28 @@ export default function App() {
       setPending("");
     }
   };
-  const open = () =>
-    setError({
-      code: "FILE_PICKER_REQUIRED",
-      message: "Choose Open from the desktop window to select an .ixt file.",
-    });
+  const open = async () => {
+    setPending("Choosing document…");
+    setError(null);
+    setNotice("");
+    try {
+      const path = await chooseDocumentToOpen();
+      if (!path) {
+        setNotice("Open canceled.");
+        return;
+      }
+      const state = await invoke<SessionState>("open_document", {
+        windowLabel: "main",
+        path,
+      });
+      setDoc(fromSession(state));
+      await refreshStartLists();
+    } catch (reason) {
+      setError(asTauriError(reason));
+    } finally {
+      setPending("");
+    }
+  };
   const openPath = async (path: string) => {
     setPending("Opening document…");
     setError(null);
@@ -287,12 +319,26 @@ export default function App() {
       setPending("");
     }
   };
-  const save = async () => {
+  const save = async (forceDestination = false) => {
     if (!doc) return;
     setPending("Saving document…");
     setError(null);
+    setNotice("");
     try {
-      setDoc(fromSession(await invoke<SessionState>("save_document", { windowLabel: "main" })));
+      if (forceDestination || !doc.path) {
+        const path = await chooseDocumentDestination(doc.name);
+        if (!path) {
+          setNotice("Save canceled.");
+          return;
+        }
+        setDoc(
+          fromSession(
+            await invoke<SessionState>("save_document_as", { windowLabel: "main", path }),
+          ),
+        );
+      } else {
+        setDoc(fromSession(await invoke<SessionState>("save_document", { windowLabel: "main" })));
+      }
       await refreshStartLists();
     } catch (reason) {
       setError(asTauriError(reason));
@@ -443,7 +489,10 @@ export default function App() {
         <div className="doc-brand">
           <span>ix</span>
           <div className="project-actions">
-            <button aria-label="Save project" disabled={!!pending} onClick={save}>
+            <button aria-label="Save project" disabled={!!pending} onClick={() => save()}>
+              <Save />
+            </button>
+            <button aria-label="Save project as" disabled={!!pending} onClick={() => save(true)}>
               <Save />
             </button>
             <button aria-label="Close project" disabled={!!pending} onClick={close}>
@@ -508,7 +557,7 @@ export default function App() {
               <button onClick={() => setDesignPreview((value) => !value)}>
                 {designPreview ? "Back to editor" : "Preview app"}
               </button>
-              <button className="save" onClick={save}>
+              <button className="save" onClick={() => save()}>
                 <Save />
                 Save
               </button>
@@ -713,6 +762,204 @@ function ObjectBrowser({
     </section>
   );
 }
+function TableSchemaDesigner({
+  schema,
+  loading,
+  error,
+  onApply,
+  onCancel,
+}: {
+  schema: DbSchema;
+  loading: boolean;
+  error: string;
+  onApply: (operation: AlterTableOperation) => Promise<void>;
+  onCancel: () => void;
+}) {
+  const [tableName, setTableName] = useState(schema.name);
+  const [renameColumn, setRenameColumn] = useState(schema.columns[0]?.name ?? "");
+  const [columnName, setColumnName] = useState("");
+  const [newColumn, setNewColumn] = useState<CreateColumnSpec>({
+    name: "",
+    declaredType: "TEXT",
+    nullable: true,
+    primaryKeyPosition: 0,
+    unique: false,
+    defaultExpression: null,
+    generatedExpression: null,
+  });
+  const applyDrop = (column: DbColumn) => {
+    const related = schema.foreignKeys.filter((key) => key.fromColumns.includes(column.name));
+    const detail = related.length
+      ? ` It also removes ${related.length} relationship${related.length === 1 ? "" : "s"}.`
+      : "";
+    if (
+      window.confirm(
+        `Drop column “${column.name}”? This destructive SQLite change can permanently delete its data.${detail}`,
+      )
+    )
+      void onApply({ operation: "drop_column", column: column.name });
+  };
+  return (
+    <div className="table-designer overflow-auto p-6">
+      <div className="flex items-center justify-between gap-3">
+        <div>
+          <h2>Design {schema.name}</h2>
+          <p className="mt-1 text-slate-600">
+            Edit columns, constraints, and relationships using typed SQLite operations.
+          </p>
+        </div>
+        <button onClick={onCancel}>Close</button>
+      </div>
+      {error && (
+        <div className="error" role="alert">
+          {error}
+        </div>
+      )}
+      <section className="mt-5 border-t border-slate-200 pt-3">
+        <h3>Table</h3>
+        <div className="flex flex-wrap items-center gap-3">
+          <label className="grid gap-1">
+            Table name
+            <input value={tableName} onChange={(e) => setTableName(e.target.value)} />
+          </label>
+          <span className="rounded-full bg-green-100 px-2 py-1 text-xs font-bold whitespace-nowrap text-green-800">
+            Direct SQLite change
+          </span>
+          <button
+            disabled={loading || !tableName.trim() || tableName === schema.name}
+            onClick={() => void onApply({ operation: "rename_table", newName: tableName })}
+          >
+            Rename table
+          </button>
+        </div>
+      </section>
+      <section className="mt-5 border-t border-slate-200 pt-3">
+        <h3>Columns and constraints</h3>
+        {schema.columns.map((column) => (
+          <div className="flex items-center gap-3 border-b border-slate-100 py-2" key={column.name}>
+            <div className="grid min-w-44">
+              <b>{column.name}</b>
+              <small className="text-slate-600">
+                {column.declaredType || "untyped"}
+                {column.primaryKeyPosition ? ` · primary key ${column.primaryKeyPosition}` : ""}
+                {!column.nullable ? " · required" : ""}
+                {column.generated ? " · generated" : ""}
+              </small>
+            </div>
+            <input
+              aria-label={`New name for ${column.name}`}
+              defaultValue={column.name}
+              onChange={(e) => {
+                setRenameColumn(column.name);
+                setColumnName(e.target.value);
+              }}
+            />
+            <button
+              disabled={
+                loading || renameColumn !== column.name || !columnName || columnName === column.name
+              }
+              onClick={() =>
+                void onApply({
+                  operation: "rename_column",
+                  column: column.name,
+                  newName: columnName,
+                })
+              }
+            >
+              Rename
+            </button>
+            <span className="rounded-full bg-green-100 px-2 py-1 text-xs font-bold whitespace-nowrap text-green-800">
+              Direct · destructive
+            </span>
+            <button
+              className="text-red-700"
+              aria-label={`Drop ${column.name}`}
+              disabled={loading}
+              onClick={() => applyDrop(column)}
+            >
+              Drop
+            </button>
+          </div>
+        ))}
+        <div className="mt-4 flex flex-wrap items-center gap-3 bg-slate-50 p-3">
+          <input
+            aria-label="New column name"
+            placeholder="Column name"
+            value={newColumn.name}
+            onChange={(e) => setNewColumn((old) => ({ ...old, name: e.target.value }))}
+          />
+          <select
+            aria-label="New column type"
+            value={newColumn.declaredType}
+            onChange={(e) => setNewColumn((old) => ({ ...old, declaredType: e.target.value }))}
+          >
+            <option>INTEGER</option>
+            <option>REAL</option>
+            <option>TEXT</option>
+            <option>BLOB</option>
+            <option>NUMERIC</option>
+          </select>
+          <label className="flex items-center gap-1">
+            <input
+              type="checkbox"
+              checked={newColumn.nullable}
+              onChange={(e) => setNewColumn((old) => ({ ...old, nullable: e.target.checked }))}
+            />
+            Nullable
+          </label>
+          <input
+            aria-label="Default expression"
+            placeholder="Default expression"
+            value={newColumn.defaultExpression ?? ""}
+            onChange={(e) =>
+              setNewColumn((old) => ({ ...old, defaultExpression: e.target.value || null }))
+            }
+          />
+          <span className="rounded-full bg-green-100 px-2 py-1 text-xs font-bold whitespace-nowrap text-green-800">
+            Direct SQLite change
+          </span>
+          <button
+            disabled={loading || !newColumn.name.trim()}
+            onClick={() => void onApply({ operation: "add_column", column: newColumn })}
+          >
+            <Plus />
+            Add column
+          </button>
+        </div>
+        <p className="mt-3 border-l-3 border-amber-500 bg-amber-50 p-3 text-slate-600">
+          <b>Safe rebuild required:</b> changing existing primary-key, unique, nullability, default,
+          generated, or check constraints requires recreating the table while preserving compatible
+          data.
+        </p>
+      </section>
+      <section className="mt-5 border-t border-slate-200 pt-3">
+        <h3>Relationships</h3>
+        {schema.foreignKeys.length ? (
+          schema.foreignKeys.map((key) => (
+            <div className="flex flex-wrap items-center gap-3 py-2" key={key.id}>
+              <b>{key.fromColumns.join(", ")}</b>
+              <span>
+                → {key.targetTable} ({key.targetColumns.join(", ")})
+              </span>
+              <small>
+                Update {key.onUpdate} · Delete {key.onDelete}
+              </small>
+              <span className="rounded-full bg-amber-100 px-2 py-1 text-xs font-bold whitespace-nowrap text-amber-800">
+                Safe rebuild required to change
+              </span>
+            </div>
+          ))
+        ) : (
+          <p>No foreign-key relationships.</p>
+        )}
+        <p className="mt-3 border-l-3 border-amber-500 bg-amber-50 p-3 text-slate-600">
+          Relationship additions, removals, and action changes are previewed as safe table-rebuild
+          migrations and are not directly supported by SQLite ALTER TABLE.
+        </p>
+      </section>
+    </div>
+  );
+}
 function DatabaseWorkbench({
   objects,
   queries,
@@ -743,7 +990,8 @@ function DatabaseWorkbench({
     [queryName, setQueryName] = useState("Untitled Query"),
     [queryId, setQueryId] = useState<string | null>(null),
     [result, setResult] = useState<{ columns: string[]; rows: DataValue[][] } | null>(null),
-    [designer, setDesigner] = useState(false);
+    [designer, setDesigner] = useState(false),
+    [designingSelected, setDesigningSelected] = useState(false);
   const [draft, setDraft] = useState<Record<number, string>>({}),
     [draftError, setDraftError] = useState("");
   const [tableName, setTableName] = useState(""),
@@ -837,6 +1085,27 @@ function DatabaseWorkbench({
       await onMetadata(false);
     } catch (e) {
       setError(asTauriError(e).message);
+    }
+  };
+  const finishAlter = async (operation: AlterTableOperation) => {
+    setLoading(true);
+    setError("");
+    try {
+      await invoke("alter_database_table", {
+        windowLabel: "main",
+        table: selected,
+        operation,
+      });
+      const nextName = operation.operation === "rename_table" ? operation.newName : selected;
+      onDirty();
+      await onMetadata(true);
+      onSelect({ kind: "table", id: nextName });
+      setDesigningSelected(false);
+      refresh();
+    } catch (e) {
+      setError(asTauriError(e).message);
+    } finally {
+      setLoading(false);
     }
   };
   const runSql = async () => {
@@ -958,6 +1227,7 @@ function DatabaseWorkbench({
       setDraftError(asTauriError(e).message);
     }
   };
+  const selectedSchema = schemas.find((schema) => schema.name === selected);
   const inspectorVisible = designer || sqlMode || !!selected;
   return (
     <section className={`workbench ${inspectorVisible ? "" : "relationship-only"}`}>
@@ -989,7 +1259,15 @@ function DatabaseWorkbench({
             <span>•••</span>
           </div>
           <div className="pane data-pane">
-            {designer ? (
+            {designingSelected && selectedSchema ? (
+              <TableSchemaDesigner
+                schema={selectedSchema}
+                loading={loading}
+                error={error}
+                onApply={finishAlter}
+                onCancel={() => setDesigningSelected(false)}
+              />
+            ) : designer ? (
               <div className="table-designer">
                 <h2>Create table</h2>
                 <label>
@@ -1140,6 +1418,12 @@ function DatabaseWorkbench({
                       <Search />
                       Refresh
                     </button>
+                    {!readOnly && (
+                      <button onClick={() => setDesigningSelected(true)}>
+                        <Columns3 />
+                        Design table
+                      </button>
+                    )}
                   </div>
                 </div>
                 {error && (

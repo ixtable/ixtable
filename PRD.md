@@ -204,7 +204,7 @@ Desktop contains both Studio and Runtime.
 - Local Runtime previews and executes applications.
 - Paid Runtime executes personalized cloud-distributed applications.
 
-There is no browser ixtable application in the MVP.
+There is no browser Studio or Runtime in the MVP. The website is the ixtable Cloud account and management dashboard. It uses Supabase authentication. It does not open or edit `.ixt` applications.
 
 ### 6.3 Future rendering portability
 
@@ -218,38 +218,51 @@ The schema must avoid storing browser-specific CSS strings as the canonical layo
 
 ### 7.1 Format
 
-An application is a self-contained SQLite Archive file with the `.ixt` extension.
+An application is a SQLite Archive file with the `.ixt` extension. The format follows the SQLite archive idea. One SQLite database holds named payload objects, not a zip of loose files. See https://sqlite.org/sqlar.html.
 
-The archive contains individual entries such as:
+The current schema is the contract. Extend it. Do not replace it with a second archive layout.
+
+Versioned tables today:
 
 ```text
-manifest.json
-app.config.sqlite
-data.sqlite                 # when using embedded SQLite records
-attachments/...             # individual files
-assets/...
-migrations/...
+archive_metadata     format version, document id, timestamps, app version
+data_payload         compressed embedded record-store bytes (data.db)
+document_config      JSON DocumentConfig (source of structured settings)
+attachments          application-asset blobs with checksums and MIME metadata
 ```
 
-The precise archive schema is versioned and owned by ixtable.
+A working session extracts those objects to:
 
-### 7.2 Autosave
+```text
+data.db
+document.json
+config.yaml
+attachments/<id>/
+```
 
-Local edits autosave to the `.ixt` archive.
+`data.db` is the embedded SQLite RecordStore while a session is open. Writes go there. A successful save packs the extracted store back into `data_payload`.
 
-Implementation may use extracted transactional working files internally, but externally visible behavior must be:
+Later objects (migrations, extra assets, unknown tables) must be added as additional archive tables or rows. Unknown future tables must be preserved where safe. Unsupported `format_version` values fail with a clear compatibility message.
 
-- debounced automatic saving;
-- atomic checkpoint replacement;
-- no partially written archive becoming authoritative;
-- crash recovery from the last valid checkpoint; and
-- a visible dirty/saving/saved/error state.
+### 7.2 Autosave, extraction, and crash recovery
+
+The `.ixt` file is the source of truth after a successful save.
+
+Extraction exists so in-progress edits can use ordinary files and database connections. Extracted files are WIP. They are not a second published copy of the application.
+
+Required behavior:
+
+- debounced automatic saving into the `.ixt` file when a path exists
+- atomic replacement of the archive (temp file, validate, rename)
+- no partially written archive becoming authoritative
+- crash recovery of extracted WIP, then a checkpoint back into the `.ixt` file
+- visible dirty, saving, saved, and error state
+
+If recovery cannot reconstruct a valid archive, keep the last valid `.ixt` and surface the failure.
 
 ### 7.3 Portability
 
 A local `.ixt` application must remain usable without an ixtable account or cloud service.
-
-Unknown future archive entries must be preserved where safe. Unsupported archive-schema versions must fail with a clear compatibility message rather than corrupting the application.
 
 ### 7.4 Cloud size limit
 
@@ -261,28 +274,23 @@ Before publishing or backup, Studio reports the archive size and largest entries
 
 ## 8. Application Configuration
 
-`app.config.sqlite` stores application definitions, not ordinary business records.
+`DocumentConfig` is JSON stored in `document_config`. That is the structured application catalog. It is not a second SQLite catalog of definitions.
 
-It includes:
+The same document also keeps a YAML projection (`config.yaml` in the working session). YAML is the code-first editing surface. Loading YAML replaces `DocumentConfig`. Saving or updating config rewrites YAML so the two stay in sync.
 
-- entities and fields;
-- relationships and constraints;
-- datasource definitions and capabilities;
-- saved queries and parameters;
-- forms and form layouts;
-- reports and report layouts;
-- dashboards and shared grid layouts;
-- expressions and actions;
-- synchronous and asynchronous triggers;
-- runtime roles and permissions;
-- navigation;
-- migrations;
-- object IDs and dependency metadata; and
-- archive/revision metadata.
+`DocumentConfig` includes:
+
+- document name and active mode
+- navigation state and settings
+- saved queries and parameters
+- design schema (forms, shared grid layouts, navigation)
+- and later reports, dashboards, expressions, actions, triggers, roles, migrations, datasource definitions, and dependency metadata as fields on this same object
 
 ixtable owns the configuration schema and migrates it during product upgrades and downgrades where supported.
 
 Stable object IDs are mandatory. Display names are not identity.
+
+Record schema (tables, columns, constraints) lives in the RecordStore, not in `DocumentConfig`.
 
 ---
 
@@ -329,7 +337,14 @@ Supported credential modes:
 
 Studio warns that shared credentials reduce revocation and database-level attribution.
 
-### 9.4 Capability contract
+### 9.4 Capability contract and read/write split
+
+`RecordStore` is the generic name for the current split:
+
+- DuckDB reads every list, detail, selector, saved query, report, and dashboard dataset.
+- Writes go directly to the selected store (SQLite or PostgreSQL). They never go through DuckDB.
+
+Studio UI must speak store capabilities (in-place change vs rebuild), not SQLite-only alter-table language.
 
 Every RecordStore publishes capabilities for:
 
@@ -570,24 +585,24 @@ Schedules, webhooks, cloud workers, email integrations, and always-on execution 
 
 ---
 
-## 18. Attachments
+## 18. Application assets
 
-Attachments are individual files stored inside the `.ixt` SQLite Archive.
+Application assets are individual files stored in the archive `attachments` table. They belong to the application, not to a business record.
 
 Requirements:
 
-- stable attachment IDs;
-- original filename and MIME metadata;
-- checksum validation;
-- deduplication by content hash where practical;
-- safe filename handling;
-- streaming import/export to avoid loading the whole attachment into memory;
-- orphan detection and cleanup; and
-- inclusion in archive checkpoints and cloud versions.
+- stable asset IDs
+- original filename and MIME metadata
+- checksum validation
+- deduplication by content hash where practical
+- safe filename handling
+- streaming import/export so the whole file need not sit in memory
+- orphan detection and cleanup
+- inclusion in archive checkpoints and cloud versions
 
-Because attachments enlarge every archive snapshot, Studio must display attachment contribution to archive size.
+Studio must show how much of archive size comes from assets.
 
-External/object-storage record attachments are deferred.
+Record-linked or object-storage attachments are deferred.
 
 ---
 
@@ -825,7 +840,7 @@ The three golden applications are:
 - migration fixtures; and
 - end-to-end CI scenarios.
 
-They may use only public MVP features. Hidden app-specific runtime code is prohibited.
+They may use only public MVP features. Hidden app-specific runtime code is prohibited. Golden applications may churn while kernel contracts settle. A golden fixture is not a compatibility freeze.
 
 ### 26.2 Lightweight CRM
 
@@ -975,8 +990,8 @@ Implementation may be accelerated by AI coding and QA agents, but generated work
 
 Deliver:
 
-- `.ixt` SQLite Archive read/write/autosave spike;
-- crash-safe atomic checkpoint spike with large attachments;
+- `.ixt` SQLite archive read/write/autosave spike;
+- crash-safe atomic checkpoint spike with large application assets;
 - shared grid schema and CSS Grid renderer spike;
 - DuckDB reads over SQLite and PostgreSQL on all three OSes;
 - PostgreSQL write path and read-after-write consistency spike;
@@ -1000,18 +1015,18 @@ Exit criteria:
 
 Deliver:
 
-- application lifecycle;
-- `.ixt` archive and manifest;
-- `app.config.sqlite` catalog and migrations;
-- embedded `data.sqlite`;
-- individual attachment entries;
-- autosave and checkpoints;
-- archive validation and recovery;
-- SQLite/PostgreSQL RecordStore contracts;
-- DuckDB read layer;
-- schema designer and relationship model;
-- application dependency validation; and
-- session undo/redo for definition edits.
+- application lifecycle
+- `.ixt` SQLite archive schema and `format_version`
+- `DocumentConfig` JSON plus YAML projection
+- embedded RecordStore payload (`data.db` / `data_payload`)
+- application-asset attachment rows
+- autosave and checkpoints into the `.ixt` file
+- archive validation and recovery of extracted WIP
+- SQLite/PostgreSQL RecordStore contracts
+- DuckDB read layer
+- schema designer and relationship model
+- application dependency validation
+- session undo/redo for definition edits
 
 Exit criteria:
 

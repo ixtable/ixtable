@@ -186,6 +186,15 @@ impl DocumentManager {
             .config
             .clone())
     }
+    pub fn config_yaml(&self, window: &str) -> Result<String, AppError> {
+        archive::document_config_yaml(&self.config(window)?)
+            .map_err(|e| AppError::new("INVALID_CONFIG", e.to_string()))
+    }
+    pub fn apply_config_yaml(&self, window: &str, yaml: &str) -> Result<SessionState, AppError> {
+        let config = archive::document_config_from_yaml(yaml)
+            .map_err(|e| AppError::new("INVALID_CONFIG", e.to_string()))?;
+        self.update_config(window, config)
+    }
     pub fn database_path(&self, window: &str) -> Result<PathBuf, AppError> {
         Ok(self
             .sessions
@@ -287,6 +296,12 @@ impl DocumentManager {
             serde_json::to_vec_pretty(&s.doc.config).unwrap(),
         )
         .map_err(|e| AppError::new("IO_ERROR", e))?;
+        fs::write(
+            s.workspace.join("config.yaml"),
+            archive::document_config_yaml(&s.doc.config)
+                .map_err(|e| AppError::new("INVALID_CONFIG", e.to_string()))?,
+        )
+        .map_err(|e| AppError::new("IO_ERROR", e))?;
         Ok(s.state())
     }
     pub fn save(&self, window: &str, new_path: Option<PathBuf>) -> Result<SessionState, AppError> {
@@ -305,9 +320,8 @@ impl DocumentManager {
             ));
         }
         s.saving = true;
-        // The extracted database is authoritative after a session is installed.  In
-        // particular, never let the stale payload loaded from the archive overwrite
-        // edits made by the data editor.
+        // Extracted data.db holds WIP record edits. Pack it into the archive so the
+        // `.ixt` file remains the source of truth after a successful save.
         s.doc.data =
             fs::read(s.workspace.join("data.db")).map_err(|e| AppError::new("IO_ERROR", e))?;
         let result = archive::write_archive(&path, &s.doc);

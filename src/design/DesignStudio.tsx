@@ -1,8 +1,15 @@
-import { useEffect, useMemo, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { Columns3, ListFilter, Redo2, Rows3, Shapes, Trash2, Undo2 } from "lucide-react";
+import { useEffect, useMemo, useState } from "react";
 import type { DataValue, DbColumn, DbObject, DbPage, DocumentConfig } from "../App";
-import { newControl, type ControlKind, type DesignControl, type DesignSchema } from "./schema";
+import {
+  type ControlKind,
+  type DesignControl,
+  type DesignSchema,
+  layoutStyle,
+  newControl,
+  placementStyle,
+} from "./schema";
 
 type Props = { preview: boolean; objects: DbObject[]; onDirty: () => void };
 const valueText = (value?: DataValue) => (value?.type === "null" ? "" : String(value?.value ?? ""));
@@ -91,7 +98,7 @@ export function DesignStudio({ preview, objects, onDirty }: Props) {
           <button
             key={kind}
             onClick={() => {
-              const item = newControl(kind as ControlKind);
+              const item = newControl(kind as ControlKind, form);
               setSelected(item.id);
               void changeForm({ controls: [...form.controls, item] });
             }}
@@ -113,19 +120,14 @@ export function DesignStudio({ preview, objects, onDirty }: Props) {
         <div className="form-card">
           <small>{form.name.toUpperCase()}</small>
           <h2>{form.name}</h2>
-          <div
-            style={{
-              display: "grid",
-              gridTemplateColumns: `repeat(${form.layout.columns}, 1fr)`,
-              gap: form.layout.gap,
-            }}
-          >
+          <div style={layoutStyle(form.layout)}>
             {form.controls.map((item, index) => (
               <div
                 role="button"
                 tabIndex={0}
                 className={`design-control ${selected === item.id ? "selected" : ""}`}
                 key={item.id}
+                style={placementStyle(item.placement)}
                 onClick={() => setSelected(item.id)}
                 onKeyDown={(event) => {
                   if (event.key === "Enter") setSelected(item.id);
@@ -198,18 +200,6 @@ export function DesignStudio({ preview, objects, onDirty }: Props) {
                   ))}
               </select>
             </label>
-            <label>
-              Columns
-              <input
-                type="number"
-                min="1"
-                max="4"
-                value={form.layout.columns}
-                onChange={(e) =>
-                  void changeForm({ layout: { ...form.layout, columns: Number(e.target.value) } })
-                }
-              />
-            </label>
           </>
         )}
         {control && (
@@ -240,6 +230,24 @@ export function DesignStudio({ preview, objects, onDirty }: Props) {
                   <option key={c.name}>{c.name}</option>
                 ))}
               </select>
+            </label>
+            <label>
+              Column span
+              <input
+                type="number"
+                min="1"
+                max={form.layout.columns.length}
+                aria-label="Column span"
+                value={control.placement.columnSpan}
+                onChange={(e) =>
+                  void changeControl({
+                    placement: {
+                      ...control.placement,
+                      columnSpan: Number(e.target.value) || 1,
+                    },
+                  })
+                }
+              />
             </label>
             <label>
               <input

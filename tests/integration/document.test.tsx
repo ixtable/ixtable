@@ -1,12 +1,29 @@
-import { render, screen } from "@testing-library/react";
-import userEvent from "@testing-library/user-event";
-import { invoke } from "@tauri-apps/api/core";
 import { writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { invoke } from "@tauri-apps/api/core";
+import { render, screen } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { expect, it, vi } from "vitest";
 import App from "../../src/App";
 import { renderNewDocument } from "./helpers";
 import { dialogMock } from "./setup";
+
+it("applies YAML document config and keeps it valid", async () => {
+  await renderNewDocument();
+  await invoke("apply_document_config_yaml", {
+    windowLabel: "main",
+    yaml: "name: YAML App\nactiveMode: design\nversion: 2\n",
+  });
+  const config = await invoke<{ name: string; activeMode: string; design: { version: number } }>(
+    "read_document_config",
+    { windowLabel: "main" },
+  );
+  expect(config.name).toBe("YAML App");
+  expect(config.activeMode).toBe("design");
+  expect(config.design.version).toBe(2);
+  const yaml = await invoke<string>("read_document_config_yaml", { windowLabel: "main" });
+  expect(yaml).toContain("YAML App");
+});
 
 it("creates a document, chooses its first destination, and saves existing documents in place", async () => {
   const user = await renderNewDocument();

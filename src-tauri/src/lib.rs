@@ -52,6 +52,14 @@ fn update_document_config(
     manager()?.update_config(&window_label, config)
 }
 #[tauri::command]
+fn read_document_config_yaml(window_label: String) -> Result<String, AppError> {
+    manager()?.config_yaml(&window_label)
+}
+#[tauri::command]
+fn apply_document_config_yaml(window_label: String, yaml: String) -> Result<SessionState, AppError> {
+    manager()?.apply_config_yaml(&window_label, &yaml)
+}
+#[tauri::command]
 fn save_document(window_label: String) -> Result<SessionState, AppError> {
     manager()?.save(&window_label, None)
 }
@@ -260,6 +268,8 @@ pub fn run() {
             document_state,
             read_document_config,
             update_document_config,
+            read_document_config_yaml,
+            apply_document_config_yaml,
             save_document,
             save_document_as,
             reload_document,

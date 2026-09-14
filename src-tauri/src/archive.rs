@@ -1,3 +1,9 @@
+//! SQLite database used as an application archive (see https://sqlite.org/sqlar.html).
+//!
+//! The on-disk `.ixt` file is a SQLite database with versioned tables for metadata,
+//! compressed record-store bytes, JSON document config, and application-asset
+//! attachments. Working sessions extract `data.db`, `document.json`, and
+//! `config.yaml`. The `.ixt` file is the source of truth after a successful save.
 use crate::design::DesignSchema;
 use chrono::Utc;
 use rusqlite::{params, Connection};
@@ -63,6 +69,17 @@ impl Default for DocumentConfig {
             design: DesignSchema::default(),
         }
     }
+}
+
+pub fn document_config_yaml(config: &DocumentConfig) -> Result<String, ArchiveError> {
+    serde_yaml::to_string(config).map_err(|e| ArchiveError::Invalid(e.to_string()))
+}
+
+pub fn document_config_from_yaml(yaml: &str) -> Result<DocumentConfig, ArchiveError> {
+    let config: DocumentConfig =
+        serde_yaml::from_str(yaml).map_err(|e| ArchiveError::Invalid(e.to_string()))?;
+    config.design.validate().map_err(ArchiveError::Invalid)?;
+    Ok(config)
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -294,6 +311,7 @@ pub fn extract(doc: &ArchiveDocument, root: &Path) -> Result<PathBuf, ArchiveErr
         work.join("document.json"),
         serde_json::to_vec_pretty(&doc.config).unwrap(),
     )?;
+    fs::write(work.join("config.yaml"), document_config_yaml(&doc.config)?)?;
     for a in &doc.attachments {
         let dir = work.join("attachments").join(&a.id);
         fs::create_dir_all(&dir)?;
@@ -330,7 +348,7 @@ pub fn add_attachment(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::design::{Control, ControlKind, ControlWidth, Validation};
+    use crate::design::{Control, ControlKind, Placement, Validation};
 
     #[test]
     fn design_survives_archive_round_trip() {
@@ -345,7 +363,13 @@ mod tests {
                 required: true,
                 ..Default::default()
             },
-            width: ControlWidth::Full,
+            placement: Placement {
+                column: 1,
+                row: 1,
+                column_span: 12,
+                row_span: 1,
+                region: None,
+            },
         });
         write_archive(&path, &document).unwrap();
         let reopened = read_archive(&path).unwrap();
@@ -361,5 +385,17 @@ mod tests {
         .unwrap();
         assert_eq!(config.design.version, crate::design::DESIGN_SCHEMA_VERSION);
         assert!(config.design.validate().is_ok());
+    }
+
+    #[test]
+    fn yaml_round_trips_document_config() {
+        let config = DocumentConfig::default();
+        let yaml = document_config_yaml(&config).unwrap();
+        let parsed = document_config_from_yaml(&yaml).unwrap();
+        assert_eq!(parsed, config);
+        let loaded = document_config_from_yaml("name: From YAML\nactiveMode: data\nversion: 2\n")
+            .unwrap();
+        assert_eq!(loaded.name, "From YAML");
+        assert!(loaded.design.validate().is_ok());
     }
 }

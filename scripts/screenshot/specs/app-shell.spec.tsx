@@ -189,7 +189,7 @@ it("captures the document lifecycle shell", async () => {
     name: "app-qa-03-table-design",
     expectations: [
       "Selected table metadata is editable in the table designer.",
-      "Direct SQLite changes and safe rebuild migrations are visually distinct.",
+      "In-place schema changes and table-rebuild migrations are visually distinct.",
       "Column constraints and relationship implications remain visible.",
     ],
   });

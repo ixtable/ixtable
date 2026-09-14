@@ -18,7 +18,7 @@ This page is a documentation stub. The design model and editing behavior can cha
 
 ## Form builder
 
-The **form builder** arranges controls on a canvas and exposes settings for the selected control. The component library is the source for new controls. The properties panel edits their configuration.
+The form builder arranges controls on a shared grid and exposes settings for the selected control. Layout is a track-based grid (fractional, fixed, and content-sized columns, spans, gaps, named regions, breakpoints). The renderer maps that model to CSS Grid. It does not store CSS strings as the application schema.
 
 :::note TODO
 

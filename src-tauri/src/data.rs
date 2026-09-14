@@ -1,8 +1,9 @@
-//! Typed database operations used by the data view.
+//! Typed record-store operations used by the data view.
 //!
-//! Identifiers are discovered from SQLite and quoted here; values are always
-//! bound parameters.  Consequently none of the mutation entry points accepts
-//! arbitrary SQL.
+//! Reads go through DuckDB (`ReadRuntime`). Writes go to the underlying store
+//! (SQLite today, PostgreSQL later) and never through DuckDB.
+//! Identifiers are discovered from the store and quoted here. Values are always
+//! bound parameters. Mutation entry points do not accept arbitrary SQL.
 use base64::{engine::general_purpose::STANDARD, Engine};
 use rusqlite::{
     params_from_iter,

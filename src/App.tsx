@@ -1,21 +1,20 @@
-import { useEffect, useMemo, useState } from "react";
-import { invoke } from "@tauri-apps/api/core";
 import Editor from "@monaco-editor/react";
 import * as DropdownMenu from "@radix-ui/react-dropdown-menu";
+import { invoke } from "@tauri-apps/api/core";
 import {
   Background,
   Controls,
+  type Edge,
   Handle,
   MiniMap,
-  Position,
-  ReactFlow,
-  type Edge,
   type Node,
   type NodeProps,
+  Position,
+  ReactFlow,
 } from "@xyflow/react";
+import { useEffect, useMemo, useState } from "react";
 import "@xyflow/react/dist/style.css";
 import {
-  Archive,
   ChevronDown,
   Code2,
   Columns3,
@@ -25,7 +24,6 @@ import {
   FolderOpen,
   GitBranch,
   Grid3X3,
-  ListFilter,
   Plus,
   Rows3,
   Save,
@@ -33,10 +31,8 @@ import {
   Shapes,
   Table2,
   Trash2,
-  Upload,
   X,
 } from "lucide-react";
-import type { LucideIcon } from "lucide-react";
 import { DesignStudio } from "./design/DesignStudio";
 import type { DesignSchema } from "./design/schema";
 import { chooseDocumentDestination, chooseDocumentToOpen } from "./lib/dialog";
@@ -155,7 +151,6 @@ const fromSession = (state: SessionState): Doc => ({
 export default function App() {
   const [doc, setDoc] = useState<Doc | null>(null);
   const [notice, setNotice] = useState("");
-  const [view, setView] = useState("Data view");
   const [designPreview, setDesignPreview] = useState(false);
   const [pending, setPending] = useState("");
   const [error, setError] = useState<TauriError | null>(null);
@@ -296,8 +291,6 @@ export default function App() {
       setPending("");
     }
   };
-  const runAction = (label: string) =>
-    setNotice(`${label} is available from the active data view.`);
   if (!doc)
     return (
       <div className="start-screen">
@@ -412,10 +405,6 @@ export default function App() {
               <Shapes />
               Forms<span>›</span>
             </button>
-            <button>
-              <Shapes />
-              Switchboards<span>›</span>
-            </button>
           </nav>
         )}
         <div className="sidebar-bottom">
@@ -442,31 +431,33 @@ export default function App() {
         )}
         <div className="ribbon-tabs">
           <button className="active">Home</button>
-          <button>Create</button>
-          <button>External Data</button>
-          <button>Database Tools</button>
         </div>
-        <section className="ribbon" aria-label="Data tools">
+        <section className="ribbon" aria-label="Workspace">
           <div className="ribbon-group view-group">
             <DropdownMenu.Root>
               <DropdownMenu.Trigger asChild>
                 <button className="ribbon-big">
                   <Grid3X3 />
-                  <span>{view}</span>
+                  <span>{doc.mode === "design" ? "Design view" : "Data view"}</span>
                   <ChevronDown />
                 </button>
               </DropdownMenu.Trigger>
               <DropdownMenu.Portal>
                 <DropdownMenu.Content className="view-menu" sideOffset={6}>
                   <DropdownMenu.Label>Switch view</DropdownMenu.Label>
-                  {["Data view", "Design view", "SQL view"].map((v) => (
+                  {(
+                    [
+                      ["Data view", "data"],
+                      ["Design view", "design"],
+                    ] as const
+                  ).map(([label, mode]) => (
                     <DropdownMenu.Item
-                      key={v}
-                      onSelect={() => setView(v)}
-                      className={view === v ? "checked" : ""}
+                      key={mode}
+                      onSelect={() => void changeMode(mode)}
+                      className={doc.mode === mode ? "checked" : ""}
                     >
-                      {v}
-                      <span>{view === v ? "✓" : ""}</span>
+                      {label}
+                      <span>{doc.mode === mode ? "✓" : ""}</span>
                     </DropdownMenu.Item>
                   ))}
                 </DropdownMenu.Content>
@@ -474,25 +465,6 @@ export default function App() {
             </DropdownMenu.Root>
             <small>View</small>
           </div>
-          <RibbonGroup
-            label="Manage table"
-            items={[
-              [ListFilter, "Select"],
-              [Archive, "Make Table"],
-              [Upload, "Append"],
-              [Columns3, "Update"],
-              [Trash2, "Delete"],
-            ]}
-            action={runAction}
-          />
-          <RibbonGroup
-            label="Query Setup"
-            items={[
-              [GitBranch, "Show Table"],
-              [Rows3, "Insert Rows"],
-            ]}
-            action={runAction}
-          />
         </section>
         {pending && (
           <div className="progress" role="status">
@@ -674,7 +646,7 @@ function TableSchemaDesigner({
       : "";
     if (
       window.confirm(
-        `Drop column “${column.name}”? This destructive SQLite change can permanently delete its data.${detail}`,
+        `Drop column “${column.name}”? This destructive change permanently deletes its data.${detail}`,
       )
     )
       void onApply({ operation: "drop_column", column: column.name });
@@ -685,7 +657,7 @@ function TableSchemaDesigner({
         <div>
           <h2>Design {schema.name}</h2>
           <p className="mt-1 text-slate-600">
-            Edit columns, constraints, and relationships using typed SQLite operations.
+            Edit columns, constraints, and relationships using typed record-store operations.
           </p>
         </div>
         <button onClick={onCancel}>Close</button>
@@ -703,7 +675,7 @@ function TableSchemaDesigner({
             <input value={tableName} onChange={(e) => setTableName(e.target.value)} />
           </label>
           <span className="rounded-full bg-green-100 px-2 py-1 text-xs font-bold whitespace-nowrap text-green-800">
-            Direct SQLite change
+            In-place schema change
           </span>
           <button
             disabled={loading || !tableName.trim() || tableName === schema.name}
@@ -796,7 +768,7 @@ function TableSchemaDesigner({
             }
           />
           <span className="rounded-full bg-green-100 px-2 py-1 text-xs font-bold whitespace-nowrap text-green-800">
-            Direct SQLite change
+            In-place schema change
           </span>
           <button
             disabled={loading || !newColumn.name.trim()}
@@ -833,8 +805,8 @@ function TableSchemaDesigner({
           <p>No foreign-key relationships.</p>
         )}
         <p className="mt-3 border-l-3 border-amber-500 bg-amber-50 p-3 text-slate-600">
-          Relationship additions, removals, and action changes are previewed as safe table-rebuild
-          migrations and are not directly supported by SQLite ALTER TABLE.
+          Relationship additions, removals, and action changes are previewed as table-rebuild
+          migrations. They are not in-place schema changes.
         </p>
       </section>
     </div>
@@ -1589,30 +1561,6 @@ function ResultGrid({ result }: { result: { columns: string[]; rows: DataValue[]
           <b>Query returned no rows</b>
         </div>
       )}
-    </div>
-  );
-}
-
-function RibbonGroup({
-  label,
-  items,
-  action,
-}: {
-  label: string;
-  items: Array<[LucideIcon, string]>;
-  action: (name: string) => void;
-}) {
-  return (
-    <div className="ribbon-group">
-      <div className="ribbon-tools">
-        {items.map(([Icon, name]) => (
-          <button key={name} onClick={() => action(name)}>
-            <Icon />
-            <span>{name}</span>
-          </button>
-        ))}
-      </div>
-      <small>{label}</small>
     </div>
   );
 }

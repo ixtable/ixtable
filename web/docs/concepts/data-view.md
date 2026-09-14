@@ -46,13 +46,13 @@ Document validation, persistence, sorting, filtering, and record deletion when t
 
 ## Ribbon commands
 
-The ribbon groups actions by task. The current interface exposes table management and query setup commands, including Select, Make Table, Append, Update, Delete, Show Table, and Insert Rows.
+The ribbon groups workspace actions by task. Home stays. The View control switches Data view and Design view.
 
-These commands establish the intended workspace, but most do not run an operation yet.
+Query-action labels that do not run (Make Table, Append, Update, Delete, Show Table, Insert Rows) stay out of the ribbon until those commands exist.
 
 :::note TODO
 
-Implement and document each ribbon command. Add examples that show its effect on project data.
+Add each real ribbon command when it performs an operation. Document its effect on project data.
 
 :::
 

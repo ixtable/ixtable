@@ -1,58 +1,41 @@
 //! Typed record-store operations used by the data view.
 //!
-//! Reads go through DuckDB (`ReadRuntime`). Writes go to the underlying store
-//! (SQLite today, PostgreSQL later) and never through DuckDB.
-//! Identifiers are discovered from the store and quoted here. Values are always
-//! bound parameters. Mutation entry points do not accept arbitrary SQL.
+//! Reads, inserts, updates, deletes, and designer DDL run on a native DuckDB
+//! file (`data.db`). PostgreSQL uses the same DuckDB SQL after
+//! `ATTACH ... (TYPE POSTGRES)`. Identifiers are discovered from the store and
+//! quoted here. Values are always bound parameters. Saved queries still reject
+//! mutating SQL.
 use base64::{engine::general_purpose::STANDARD, Engine};
-use rusqlite::{
-    params_from_iter,
-    types::{Value as SqlValue, ValueRef},
-    Connection, OpenFlags,
-};
 use serde::{Deserialize, Serialize};
 use std::{collections::HashSet, path::Path};
 
-/// Session-scoped DuckDB reader. Production callers pass the signed extension
-/// copied from the application resources; no extension may be auto-installed.
-/// Writes never enter this connection and are performed by the rusqlite
-/// transaction functions below.
+/// Session-scoped DuckDB connection. Autoload stays off. Row inserts, updates,
+/// and deletes run on this connection against the attached RecordStore. Saved
+/// read queries still reject mutating SQL.
 pub struct ReadRuntime {
-    pub workspace: std::path::PathBuf,
+    pub db_path: std::path::PathBuf,
     connection: duckdb::Connection,
 }
 impl ReadRuntime {
     pub fn new(workspace: &Path, sqlite_extension: &Path) -> Result<Self, String> {
+        Self::open(workspace.join("data.db"), sqlite_extension)
+    }
+    pub fn open(db_path: std::path::PathBuf, _sqlite_extension: &Path) -> Result<Self, String> {
         let config = duckdb::Config::default()
             .enable_autoload_extension(false)
-            .map_err(|e| e.to_string())?
-            .enable_external_access(true)
             .map_err(|e| e.to_string())?;
-        let connection = duckdb::Connection::open_in_memory_with_flags(config)
+        if let Some(parent) = db_path.parent() {
+            std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+        }
+        let connection = duckdb::Connection::open_with_flags(&db_path, config)
             .map_err(|e| format!("DuckDB startup: {e}"))?;
-        let extension = sqlite_extension.to_string_lossy().replace('\'', "''");
-        connection
-            .execute_batch(&format!("LOAD '{extension}'"))
-            .map_err(|e| format!("SQLite extension startup: {e}"))?;
-        let mut runtime = Self {
-            workspace: workspace.to_owned(),
+        Ok(Self {
+            db_path,
             connection,
-        };
-        runtime.refresh()?;
-        Ok(runtime)
+        })
     }
     pub fn refresh(&mut self) -> Result<(), String> {
-        let _ = self.connection.execute_batch("USE memory; DETACH data");
-        let db = self
-            .workspace
-            .join("data.db")
-            .to_string_lossy()
-            .replace('\'', "''");
-        self.connection
-            .execute_batch(&format!(
-                "ATTACH '{db}' AS data (TYPE SQLITE, READ_ONLY); USE data"
-            ))
-            .map_err(|e| format!("SQLite attachment: {e}"))
+        Ok(())
     }
     pub fn connection(&self) -> &duckdb::Connection {
         &self.connection
@@ -66,7 +49,7 @@ impl ReadRuntime {
         let connection =
             duckdb::Connection::open_in_memory_with_flags(config).map_err(|e| e.to_string())?;
         Ok(Self {
-            workspace: std::path::PathBuf::new(),
+            db_path: std::path::PathBuf::new(),
             connection,
         })
     }
@@ -83,32 +66,6 @@ pub enum DataValue {
     Boolean(bool),
     Date(String),
     Timestamp(String),
-}
-impl DataValue {
-    fn sql(&self) -> Result<SqlValue, String> {
-        Ok(match self {
-            Self::Null => SqlValue::Null,
-            Self::Integer(v) => SqlValue::Integer(*v),
-            Self::Real(v) if v.is_finite() => SqlValue::Real(*v),
-            Self::Real(_) => return Err("Real values must be finite".into()),
-            Self::Text(v) | Self::Date(v) | Self::Timestamp(v) => SqlValue::Text(v.clone()),
-            Self::Blob(v) => SqlValue::Blob(
-                STANDARD
-                    .decode(v)
-                    .map_err(|_| "Blob values must be valid base64")?,
-            ),
-            Self::Boolean(v) => SqlValue::Integer(*v as i64),
-        })
-    }
-}
-fn value(v: ValueRef<'_>) -> DataValue {
-    match v {
-        ValueRef::Null => DataValue::Null,
-        ValueRef::Integer(v) => DataValue::Integer(v),
-        ValueRef::Real(v) => DataValue::Real(v),
-        ValueRef::Text(v) => DataValue::Text(String::from_utf8_lossy(v).into()),
-        ValueRef::Blob(v) => DataValue::Blob(STANDARD.encode(v)),
-    }
 }
 fn duck_value(v: duckdb::types::Value) -> DataValue {
     use duckdb::types::Value as V;
@@ -128,6 +85,23 @@ fn duck_value(v: duckdb::types::Value) -> DataValue {
         V::Blob(v) => DataValue::Blob(STANDARD.encode(v)),
         other => DataValue::Text(format!("{other:?}")),
     }
+}
+fn duck_bind(value: &DataValue) -> Result<duckdb::types::Value, String> {
+    Ok(match value {
+        DataValue::Null => duckdb::types::Value::Null,
+        DataValue::Integer(v) => duckdb::types::Value::BigInt(*v),
+        DataValue::Real(v) if v.is_finite() => duckdb::types::Value::Double(*v),
+        DataValue::Real(_) => return Err("Real values must be finite".into()),
+        DataValue::Text(v) | DataValue::Date(v) | DataValue::Timestamp(v) => {
+            duckdb::types::Value::Text(v.clone())
+        }
+        DataValue::Blob(v) => duckdb::types::Value::Blob(
+            STANDARD
+                .decode(v)
+                .map_err(|_| "Blob values must be valid base64")?,
+        ),
+        DataValue::Boolean(v) => duckdb::types::Value::Boolean(*v),
+    })
 }
 fn q(s: &str) -> String {
     format!("\"{}\"", s.replace('"', "\"\""))
@@ -341,7 +315,7 @@ pub enum AlterTable {
 
 impl ReadRuntime {
     pub fn objects(&self) -> Result<Vec<DbObject>, String> {
-        let mut stmt=self.connection.prepare("SELECT table_name, CASE table_type WHEN 'VIEW' THEN 'view' ELSE 'table' END FROM information_schema.tables WHERE table_catalog='data' AND table_schema='main' AND table_name NOT LIKE 'sqlite_%' ORDER BY lower(table_name)").map_err(|e|e.to_string())?;
+        let mut stmt=self.connection.prepare("SELECT table_name, CASE table_type WHEN 'VIEW' THEN 'view' ELSE 'table' END FROM information_schema.tables WHERE table_schema='main' AND table_name NOT LIKE 'sqlite_%' AND table_name NOT LIKE 'pg_%' ORDER BY lower(table_name)").map_err(|e|e.to_string())?;
         let rows = stmt
             .query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?)))
             .map_err(|e| e.to_string())?;
@@ -351,7 +325,7 @@ impl ReadRuntime {
             let row_count = self
                 .connection
                 .query_row(
-                    &format!("SELECT count(*) FROM data.{}", q(&name)),
+                    &format!("SELECT count(*) FROM {}", q(&name)),
                     [],
                     |r| r.get::<_, u64>(0),
                 )
@@ -433,22 +407,23 @@ impl ReadRuntime {
         if !self.objects()?.iter().any(|o| o.name == table) {
             return Err(format!("Table or view {table:?} does not exist"));
         }
-        let mut stmt=self.connection.prepare("SELECT column_name,data_type,is_nullable,column_default FROM information_schema.columns WHERE table_catalog='data' AND table_schema='main' AND table_name=? ORDER BY ordinal_position").map_err(|e|e.to_string())?;
+        let mut stmt=self.connection.prepare("SELECT column_name,data_type,is_nullable,column_default,generation_expression FROM information_schema.columns WHERE table_schema='main' AND table_name=? ORDER BY ordinal_position").map_err(|e|e.to_string())?;
         let mut columns = stmt
             .query_map([table], |r| {
+                let expression: Option<String> = r.get(4)?;
                 Ok(Column {
                     name: r.get(0)?,
                     declared_type: r.get(1)?,
                     nullable: r.get::<_, String>(2)? == "YES",
                     default_value: r.get(3)?,
                     primary_key_position: 0,
-                    generated: false,
+                    generated: expression.as_deref().map(|s| !s.is_empty()).unwrap_or(false),
                 })
             })
             .map_err(|e| e.to_string())?
             .collect::<Result<Vec<_>, _>>()
             .map_err(|e| e.to_string())?;
-        let mut pk=self.connection.prepare("SELECT k.column_name FROM information_schema.table_constraints t JOIN information_schema.key_column_usage k USING (constraint_catalog,constraint_schema,constraint_name) WHERE t.table_catalog='data' AND t.table_schema='main' AND t.table_name=? AND t.constraint_type='PRIMARY KEY' ORDER BY k.ordinal_position").map_err(|e|e.to_string())?;
+        let mut pk=self.connection.prepare("SELECT k.column_name FROM information_schema.table_constraints t JOIN information_schema.key_column_usage k USING (constraint_catalog,constraint_schema,constraint_name) WHERE t.table_schema='main' AND t.table_name=? AND t.constraint_type='PRIMARY KEY' ORDER BY k.ordinal_position").map_err(|e|e.to_string())?;
         for (position, name) in pk
             .query_map([table], |r| r.get::<_, String>(0))
             .map_err(|e| e.to_string())?
@@ -462,7 +437,7 @@ impl ReadRuntime {
         let sql: Option<String> = self
             .connection
             .query_row(
-                "SELECT sql FROM data.sqlite_master WHERE name=?",
+                "SELECT sql FROM sqlite_master WHERE name=?",
                 [table],
                 |r| r.get(0),
             )
@@ -555,7 +530,7 @@ impl ReadRuntime {
         } else {
             format!(" WHERE {}", predicates.join(" AND "))
         };
-        let from = format!("data.{}", q(table));
+        let from = q(table);
         let total = self
             .connection
             .query_row(
@@ -564,15 +539,12 @@ impl ReadRuntime {
                 |r| r.get::<_, u64>(0),
             )
             .map_err(|e| e.to_string())?;
-        let mut identity = meta
+        let identity = meta
             .columns
             .iter()
             .filter(|c| c.primary_key_position > 0)
             .map(|c| c.name.clone())
             .collect::<Vec<_>>();
-        if identity.is_empty() && !meta.without_rowid {
-            identity.push("rowid".into())
-        }
         if identity.is_empty() {
             return Err("Object has no stable row identity".into());
         }
@@ -639,122 +611,153 @@ impl ReadRuntime {
             limit,
         })
     }
+
+    pub fn insert(&self, table: &str, values: &[NamedValue]) -> Result<Vec<DataValue>, String> {
+        let meta = self.schema(table)?;
+        let valid: HashSet<_> = meta
+            .columns
+            .iter()
+            .filter(|x| !x.generated)
+            .map(|x| x.name.as_str())
+            .collect();
+        if values.iter().any(|x| !valid.contains(x.column.as_str())) {
+            return Err("Unknown or generated column".into());
+        }
+        let keys: Vec<String> = meta
+            .columns
+            .iter()
+            .filter(|x| x.primary_key_position > 0)
+            .map(|x| x.name.clone())
+            .collect();
+        let returning = if keys.is_empty() {
+            return Err("Tables require a primary key".into());
+        } else {
+            keys.iter().map(|x| q(x)).collect::<Vec<_>>().join(",")
+        };
+        let base = if values.is_empty() {
+            format!("INSERT INTO {} DEFAULT VALUES", q(table))
+        } else {
+            format!(
+                "INSERT INTO {} ({}) VALUES ({})",
+                q(table),
+                values
+                    .iter()
+                    .map(|x| q(&x.column))
+                    .collect::<Vec<_>>()
+                    .join(","),
+                vec!["?"; values.len()].join(",")
+            )
+        };
+        let sql = format!("{base} RETURNING {returning}");
+        let binds = values
+            .iter()
+            .map(|x| duck_bind(&x.value))
+            .collect::<Result<Vec<_>, _>>()?;
+        self.connection
+            .query_row(&sql, duckdb::params_from_iter(binds.iter()), |r| {
+                Ok((0..r.as_ref().column_count())
+                    .map(|i| duck_value(r.get::<_, duckdb::types::Value>(i).unwrap()))
+                    .collect())
+            })
+            .map_err(|e| e.to_string())
+    }
+
+    pub fn update(
+        &self,
+        table: &str,
+        values: &[NamedValue],
+        identity: &[DataValue],
+    ) -> Result<u64, String> {
+        self.mutate(table, values, identity, false)
+    }
+
+    pub fn delete(&self, table: &str, identity: &[DataValue]) -> Result<u64, String> {
+        self.mutate(table, &[], identity, true)
+    }
+
+    fn mutate(
+        &self,
+        table: &str,
+        values: &[NamedValue],
+        identity: &[DataValue],
+        delete: bool,
+    ) -> Result<u64, String> {
+        let meta = self.schema(table)?;
+        let known: HashSet<_> = meta.columns.iter().map(|x| x.name.as_str()).collect();
+        if values.iter().any(|v| {
+            !known.contains(v.column.as_str())
+                || meta
+                    .columns
+                    .iter()
+                    .any(|x| x.name == v.column && x.generated)
+        }) {
+            return Err("Unknown or generated column".into());
+        }
+        let keys: Vec<_> = meta
+            .columns
+            .iter()
+            .filter(|x| x.primary_key_position > 0)
+            .map(|x| x.name.clone())
+            .collect();
+        let keys = if keys.is_empty() {
+            return Err("Tables require a primary key".into());
+        } else {
+            keys
+        };
+        if keys.len() != identity.len() {
+            return Err("Row identity does not match the primary key".into());
+        }
+        let wh = keys
+            .iter()
+            .map(|x| format!("{} IS NOT DISTINCT FROM ?", q(x)))
+            .collect::<Vec<_>>()
+            .join(" AND ");
+        let (sql, binds) = if delete {
+            (
+                format!("DELETE FROM {} WHERE {wh}", q(table)),
+                identity
+                    .iter()
+                    .map(duck_bind)
+                    .collect::<Result<Vec<_>, _>>()?,
+            )
+        } else {
+            if values.is_empty() {
+                return Err("No values to update".into());
+            }
+            let mut b = values
+                .iter()
+                .map(|x| duck_bind(&x.value))
+                .collect::<Result<Vec<_>, _>>()?;
+            b.extend(identity.iter().map(duck_bind).collect::<Result<Vec<_>, _>>()?);
+            (
+                format!(
+                    "UPDATE {} SET {} WHERE {wh}",
+                    q(table),
+                    values
+                        .iter()
+                        .map(|x| format!("{}=?", q(&x.column)))
+                        .collect::<Vec<_>>()
+                        .join(",")
+                ),
+                b,
+            )
+        };
+        let n = self
+            .connection
+            .execute(&sql, duckdb::params_from_iter(binds.iter()))
+            .map_err(|e| e.to_string())?;
+        if n != 1 {
+            return Err(format!("Expected one row, changed {n}"));
+        }
+        Ok(n as u64)
+    }
 }
 
-fn open(path: &Path, write: bool) -> Result<Connection, String> {
-    let flags = if write {
-        OpenFlags::SQLITE_OPEN_READ_WRITE
-    } else {
-        OpenFlags::SQLITE_OPEN_READ_ONLY
-    };
-    let c = Connection::open_with_flags(path, flags).map_err(|e| e.to_string())?;
-    c.execute_batch("PRAGMA foreign_keys=ON; PRAGMA busy_timeout=5000;")
-        .map_err(|e| e.to_string())?;
-    Ok(c)
-}
-fn names(c: &Connection) -> Result<HashSet<String>, String> {
-    let mut s=c.prepare("SELECT name FROM sqlite_schema WHERE type IN ('table','view') AND name NOT LIKE 'sqlite_%'").map_err(|e|e.to_string())?;
-    let it = s.query_map([], |r| r.get(0)).map_err(|e| e.to_string())?;
-    it.collect::<Result<_, _>>().map_err(|e| e.to_string())
-}
-fn ensure_table(c: &Connection, name: &str) -> Result<(), String> {
-    if names(c)?.contains(name) {
-        Ok(())
-    } else {
-        Err(format!("Table or view {name:?} does not exist"))
-    }
-}
 pub fn objects(path: &Path) -> Result<Vec<DbObject>, String> {
-    let c = open(path, false)?;
-    let mut s=c.prepare("SELECT name,type FROM sqlite_schema WHERE type IN ('table','view') AND name NOT LIKE 'sqlite_%' ORDER BY lower(name)").map_err(|e|e.to_string())?;
-    let rows = s
-        .query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?)))
-        .map_err(|e| e.to_string())?;
-    let mut out = vec![];
-    for x in rows {
-        let (name, object_type) = x.map_err(|e| e.to_string())?;
-        let row_count = c
-            .query_row(&format!("SELECT count(*) FROM {}", q(&name)), [], |r| {
-                r.get::<_, u64>(0)
-            })
-            .ok();
-        out.push(DbObject {
-            name,
-            object_type,
-            row_count,
-        })
-    }
-    Ok(out)
+    duck_writer(path)?.objects()
 }
 pub fn schema(path: &Path, table: &str) -> Result<TableSchema, String> {
-    let c = open(path, false)?;
-    ensure_table(&c, table)?;
-    let sql: Option<String> = c
-        .query_row(
-            "SELECT sql FROM sqlite_schema WHERE name=?1",
-            [table],
-            |r| r.get(0),
-        )
-        .map_err(|e| e.to_string())?;
-    let mut s = c
-        .prepare(&format!("PRAGMA table_xinfo({})", q(table)))
-        .map_err(|e| e.to_string())?;
-    let columns = s
-        .query_map([], |r| {
-            Ok(Column {
-                name: r.get(1)?,
-                declared_type: r.get::<_, String>(2).unwrap_or_default(),
-                nullable: r.get::<_, i64>(3)? == 0,
-                default_value: r.get(4)?,
-                primary_key_position: r.get::<_, i64>(5)? as u32,
-                generated: r.get::<_, i64>(6).unwrap_or(0) != 0,
-            })
-        })
-        .map_err(|e| e.to_string())?
-        .collect::<Result<Vec<_>, _>>()
-        .map_err(|e| e.to_string())?;
-    let mut f = c
-        .prepare(&format!("PRAGMA foreign_key_list({})", q(table)))
-        .map_err(|e| e.to_string())?;
-    let raw = f
-        .query_map([], |r| {
-            Ok((
-                r.get::<_, i64>(0)?,
-                r.get::<_, i64>(1)?,
-                r.get::<_, String>(2)?,
-                r.get::<_, String>(3)?,
-                r.get::<_, Option<String>>(4)?.unwrap_or_default(),
-                r.get::<_, String>(5)?,
-                r.get::<_, String>(6)?,
-            ))
-        })
-        .map_err(|e| e.to_string())?;
-    let mut foreign_keys: Vec<ForeignKey> = vec![];
-    for row in raw {
-        let (id, _seq, target, from, to, on_update, on_delete) = row.map_err(|e| e.to_string())?;
-        if let Some(x) = foreign_keys.iter_mut().find(|x| x.id == id) {
-            x.from_columns.push(from);
-            x.target_columns.push(to)
-        } else {
-            foreign_keys.push(ForeignKey {
-                id,
-                from_columns: vec![from],
-                target_table: target,
-                target_columns: vec![to],
-                on_update,
-                on_delete,
-            })
-        }
-    }
-    Ok(TableSchema {
-        name: table.into(),
-        columns,
-        foreign_keys,
-        without_rowid: sql
-            .unwrap_or_default()
-            .to_uppercase()
-            .contains("WITHOUT ROWID"),
-    })
+    duck_writer(path)?.schema(table)
 }
 pub fn page(
     path: &Path,
@@ -764,327 +767,16 @@ pub fn page(
     sorts: &[Sort],
     filters: &[Filter],
 ) -> Result<Page, String> {
-    if limit == 0 || limit > 1000 {
-        return Err("Page size must be between 1 and 1000".into());
-    }
-    let c = open(path, false)?;
-    let meta = schema(path, table)?;
-    let cols: HashSet<_> = meta.columns.iter().map(|x| x.name.as_str()).collect();
-    for x in sorts
-        .iter()
-        .map(|x| x.column.as_str())
-        .chain(filters.iter().map(|x| x.column.as_str()))
-    {
-        if !cols.contains(x) {
-            return Err(format!("Unknown column {x:?}"));
-        }
-    }
-    let mut binds: Vec<SqlValue> = vec![];
-    let mut predicates = vec![];
-    for f in filters {
-        let col = q(&f.column);
-        let p = match f.operator {
-            FilterOperator::IsNull => format!("{col} IS NULL"),
-            FilterOperator::IsNotNull => format!("{col} IS NOT NULL"),
-            FilterOperator::Eq
-            | FilterOperator::Ne
-            | FilterOperator::Lt
-            | FilterOperator::Lte
-            | FilterOperator::Gt
-            | FilterOperator::Gte => {
-                binds.push(f.value.as_ref().ok_or("Filter value is required")?.sql()?);
-                format!(
-                    "{col} {} ?",
-                    match f.operator {
-                        FilterOperator::Eq => "=",
-                        FilterOperator::Ne => "<>",
-                        FilterOperator::Lt => "<",
-                        FilterOperator::Lte => "<=",
-                        FilterOperator::Gt => ">",
-                        _ => ">=",
-                    }
-                )
-            }
-            FilterOperator::Contains | FilterOperator::StartsWith => {
-                let raw = match f.value.as_ref() {
-                    Some(DataValue::Text(x)) => x,
-                    _ => return Err("Text filter value is required".into()),
-                };
-                binds.push(SqlValue::Text(
-                    if matches!(f.operator, FilterOperator::Contains) {
-                        format!("%{raw}%")
-                    } else {
-                        format!("{raw}%")
-                    },
-                ));
-                format!("{col} LIKE ? ESCAPE '\\'")
-            }
-        };
-        predicates.push(p)
-    }
-    let wh = if predicates.is_empty() {
-        String::new()
-    } else {
-        format!(" WHERE {}", predicates.join(" AND "))
-    };
-    let total = c
-        .query_row(
-            &format!("SELECT count(*) FROM {}{wh}", q(table)),
-            params_from_iter(binds.iter()),
-            |r| r.get::<_, u64>(0),
-        )
-        .map_err(|e| e.to_string())?;
-    let pk: Vec<_> = meta
-        .columns
-        .iter()
-        .filter(|x| x.primary_key_position > 0)
-        .map(|x| x.name.clone())
-        .collect();
-    let identity = if pk.is_empty() && !meta.without_rowid {
-        vec!["rowid".into()]
-    } else {
-        pk
-    };
-    let select = meta
-        .columns
-        .iter()
-        .map(|x| q(&x.name))
-        .chain((identity.first().map(|x| x == "rowid").unwrap_or(false)).then(|| "rowid".into()))
-        .collect::<Vec<_>>()
-        .join(",");
-    let order = if sorts.is_empty() {
-        format!(
-            " ORDER BY {}",
-            identity.iter().map(|x| q(x)).collect::<Vec<_>>().join(",")
-        )
-    } else {
-        format!(
-            " ORDER BY {}",
-            sorts
-                .iter()
-                .map(|x| format!(
-                    "{} {}",
-                    q(&x.column),
-                    if x.descending { "DESC" } else { "ASC" }
-                ))
-                .chain(identity.iter().map(|x| format!("{} ASC", q(x))))
-                .collect::<Vec<_>>()
-                .join(",")
-        )
-    };
-    let sql = format!(
-        "SELECT {select} FROM {}{wh}{order} LIMIT ? OFFSET ?",
-        q(table)
-    );
-    let mut all = binds;
-    all.push(SqlValue::Integer(limit.min(1000) as i64));
-    all.push(SqlValue::Integer(offset as i64));
-    let mut s = c.prepare(&sql).map_err(|e| e.to_string())?;
-    let rows = s
-        .query_map(params_from_iter(all.iter()), |r| {
-            Ok((0..r.as_ref().column_count())
-                .map(|i| value(r.get_ref(i).unwrap()))
-                .collect::<Vec<_>>())
-        })
-        .map_err(|e| e.to_string())?;
-    let mut data = vec![];
-    let mut identities = vec![];
-    for row in rows {
-        let mut row = row.map_err(|e| e.to_string())?;
-        if identity == ["rowid"] {
-            identities.push(vec![row.pop().unwrap()])
-        } else {
-            identities.push(
-                identity
-                    .iter()
-                    .map(|name| {
-                        row[meta.columns.iter().position(|x| &x.name == name).unwrap()].clone()
-                    })
-                    .collect(),
-            )
-        }
-        data.push(row)
-    }
-    Ok(Page {
-        columns: meta.columns,
-        rows: data,
-        identities,
-        total,
-        offset,
-        limit: limit.min(1000),
-    })
+    duck_writer(path)?.page(table, offset, limit, sorts, filters)
 }
 pub fn query(path: &Path, sql: &str) -> Result<QueryResult, String> {
-    let trimmed = sql.trim();
-    if trimmed.is_empty() || trimmed.contains(';') && trimmed.trim_end_matches(';').contains(';') {
-        return Err("Exactly one query statement is required".into());
-    }
-    let first = trimmed
-        .split_whitespace()
-        .next()
-        .unwrap_or("")
-        .to_ascii_uppercase();
-    if !matches!(first.as_str(), "SELECT" | "WITH" | "VALUES" | "EXPLAIN") {
-        return Err("Only read-only queries are allowed".into());
-    }
-    let c = open(path, false)?;
-    c.set_db_config(rusqlite::config::DbConfig::SQLITE_DBCONFIG_DEFENSIVE, true)
-        .map_err(|e| e.to_string())?;
-    let mut s = c.prepare(trimmed).map_err(|e| e.to_string())?;
-    if !s.readonly() {
-        return Err("Only read-only queries are allowed".into());
-    }
-    let columns = s.column_names().iter().map(|x| x.to_string()).collect();
-    let rows = s
-        .query_map([], |r| {
-            Ok((0..r.as_ref().column_count())
-                .map(|i| value(r.get_ref(i).unwrap()))
-                .collect())
-        })
-        .map_err(|e| e.to_string())?
-        .collect::<Result<Vec<_>, _>>()
-        .map_err(|e| e.to_string())?;
-    Ok(QueryResult { columns, rows })
+    duck_writer(path)?.query(sql)
 }
-fn mutation(
-    path: &Path,
-    table: &str,
-    values: &[NamedValue],
-    identity: &[DataValue],
-    delete: bool,
-) -> Result<u64, String> {
-    let mut c = open(path, true)?;
-    ensure_table(&c, table)?;
-    let meta = schema(path, table)?;
-    let known: HashSet<_> = meta.columns.iter().map(|x| x.name.as_str()).collect();
-    if values.iter().any(|v| {
-        !known.contains(v.column.as_str())
-            || meta
-                .columns
-                .iter()
-                .any(|x| x.name == v.column && x.generated)
-    }) {
-        return Err("Unknown or generated column".into());
-    }
-    let keys: Vec<_> = meta
-        .columns
-        .iter()
-        .filter(|x| x.primary_key_position > 0)
-        .map(|x| x.name.clone())
-        .collect();
-    let keys = if keys.is_empty() && !meta.without_rowid {
-        vec!["rowid".into()]
-    } else {
-        keys
-    };
-    if keys.len() != identity.len() {
-        return Err("Row identity does not match the primary key".into());
-    }
-    let wh = keys
-        .iter()
-        .map(|x| format!("{} IS ?", q(x)))
-        .collect::<Vec<_>>()
-        .join(" AND ");
-    let (sql, binds) = if delete {
-        (
-            format!("DELETE FROM {} WHERE {wh}", q(table)),
-            identity
-                .iter()
-                .map(DataValue::sql)
-                .collect::<Result<Vec<_>, _>>()?,
-        )
-    } else {
-        if values.is_empty() {
-            return Err("No values to update".into());
-        }
-        let mut b = values
-            .iter()
-            .map(|x| x.value.sql())
-            .collect::<Result<Vec<_>, _>>()?;
-        b.extend(
-            identity
-                .iter()
-                .map(DataValue::sql)
-                .collect::<Result<Vec<_>, _>>()?,
-        );
-        (
-            format!(
-                "UPDATE {} SET {} WHERE {wh}",
-                q(table),
-                values
-                    .iter()
-                    .map(|x| format!("{}=?", q(&x.column)))
-                    .collect::<Vec<_>>()
-                    .join(",")
-            ),
-            b,
-        )
-    };
-    let tx = c.transaction().map_err(|e| e.to_string())?;
-    let n = tx
-        .execute(&sql, params_from_iter(binds.iter()))
-        .map_err(|e| e.to_string())?;
-    if n != 1 {
-        return Err(format!("Expected one row, changed {n}"));
-    }
-    tx.commit().map_err(|e| e.to_string())?;
-    Ok(n as u64)
+fn duck_writer(path: &Path) -> Result<ReadRuntime, String> {
+    ReadRuntime::open(path.to_path_buf(), Path::new(""))
 }
 pub fn insert(path: &Path, table: &str, values: &[NamedValue]) -> Result<Vec<DataValue>, String> {
-    let mut c = open(path, true)?;
-    ensure_table(&c, table)?;
-    let meta = schema(path, table)?;
-    let valid: HashSet<_> = meta
-        .columns
-        .iter()
-        .filter(|x| !x.generated)
-        .map(|x| x.name.as_str())
-        .collect();
-    if values.iter().any(|x| !valid.contains(x.column.as_str())) {
-        return Err("Unknown or generated column".into());
-    }
-    let keys: Vec<String> = meta
-        .columns
-        .iter()
-        .filter(|x| x.primary_key_position > 0)
-        .map(|x| x.name.clone())
-        .collect();
-    let returning = if keys.is_empty() && !meta.without_rowid {
-        "rowid".into()
-    } else if keys.is_empty() {
-        return Err("WITHOUT ROWID tables require a primary key".into());
-    } else {
-        keys.iter().map(|x| q(x)).collect::<Vec<_>>().join(",")
-    };
-    let base = if values.is_empty() {
-        format!("INSERT INTO {} DEFAULT VALUES", q(table))
-    } else {
-        format!(
-            "INSERT INTO {} ({}) VALUES ({})",
-            q(table),
-            values
-                .iter()
-                .map(|x| q(&x.column))
-                .collect::<Vec<_>>()
-                .join(","),
-            vec!["?"; values.len()].join(",")
-        )
-    };
-    let sql = format!("{base} RETURNING {returning}");
-    let binds = values
-        .iter()
-        .map(|x| x.value.sql())
-        .collect::<Result<Vec<_>, _>>()?;
-    let tx = c.transaction().map_err(|e| e.to_string())?;
-    let id = tx
-        .query_row(&sql, params_from_iter(binds.iter()), |r| {
-            Ok((0..r.as_ref().column_count())
-                .map(|i| value(r.get_ref(i).unwrap()))
-                .collect())
-        })
-        .map_err(|e| e.to_string())?;
-    tx.commit().map_err(|e| e.to_string())?;
-    Ok(id)
+    duck_writer(path)?.insert(table, values)
 }
 pub fn update(
     path: &Path,
@@ -1092,10 +784,10 @@ pub fn update(
     values: &[NamedValue],
     identity: &[DataValue],
 ) -> Result<u64, String> {
-    mutation(path, table, values, identity, false)
+    duck_writer(path)?.update(table, values, identity)
 }
 pub fn delete(path: &Path, table: &str, identity: &[DataValue]) -> Result<u64, String> {
-    mutation(path, table, &[], identity, true)
+    duck_writer(path)?.delete(table, identity)
 }
 pub fn execute_ddl(path: &Path, sql: &str) -> Result<(), String> {
     let upper = sql.trim_start().to_ascii_uppercase();
@@ -1104,10 +796,10 @@ pub fn execute_ddl(path: &Path, sql: &str) -> Result<(), String> {
     {
         return Err("Only one CREATE TABLE or ALTER TABLE statement is allowed".into());
     }
-    let mut c = open(path, true)?;
-    let tx = c.transaction().map_err(|e| e.to_string())?;
-    tx.execute_batch(sql).map_err(|e| e.to_string())?;
-    tx.commit().map_err(|e| e.to_string())
+    let rt = duck_writer(path)?;
+    rt.connection()
+        .execute_batch(sql)
+        .map_err(|e| e.to_string())
 }
 
 fn safe_expression(value: &str) -> Result<&str, String> {
@@ -1126,13 +818,15 @@ fn column_sql(c: &CreateColumn) -> Result<String, String> {
     if c.name.trim().is_empty() {
         return Err("Column name is required".into());
     }
-    let affinity = c.declared_type.trim().to_ascii_uppercase();
-    if !matches!(
-        affinity.as_str(),
-        "INTEGER" | "REAL" | "TEXT" | "BLOB" | "NUMERIC" | ""
-    ) {
-        return Err("Unsupported SQLite affinity".into());
-    }
+    let affinity = match c.declared_type.trim().to_ascii_uppercase().as_str() {
+        "INTEGER" | "BIGINT" => "BIGINT",
+        "REAL" | "DOUBLE" => "DOUBLE",
+        "TEXT" | "VARCHAR" => "VARCHAR",
+        "BLOB" => "BLOB",
+        "NUMERIC" => "DECIMAL",
+        "" => "VARCHAR",
+        _ => return Err("Unsupported column type".into()),
+    };
     let mut out = format!("{} {}", q(&c.name), affinity);
     if !c.nullable {
         out.push_str(" NOT NULL")
@@ -1147,7 +841,7 @@ fn column_sql(c: &CreateColumn) -> Result<String, String> {
     if let Some(v) = &c.generated_expression {
         out.push_str(" GENERATED ALWAYS AS (");
         out.push_str(safe_expression(v)?);
-        out.push(')')
+        out.push_str(") VIRTUAL")
     }
     Ok(out)
 }
@@ -1216,21 +910,14 @@ pub fn create_table(path: &Path, spec: &CreateTable) -> Result<(), String> {
     for check in &spec.checks {
         defs.push(format!("CHECK ({})", safe_expression(check)?))
     }
-    let sql = format!(
-        "CREATE TABLE {} ({}){}",
-        q(&spec.name),
-        defs.join(","),
-        if spec.without_rowid {
-            " WITHOUT ROWID"
-        } else {
-            ""
-        }
-    );
+    if spec.without_rowid {
+        return Err("DuckDB tables do not support WITHOUT ROWID".into());
+    }
+    let sql = format!("CREATE TABLE {} ({})", q(&spec.name), defs.join(","));
     execute_ddl(path, &sql)
 }
 pub fn alter_table(path: &Path, table: &str, op: &AlterTable) -> Result<(), String> {
-    let c = open(path, false)?;
-    ensure_table(&c, table)?;
+    duck_writer(path)?.schema(table)?;
     let sql = match op {
         AlterTable::RenameTable { new_name } => {
             format!("ALTER TABLE {} RENAME TO {}", q(table), q(new_name))
@@ -1264,7 +951,7 @@ mod tests {
     use uuid::Uuid;
     fn db() -> std::path::PathBuf {
         let p = std::env::temp_dir().join(format!("ixtable-data-test-{}.db", Uuid::new_v4()));
-        Connection::open(&p).unwrap().execute_batch("PRAGMA foreign_keys=ON; CREATE TABLE parent(a TEXT,b INTEGER,payload BLOB,computed TEXT GENERATED ALWAYS AS (a || b) STORED,PRIMARY KEY(a,b)); CREATE TABLE child(id INTEGER PRIMARY KEY,parent_a TEXT,parent_b INTEGER,FOREIGN KEY(parent_a,parent_b) REFERENCES parent(a,b));").unwrap();
+        duckdb::Connection::open(&p).unwrap().execute_batch("CREATE SEQUENCE child_id; CREATE TABLE parent(a TEXT,b INTEGER,payload BLOB,computed TEXT GENERATED ALWAYS AS (a || b) VIRTUAL,PRIMARY KEY(a,b)); CREATE TABLE child(id INTEGER PRIMARY KEY DEFAULT nextval('child_id'),parent_a TEXT,parent_b INTEGER,FOREIGN KEY(parent_a,parent_b) REFERENCES parent(a,b));").unwrap();
         p
     }
     #[test]
@@ -1385,7 +1072,7 @@ mod tests {
             std::env::temp_dir().join(format!("ixtable-duckdb-attach-{}", Uuid::new_v4()));
         std::fs::create_dir_all(&workspace).unwrap();
         let db_path = workspace.join("data.db");
-        Connection::open(&db_path).unwrap().execute_batch("CREATE TABLE item(id INTEGER PRIMARY KEY,label TEXT); INSERT INTO item VALUES(1,'before');").unwrap();
+        duckdb::Connection::open(&db_path).unwrap().execute_batch("CREATE TABLE item(id INTEGER PRIMARY KEY,label TEXT); INSERT INTO item VALUES(1,'before');").unwrap();
         let extension = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
             .join("resources/duckdb/macos-arm64/sqlite_scanner.duckdb_extension");
         let mut runtime = ReadRuntime::new(&workspace, &extension).unwrap();
@@ -1412,11 +1099,21 @@ mod tests {
                 "unsafe SQL was accepted: {unsafe_sql}"
             )
         }
-        Connection::open(&db_path)
-            .unwrap()
-            .execute("INSERT INTO item VALUES(2,'after')", [])
+        runtime
+            .insert(
+                "item",
+                &[
+                    NamedValue {
+                        column: "id".into(),
+                        value: DataValue::Integer(2),
+                    },
+                    NamedValue {
+                        column: "label".into(),
+                        value: DataValue::Text("after".into()),
+                    },
+                ],
+            )
             .unwrap();
-        runtime.refresh().unwrap();
         assert_eq!(runtime.objects().unwrap()[0].row_count, Some(2));
         let _ = std::fs::remove_dir_all(workspace);
     }
@@ -1424,7 +1121,7 @@ mod tests {
     #[test]
     fn sqlite_writes_return_database_generated_identity_and_defaults() {
         let p = std::env::temp_dir().join(format!("ixtable-default-test-{}.db", Uuid::new_v4()));
-        Connection::open(&p).unwrap().execute_batch("CREATE TABLE item(id INTEGER PRIMARY KEY AUTOINCREMENT, label TEXT NOT NULL DEFAULT 'new');").unwrap();
+        duckdb::Connection::open(&p).unwrap().execute_batch("CREATE SEQUENCE item_id; CREATE TABLE item(id INTEGER PRIMARY KEY DEFAULT nextval('item_id'), label TEXT NOT NULL DEFAULT 'new');").unwrap();
         let identity = insert(&p, "item", &[]).unwrap();
         assert_eq!(identity.len(), 1);
         assert!(matches!(identity[0],DataValue::Integer(v) if v>0));
@@ -1536,17 +1233,17 @@ mod tests {
      #![proptest_config(ProptestConfig { cases: 64, max_shrink_iters: 2_048, ..ProptestConfig::default() })]
 
      /// Values crossing the command boundary must survive a complete
-     /// rusqlite write/read cycle without narrowing, lossy text conversion, or
+     /// DuckDB write/read cycle without narrowing, lossy text conversion, or
      /// blob reinterpretation.
      #[test]
-     fn prop_sqlite_scalar_round_trip(
+     fn prop_duckdb_scalar_round_trip(
       integer in any::<i64>(),
       text in any::<String>(),
       blob in prop::collection::vec(any::<u8>(),0..256),
       real in any::<f64>().prop_filter("finite SQLite real",|v|v.is_finite())
      ) {
       let p=std::env::temp_dir().join(format!("ixtable-prop-values-{}.db",Uuid::new_v4()));
-      Connection::open(&p).unwrap().execute_batch("CREATE TABLE values_under_test(id INTEGER PRIMARY KEY, text_value TEXT, blob_value BLOB, real_value REAL);").unwrap();
+      duckdb::Connection::open(&p).unwrap().execute_batch("CREATE TABLE values_under_test(id BIGINT PRIMARY KEY, text_value TEXT, blob_value BLOB, real_value DOUBLE);").unwrap();
       let identity=insert(&p,"values_under_test",&[
        NamedValue{column:"id".into(),value:DataValue::Integer(integer)},
        NamedValue{column:"text_value".into(),value:DataValue::Text(text.clone())},
@@ -1566,7 +1263,7 @@ mod tests {
      /// SQLite writer; otherwise the reader could return identities that cannot
      /// address the row that was written.
      #[test]
-     fn prop_duckdb_preserves_sqlite_identity_domain(integer in any::<i64>()) {
+     fn prop_duckdb_preserves_identity_domain(integer in any::<i64>()) {
       let runtime=ReadRuntime::isolated_for_test().unwrap();
       let sql=format!("SELECT CAST({integer} AS BIGINT)");
       let observed=runtime.connection().query_row(&sql,[],|row|row.get::<_,i64>(0)).unwrap();
@@ -1583,8 +1280,8 @@ mod tests {
      ) {
       prop_assume!(!table.trim().is_empty()&&!column.trim().is_empty());
       let p=std::env::temp_dir().join(format!("ixtable-prop-ident-{}.db",Uuid::new_v4()));
-      Connection::open(&p).unwrap().execute_batch("CREATE TABLE sentinel(value INTEGER); INSERT INTO sentinel VALUES(1);").unwrap();
-      let spec=CreateTable{name:table.clone(),columns:vec![CreateColumn{name:column.clone(),declared_type:"TEXT".into(),nullable:true,primary_key_position:0,unique:false,default_expression:None,generated_expression:None}],foreign_keys:vec![],checks:vec![],without_rowid:false};
+      duckdb::Connection::open(&p).unwrap().execute_batch("CREATE TABLE sentinel(value INTEGER); INSERT INTO sentinel VALUES(1);").unwrap();
+      let spec=CreateTable{name:table.clone(),columns:vec![CreateColumn{name:column.clone(),declared_type:"TEXT".into(),nullable:true,primary_key_position:1,unique:false,default_expression:None,generated_expression:None}],foreign_keys:vec![],checks:vec![],without_rowid:false};
       match create_table(&p,&spec) {
        Ok(())=>{
         insert(&p,&table,&[NamedValue{column:column.clone(),value:DataValue::Text("payload".into())}]).unwrap();
@@ -1595,7 +1292,7 @@ mod tests {
        // rejection is safe, execution as additional SQL is not.
        Err(_)=>{}
       }
-      let sentinel: i64=Connection::open(&p).unwrap().query_row("SELECT value FROM sentinel",[],|r|r.get(0)).unwrap();
+      let sentinel: i64=duckdb::Connection::open(&p).unwrap().query_row("SELECT value FROM sentinel",[],|r|r.get(0)).unwrap();
       prop_assert_eq!(sentinel,1);
       let _=std::fs::remove_file(p);
      }
@@ -1626,7 +1323,7 @@ mod tests {
      fn prop_stale_identity_never_mutates_rows(original in any::<i64>(),stale in any::<i64>(),replacement in any::<i64>()) {
       prop_assume!(original!=stale);
       let p=std::env::temp_dir().join(format!("ixtable-prop-stale-{}.db",Uuid::new_v4()));
-      Connection::open(&p).unwrap().execute_batch("CREATE TABLE item(id INTEGER PRIMARY KEY,value INTEGER NOT NULL);").unwrap();
+      duckdb::Connection::open(&p).unwrap().execute_batch("CREATE TABLE item(id BIGINT PRIMARY KEY,value BIGINT NOT NULL);").unwrap();
       insert(&p,"item",&[NamedValue{column:"id".into(),value:DataValue::Integer(original)},NamedValue{column:"value".into(),value:DataValue::Integer(original)}]).unwrap();
       let stale_result=update(&p,"item",&[NamedValue{column:"value".into(),value:DataValue::Integer(replacement)}],&[DataValue::Integer(stale)]);
       prop_assert!(stale_result.is_err());

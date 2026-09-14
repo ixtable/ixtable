@@ -8,22 +8,48 @@ ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 DEST="$ROOT/src-tauri/resources/duckdb"
 
 fetch() {
-  platform="$1"; target="$2"; expected="$3"
-  url="https://extensions.duckdb.org/v${VERSION}/${platform}/sqlite_scanner.duckdb_extension.gz"
+  ext="$1"; platform="$2"; target="$3"; expected="$4"
+  url="https://extensions.duckdb.org/v${VERSION}/${platform}/${ext}.duckdb_extension.gz"
   tmp="$(mktemp)"; trap 'rm -f "$tmp"' RETURN
   curl --fail --location --proto '=https' --tlsv1.2 "$url" -o "$tmp"
-  printf '%s  %s\n' "$expected" "$tmp" | shasum -a 256 -c -
+  if command -v sha256sum >/dev/null 2>&1; then
+    printf '%s  %s\n' "$expected" "$tmp" | sha256sum -c -
+  else
+    printf '%s  %s\n' "$expected" "$tmp" | shasum -a 256 -c -
+  fi
   mkdir -p "$DEST/$target"
-  gzip -dc "$tmp" > "$DEST/$target/sqlite_scanner.duckdb_extension"
+  gzip -dc "$tmp" > "$DEST/$target/${ext}.duckdb_extension"
   printf '%s\n' "$VERSION" > "$DEST/$target/VERSION"
+}
+
+fetch_target() {
+  target="$1"
+  case "$target" in
+    macos-arm64)
+      fetch sqlite_scanner osx_arm64 macos-arm64 d7514249b0cce24bb63856b4c752a889ef2f739c6fd821109988e4e13afd7058
+      fetch postgres_scanner osx_arm64 macos-arm64 4fb5079e67b00e6643e6ee91545a355010004d1dad50b43f1c060de0cb789c8e
+      ;;
+    macos-x64)
+      fetch sqlite_scanner osx_amd64 macos-x64 1b96e4ac03a4394708166f75236614a80fd1f9ab810fb3f35ea7aa5a9a833501
+      fetch postgres_scanner osx_amd64 macos-x64 b8764ed496be635fbac3e5e6a6c8e3e3c2dbfcaa862ce0422c21cad6fcc6c353
+      ;;
+    windows-x64)
+      fetch sqlite_scanner windows_amd64 windows-x64 b6139c7f3b40a1b3ba5ef605e4590eda4a55e4e8deefc8182a2644e4a5797f69
+      fetch postgres_scanner windows_amd64 windows-x64 65b31f002c70ac5f812d293b8552b977d1c0e6752d0a1127176454c8184ed001
+      ;;
+    linux-x64)
+      fetch sqlite_scanner linux_amd64 linux-x64 01292812092200c2d0b76324df9568d336ddaa5a198e7cc8fed124e84088e14e
+      fetch postgres_scanner linux_amd64 linux-x64 e0f631a5535f165468bc8a20501f8bc1490adbc877d38fcdff2f8d05531e1e5b
+      ;;
+    *) echo "unknown target $target" >&2; exit 2 ;;
+  esac
 }
 
 case "${1:-}" in
   macos-universal)
-    fetch osx_arm64 macos-arm64 d7514249b0cce24bb63856b4c752a889ef2f739c6fd821109988e4e13afd7058
-    fetch osx_amd64 macos-x64 1b96e4ac03a4394708166f75236614a80fd1f9ab810fb3f35ea7aa5a9a833501
+    fetch_target macos-arm64
+    fetch_target macos-x64
     ;;
-  windows-x64) fetch windows_amd64 windows-x64 b6139c7f3b40a1b3ba5ef605e4590eda4a55e4e8deefc8182a2644e4a5797f69 ;;
-  linux-x64) fetch linux_amd64 linux-x64 01292812092200c2d0b76324df9568d336ddaa5a198e7cc8fed124e84088e14e ;;
-  *) echo "usage: $0 {macos-universal|windows-x64|linux-x64}" >&2; exit 2 ;;
+  windows-x64|linux-x64|macos-arm64|macos-x64) fetch_target "$1" ;;
+  *) echo "usage: $0 {macos-universal|macos-arm64|macos-x64|windows-x64|linux-x64}" >&2; exit 2 ;;
 esac

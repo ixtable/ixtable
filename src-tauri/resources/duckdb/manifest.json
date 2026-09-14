@@ -1,11 +1,19 @@
 {
   "duckdbVersion": "1.5.5",
   "duckdbRustVersion": "1.10505.0",
-  "extension": "sqlite_scanner",
+  "extensions": ["sqlite_scanner", "postgres_scanner"],
   "artifacts": {
-    "macos-arm64": { "url": "https://extensions.duckdb.org/v1.5.5/osx_arm64/sqlite_scanner.duckdb_extension.gz", "compressedSha256": "d7514249b0cce24bb63856b4c752a889ef2f739c6fd821109988e4e13afd7058", "uncompressedSha256": "a3548846bd643cb717265a0a11352af2e830a466ca068f4cae2552af658879f2" },
-    "macos-x64": { "url": "https://extensions.duckdb.org/v1.5.5/osx_amd64/sqlite_scanner.duckdb_extension.gz", "compressedSha256": "1b96e4ac03a4394708166f75236614a80fd1f9ab810fb3f35ea7aa5a9a833501", "uncompressedSha256": "fb287ea61bff87ad91b700491d44d584fb6e0b5926a4bf186f9d052ff6e976f7" },
-    "windows-x64": { "url": "https://extensions.duckdb.org/v1.5.5/windows_amd64/sqlite_scanner.duckdb_extension.gz", "compressedSha256": "b6139c7f3b40a1b3ba5ef605e4590eda4a55e4e8deefc8182a2644e4a5797f69", "uncompressedSha256": "488c99012a2bd842dcc1d525441a7bd5c0427bb83236cbc01497615be167ac18" },
-    "linux-x64": { "url": "https://extensions.duckdb.org/v1.5.5/linux_amd64/sqlite_scanner.duckdb_extension.gz", "compressedSha256": "01292812092200c2d0b76324df9568d336ddaa5a198e7cc8fed124e84088e14e", "uncompressedSha256": "693d2bf90779df23ca5ebe0688639b9adfc11c2d55ae3466b33e28be16afaa5e" }
+    "sqlite_scanner": {
+      "macos-arm64": { "url": "https://extensions.duckdb.org/v1.5.5/osx_arm64/sqlite_scanner.duckdb_extension.gz", "compressedSha256": "d7514249b0cce24bb63856b4c752a889ef2f739c6fd821109988e4e13afd7058", "uncompressedSha256": "a3548846bd643cb717265a0a11352af2e830a466ca068f4cae2552af658879f2" },
+      "macos-x64": { "url": "https://extensions.duckdb.org/v1.5.5/osx_amd64/sqlite_scanner.duckdb_extension.gz", "compressedSha256": "1b96e4ac03a4394708166f75236614a80fd1f9ab810fb3f35ea7aa5a9a833501", "uncompressedSha256": "fb287ea61bff87ad91b700491d44d584fb6e0b5926a4bf186f9d052ff6e976f7" },
+      "windows-x64": { "url": "https://extensions.duckdb.org/v1.5.5/windows_amd64/sqlite_scanner.duckdb_extension.gz", "compressedSha256": "b6139c7f3b40a1b3ba5ef605e4590eda4a55e4e8deefc8182a2644e4a5797f69", "uncompressedSha256": "488c99012a2bd842dcc1d525441a7bd5c0427bb83236cbc01497615be167ac18" },
+      "linux-x64": { "url": "https://extensions.duckdb.org/v1.5.5/linux_amd64/sqlite_scanner.duckdb_extension.gz", "compressedSha256": "01292812092200c2d0b76324df9568d336ddaa5a198e7cc8fed124e84088e14e", "uncompressedSha256": "693d2bf90779df23ca5ebe0688639b9adfc11c2d55ae3466b33e28be16afaa5e" }
+    },
+    "postgres_scanner": {
+      "macos-arm64": { "url": "https://extensions.duckdb.org/v1.5.5/osx_arm64/postgres_scanner.duckdb_extension.gz", "compressedSha256": "4fb5079e67b00e6643e6ee91545a355010004d1dad50b43f1c060de0cb789c8e", "uncompressedSha256": "f39dd59bf57679d0242e19e180d90b4222e5cdb691ab67c7506658f3548c0e05" },
+      "macos-x64": { "url": "https://extensions.duckdb.org/v1.5.5/osx_amd64/postgres_scanner.duckdb_extension.gz", "compressedSha256": "b8764ed496be635fbac3e5e6a6c8e3e3c2dbfcaa862ce0422c21cad6fcc6c353", "uncompressedSha256": "0df780444ce04a75c5a4e7b89896eab5cebe1ca21163fc6c267f3365ffe4a3c1" },
+      "windows-x64": { "url": "https://extensions.duckdb.org/v1.5.5/windows_amd64/postgres_scanner.duckdb_extension.gz", "compressedSha256": "65b31f002c70ac5f812d293b8552b977d1c0e6752d0a1127176454c8184ed001", "uncompressedSha256": "fc026ca03659889080606f0dacfd4e3976479df52660fafc763642e14bb36be2" },
+      "linux-x64": { "url": "https://extensions.duckdb.org/v1.5.5/linux_amd64/postgres_scanner.duckdb_extension.gz", "compressedSha256": "e0f631a5535f165468bc8a20501f8bc1490adbc877d38fcdff2f8d05531e1e5b", "uncompressedSha256": "b1ced4cfc6311313e117c2afb3eac76508718778dde0716421503c7dbfb5605c" }
+    }
   }
 }

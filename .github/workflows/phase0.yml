@@ -1,0 +1,51 @@
+name: Phase 0
+
+on:
+  push:
+    paths:
+      - 'src-tauri/**'
+      - 'scripts/prepare-duckdb-artifacts.sh'
+      - 'docs/decisions/**'
+      - '.github/workflows/phase0.yml'
+      - 'tests/grid-css.test.ts'
+      - 'src/design/schema.ts'
+  pull_request:
+    paths:
+      - 'src-tauri/**'
+      - 'scripts/prepare-duckdb-artifacts.sh'
+      - 'docs/decisions/**'
+      - '.github/workflows/phase0.yml'
+      - 'tests/grid-css.test.ts'
+      - 'src/design/schema.ts'
+
+permissions:
+  contents: read
+
+jobs:
+  rust:
+    name: Cargo tests
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_USER: postgres
+          POSTGRES_DB: ixtable_phase0
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Fetch DuckDB scanners
+        run: scripts/prepare-duckdb-artifacts.sh linux-x64
+      - name: Run Phase 0 and crate tests
+        working-directory: src-tauri
+        env:
+          IXTABLE_POSTGRES_URL: host=127.0.0.1 user=postgres password=postgres dbname=ixtable_phase0
+        run: cargo test

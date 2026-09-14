@@ -2,6 +2,7 @@ pub mod archive;
 pub mod data;
 pub mod design;
 pub mod manager;
+pub mod phase0;
 pub mod storage;
 
 use archive::{Attachment, DocumentConfig};
@@ -193,9 +194,7 @@ fn insert_row(
     table: String,
     values: Vec<data::NamedValue>,
 ) -> Result<Vec<data::DataValue>, AppError> {
-    let r = data::insert(&db(&window_label)?, &table, &values).map_err(data_err)?;
-    manager()?.mark_data_dirty(&window_label)?;
-    Ok(r)
+    manager()?.insert_row(&window_label, &table, &values)
 }
 #[tauri::command]
 fn update_row(
@@ -204,9 +203,7 @@ fn update_row(
     values: Vec<data::NamedValue>,
     identity: Vec<data::DataValue>,
 ) -> Result<u64, AppError> {
-    let r = data::update(&db(&window_label)?, &table, &values, &identity).map_err(data_err)?;
-    manager()?.mark_data_dirty(&window_label)?;
-    Ok(r)
+    manager()?.update_row(&window_label, &table, &values, &identity)
 }
 #[tauri::command]
 fn delete_row(
@@ -214,9 +211,7 @@ fn delete_row(
     table: String,
     identity: Vec<data::DataValue>,
 ) -> Result<u64, AppError> {
-    let r = data::delete(&db(&window_label)?, &table, &identity).map_err(data_err)?;
-    manager()?.mark_data_dirty(&window_label)?;
-    Ok(r)
+    manager()?.delete_row(&window_label, &table, &identity)
 }
 #[tauri::command]
 fn create_database_table(

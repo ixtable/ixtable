@@ -205,6 +205,58 @@ impl DocumentManager {
             .workspace
             .join("data.db"))
     }
+    pub fn insert_row(
+        &self,
+        window: &str,
+        table: &str,
+        values: &[data::NamedValue],
+    ) -> Result<Vec<data::DataValue>, AppError> {
+        let mut all = self.sessions.lock().unwrap();
+        let s = all
+            .get_mut(window)
+            .ok_or_else(|| AppError::new("NO_DOCUMENT", "No document is open"))?;
+        let row = s
+            .reader
+            .insert(table, values)
+            .map_err(|e| AppError::new("DATABASE_ERROR", e))?;
+        s.dirty = true;
+        Ok(row)
+    }
+    pub fn update_row(
+        &self,
+        window: &str,
+        table: &str,
+        values: &[data::NamedValue],
+        identity: &[data::DataValue],
+    ) -> Result<u64, AppError> {
+        let mut all = self.sessions.lock().unwrap();
+        let s = all
+            .get_mut(window)
+            .ok_or_else(|| AppError::new("NO_DOCUMENT", "No document is open"))?;
+        let n = s
+            .reader
+            .update(table, values, identity)
+            .map_err(|e| AppError::new("DATABASE_ERROR", e))?;
+        s.dirty = true;
+        Ok(n)
+    }
+    pub fn delete_row(
+        &self,
+        window: &str,
+        table: &str,
+        identity: &[data::DataValue],
+    ) -> Result<u64, AppError> {
+        let mut all = self.sessions.lock().unwrap();
+        let s = all
+            .get_mut(window)
+            .ok_or_else(|| AppError::new("NO_DOCUMENT", "No document is open"))?;
+        let n = s
+            .reader
+            .delete(table, identity)
+            .map_err(|e| AppError::new("DATABASE_ERROR", e))?;
+        s.dirty = true;
+        Ok(n)
+    }
     pub fn mark_data_dirty(&self, window: &str) -> Result<SessionState, AppError> {
         let mut all = self.sessions.lock().unwrap();
         let s = all

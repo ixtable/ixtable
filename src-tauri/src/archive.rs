@@ -125,7 +125,7 @@ fn decompress(data: &[u8]) -> Result<Vec<u8>, ArchiveError> {
 
 pub fn empty_data_db() -> Result<Vec<u8>, ArchiveError> {
     let path = std::env::temp_dir().join(format!("ixtable-empty-{}.db", Uuid::new_v4()));
-    Connection::open(&path)?.execute_batch("PRAGMA user_version=1;")?;
+    duckdb::Connection::open(&path).map_err(|e| ArchiveError::Invalid(e.to_string()))?;
     let bytes = fs::read(&path)?;
     let _ = fs::remove_file(path);
     Ok(bytes)

@@ -119,14 +119,14 @@ impl GridTrack {
         }
     }
 }
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub enum TrackKind {
     Fixed,
     Content,
     Fr,
 }
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Default)]
 #[serde(rename_all = "camelCase")]
 pub enum GridAlign {
     #[default]
@@ -325,6 +325,72 @@ impl DesignSchema {
     }
 }
 
+pub fn track_css(track: &GridTrack) -> String {
+    let size = match track.kind {
+        TrackKind::Fr => format!("{}fr", track.value.unwrap_or(1.0)),
+        TrackKind::Content => "max-content".into(),
+        TrackKind::Fixed => format!("{}px", track.value.unwrap_or(0.0)),
+    };
+    if track.min.is_none() && track.max.is_none() {
+        return size;
+    }
+    let min = track
+        .min
+        .map(|value| format!("{value}px"))
+        .unwrap_or_else(|| "0px".into());
+    let max = track
+        .max
+        .map(|value| format!("{value}px"))
+        .unwrap_or(size);
+    format!("minmax({min}, {max})")
+}
+
+pub fn layout_css(layout: &GridLayout) -> String {
+    let columns = layout
+        .columns
+        .iter()
+        .map(track_css)
+        .collect::<Vec<_>>()
+        .join(" ");
+    let rows = if layout.rows.is_empty() {
+        "auto".into()
+    } else {
+        layout
+            .rows
+            .iter()
+            .map(track_css)
+            .collect::<Vec<_>>()
+            .join(" ")
+    };
+    format!(
+        "display:grid;grid-template-columns:{columns};grid-template-rows:{rows};column-gap:{}px;row-gap:{}px;padding:{}px;justify-items:{};align-items:{}",
+        layout.column_gap,
+        layout.row_gap,
+        layout.padding,
+        align_css(layout.justify_items),
+        align_css(layout.align_items)
+    )
+}
+
+fn align_css(align: GridAlign) -> &'static str {
+    match align {
+        GridAlign::Stretch => "stretch",
+        GridAlign::Start => "start",
+        GridAlign::Center => "center",
+        GridAlign::End => "end",
+    }
+}
+
+pub fn placement_css(placement: &Placement) -> String {
+    if let Some(region) = &placement.region {
+        return format!("grid-area:{region}");
+    }
+    format!(
+        "grid-column:{} / span {};grid-row:{} / span {}",
+        placement.column, placement.column_span, placement.row, placement.row_span
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -367,6 +433,54 @@ mod tests {
         assert_eq!(
             design.validate().unwrap_err(),
             "grid placement exceeds declared columns"
+        );
+    }
+
+    #[test]
+    fn css_grid_renderer_matches_canonical_fixture() {
+        let layout = GridLayout {
+            columns: vec![
+                GridTrack::fr(1.0),
+                GridTrack {
+                    kind: TrackKind::Fixed,
+                    value: Some(200.0),
+                    min: Some(120.0),
+                    max: Some(320.0),
+                },
+                GridTrack {
+                    kind: TrackKind::Content,
+                    value: None,
+                    min: None,
+                    max: None,
+                },
+            ],
+            rows: vec![GridTrack {
+                kind: TrackKind::Fixed,
+                value: Some(48.0),
+                min: None,
+                max: None,
+            }],
+            column_gap: 8,
+            row_gap: 12,
+            padding: 16,
+            justify_items: GridAlign::Stretch,
+            align_items: GridAlign::Start,
+            named_regions: vec![],
+            breakpoints: vec![],
+        };
+        assert_eq!(
+            layout_css(&layout),
+            "display:grid;grid-template-columns:1fr minmax(120px, 320px) max-content;grid-template-rows:48px;column-gap:8px;row-gap:12px;padding:16px;justify-items:stretch;align-items:start"
+        );
+        assert_eq!(
+            placement_css(&Placement {
+                column: 2,
+                row: 1,
+                column_span: 2,
+                row_span: 1,
+                region: None,
+            }),
+            "grid-column:2 / span 2;grid-row:1 / span 1"
         );
     }
 }

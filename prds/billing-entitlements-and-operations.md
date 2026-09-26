@@ -5,78 +5,200 @@
 
 ## Objective
 
-Make ixtable Cloud a self-service paid product whose billing state, application entitlements, quotas, cancellation, deletion, and support flows are consistent under retries/failures.
+Make ixtable Cloud self-service while keeping billing events, internal entitlement state, quotas, cancellation, deletion, and support behavior deterministic under retries and partial outages.
+
+## Separation of concerns
+
+The payment provider owns payment/subscription facts.
+
+ixtable owns a normalized internal commercial model used by product services.
+
+Product authorization must not call the payment provider synchronously on every request.
+
+## Core commercial entities
+
+The implementation must model stable IDs for:
+
+- customer/billing account;
+- organization;
+- cloud application;
+- subscription;
+- plan/price;
+- entitlement;
+- quota/usage counter where required;
+- provider event;
+- commercial state transition.
+
+Provider IDs are references, not the only internal identity.
 
 ## Commercial model
 
-MVP plans are per cloud application and include a runtime-user allowance.
+MVP pricing is per cloud application and includes a Runtime-user allowance.
 
-The billing provider is the source of payment/subscription events; ixtable maintains an internal entitlement projection used by product services.
+The specific plan catalog may change without changing the entitlement architecture.
 
-## Required flows
+Entitlements should describe product capabilities/limits such as:
 
-- checkout;
-- subscription activation;
-- plan change;
-- invoice visibility;
-- payment failure handling;
-- cancellation;
-- runtime-user quota enforcement;
-- application entitlement checks;
-- export;
-- account/application deletion;
-- support/recovery tooling.
+- application paid status;
+- allowed Runtime-user count;
+- backup/retention allowance;
+- publish/distribution eligibility;
+- other paid cloud capabilities explicitly added by plan.
 
-## Consistency
+## Subscription lifecycle
 
-- Webhook/event processing is idempotent.
-- Duplicate/out-of-order events do not create duplicate entitlements.
-- Temporary provider outage does not permanently corrupt access state.
-- Entitlement state has an auditable reason/source.
-- Product access changes follow documented grace periods rather than ad hoc checks.
+At minimum normalize these states/events:
 
-## Enforcement
+- checkout initiated;
+- active/paid;
+- trialing if offered;
+- payment past due;
+- grace period;
+- canceled at period end;
+- canceled/expired;
+- refund/chargeback consequences where operationally relevant.
 
-Entitlements are checked server-side for:
+User-facing access behavior for each normalized state must be explicit.
 
-- cloud application creation where plan-limited;
+Do not scatter provider-specific status-string checks across product services.
+
+## Event ingestion
+
+Provider webhook/event processing must:
+
+- verify provider authenticity/signature;
+- persist provider event ID;
+- process idempotently;
+- tolerate duplicate delivery;
+- tolerate out-of-order delivery;
+- maintain enough event/version timestamp information to avoid stale events overwriting newer state;
+- retry transient failures;
+- dead-letter/escalate permanently unprocessable events;
+- expose operational visibility.
+
+Acknowledge provider events only according to a strategy that does not silently lose failed processing.
+
+## Entitlement projection
+
+Internal entitlement state is derived from normalized commercial state.
+
+Every entitlement decision should be explainable by:
+
+- account/application;
+- plan;
+- source subscription/event;
+- effective time;
+- expiry/grace time where applicable;
+- current limit/value.
+
+Sensitive payment details are not required in product entitlement tables.
+
+## Server-side enforcement
+
+Paid capability checks occur server-side for at least:
+
+- paid cloud application operation;
 - publish;
-- invited/runtime user count;
-- bundle/update delivery;
-- backup/retention features;
-- other paid cloud capabilities.
+- active/invited Runtime-user quota;
+- personalized bundle/update delivery;
+- cloud backup/retention;
+- credential/key-grant issuance where paid entitlement is required.
 
-The open-source local desktop remains usable without an active cloud subscription.
+Desktop local/free features must not require a cloud entitlement check.
 
-## Cancellation and deletion
+## Quota concurrency
 
-- Cancellation behavior clearly states end-of-term/grace behavior.
-- Export precedes destructive deletion where requested.
-- Deletion workflows cover cloud archives, user/application metadata, grants, and retained billing records according to legal/accounting requirements.
+Runtime-user allowances must be enforced transactionally/atomically enough that concurrent invitation/activation requests cannot exceed the plan without a deliberate documented grace policy.
 
-## Support operations
+Define whether pending invitations count toward quota. The choice must be consistent across UI/API.
 
-Operators can diagnose:
+## Payment failure and grace
 
-- auth;
-- publish;
-- entitlement;
-- storage;
-- update;
-- key-grant failures
+Temporary payment failure should not create immediate destructive data loss.
 
-without reading user datasource secrets.
+The plan must specify:
+
+- grace duration;
+- capabilities allowed during grace;
+- which new operations become blocked;
+- eventual read/export access;
+- retention/deletion timeline after expiry.
+
+Grace is a commercial policy represented in state, not an ad hoc timestamp check in each service.
+
+## Cancellation
+
+Cancellation flow shows:
+
+- effective end date;
+- future cloud capability loss;
+- export options;
+- retained/deleted data policy.
+
+Cancellation must not disable the Apache-licensed local desktop or local `.ixt` files.
+
+## Export and deletion
+
+Users can export data/content they are entitled to retrieve before destructive deletion.
+
+Deletion orchestration covers:
+
+- application membership/control-plane metadata;
+- developer checkpoints;
+- published artifacts;
+- installation backups;
+- credential/key grants;
+- audit records according to retention rules;
+- billing records that must legally/accountingly remain.
+
+Deletion is a durable workflow with retry/status, not a single best-effort request across many services.
+
+## Operational tooling
+
+Authorized support operators can inspect:
+
+- identity/membership;
+- publish versions;
+- storage/checkpoint state;
+- entitlement projection;
+- provider event processing state;
+- bundle/update issuance;
+- key-grant outcome;
+- normalized errors/correlation IDs.
+
+Support must not expose:
+
+- plaintext datasource credentials;
+- password secrets;
+- raw protected key material;
+- unnecessary payment instrument data.
+
+Privileged support actions must be audited.
+
+## Reconciliation
+
+A scheduled/admin reconciliation process compares provider subscription truth with internal normalized state to detect missed webhooks or drift.
+
+Reconciliation repairs state idempotently and records what changed.
 
 ## Acceptance criteria
 
-- New customer can register, pay, publish, invite, run, update, restore, and cancel without operator action.
-- Duplicate billing events are safe.
-- Runtime-user quota cannot be bypassed by concurrent invitations.
-- Local free product continues to function after cloud cancellation.
-- Support tooling exposes state transitions without secrets.
+- New customer can register, pay, publish, invite, run, update, restore, and cancel without operator intervention.
+- Duplicate provider event produces no duplicate entitlement/state transition.
+- Older out-of-order event cannot regress a newer known commercial state incorrectly.
+- Invalid webhook signature is rejected.
+- Temporary event-processing failure is retried/reconcilable.
+- Concurrent invitations cannot bypass Runtime-user quota.
+- Entitlement decision can be traced to source subscription/event.
+- Payment grace/cancellation behavior is deterministic and testable.
+- Cloud cancellation never disables local desktop/local application use.
+- Deletion workflow retries partial failures and exposes completion state.
+- Support tooling diagnoses commercial failures without revealing protected secrets.
+- Provider/internal reconciliation can repair a deliberately dropped event in test.
 
 ## Non-goals
 
 - DRM of the Apache desktop core;
-- bespoke enterprise contracts/workflows in MVP;
-- usage-based metering beyond defined plan allowances unless separately specified.
+- bespoke enterprise procurement/contracts in MVP;
+- provider-specific business logic leaking throughout product services;
+- usage-based billing unless separately specified.

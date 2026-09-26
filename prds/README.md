@@ -20,7 +20,7 @@ This directory contains the product requirements hierarchy for ixtable.
 5. [Shared Grid, Forms & Navigation](./forms-layout-and-navigation.md)
 6. [Reports, Charts & Dashboards](./reports-and-dashboards.md)
 7. [Expressions, Actions & Triggers](./expressions-actions-and-triggers.md)
-8. [Attachments & Application Assets](./attachments-and-assets.md)
+8. [Application Assets](./attachments-and-assets.md)
 9. [Runtime Bundles & Manual Distribution](./runtime-bundles-and-manual-distribution.md)
 10. [Cloud Publishing, Auth & RBAC](./cloud-publishing-auth-and-rbac.md)
 11. [Cloud Backup, Updates & Recovery](./cloud-backup-updates-and-recovery.md)

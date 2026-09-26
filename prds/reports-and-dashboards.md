@@ -5,77 +5,201 @@
 
 ## Objective
 
-Provide deterministic operational reporting and interactive dashboards without creating a second application framework.
+Provide deterministic operational reporting and interactive dashboards without creating a second application framework or datasource layer.
+
+## Shared data contract
+
+Reports, charts, KPIs, and dashboard tables consume saved DuckDB-backed query results.
+
+They must not:
+
+- open RecordStore connections directly;
+- define independent datasource credentials;
+- bypass query parameter validation;
+- mutate records except through embedded forms/actions.
 
 ## Reports
 
-The freeform report canvas supports:
+A report has:
+
+- stable report ID;
+- display name;
+- saved-query data source(s);
+- page configuration;
+- versioned serialized layout;
+- ordered visual/report bands;
+- expressions/calculations.
+
+### Supported components
+
+MVP supports:
 
 - static text;
 - bound fields;
-- images;
-- lines/rectangles;
+- images/application assets;
+- lines and rectangles;
 - query-backed tables;
 - grouping;
 - totals/calculated expressions;
-- report/page headers and footers;
-- pagination controls.
+- report header/footer;
+- page header/footer;
+- explicit pagination controls.
 
-Outputs:
+### Page model
 
-- preview;
+The report definition uses renderer-neutral physical page concepts:
+
+- page size;
+- orientation;
+- margins;
+- content bounds;
+- deterministic units;
+- overflow/page-break rules.
+
+Do not persist arbitrary browser CSS as the report contract.
+
+The implementation must define one canonical measurement unit and conversion policy for screen preview, printer, and PDF output.
+
+### Pagination
+
+Pagination must be deterministic for identical:
+
+- report definition;
+- dataset;
+- font assets/metrics;
+- renderer version;
+- page settings.
+
+Rules must be explicit for:
+
+- table row splitting;
+- group keep-together behavior;
+- repeated headers;
+- orphan/widow-like group behavior where supported;
+- oversized indivisible content;
+- explicit page breaks.
+
+Unsupported impossible layout requests produce validation/render errors rather than silent clipping.
+
+### Fonts and images
+
+Built-in report fonts must be controlled/pinned sufficiently for repeatable pagination.
+
+Application-provided images use the attachment/asset contract and are decoded safely.
+
+Platform-native font substitution must not silently change golden pagination.
+
+### Outputs
+
+- Studio/runtime preview;
 - print;
 - PDF.
 
-Report datasets come from saved DuckDB-backed queries.
+PDF output is a first-class deterministic artifact, not a screenshot of the UI.
 
-## Determinism
+## Calculations
 
-The same report fixture and data must produce stable pagination and layout across supported platforms within declared tolerances.
+Report calculations use the common expression engine.
 
-Golden PDF/snapshot fixtures are release gates.
+Supported scopes must be explicit, such as:
+
+- row;
+- group;
+- page where deterministic;
+- report total.
+
+A calculation must not execute arbitrary code.
 
 ## Dashboards
 
-Dashboards use the shared grid model and can contain:
+Dashboards use the shared grid layout from the forms PRD.
 
-- KPI values;
-- tables;
-- filters;
-- forms;
-- action buttons;
-- bar/line/area charts;
-- pie/donut charts;
-- scatter charts;
-- summary charts.
+Supported components include:
 
-Charts consume query results; they do not define independent datasource access.
+- KPI/summary value;
+- data table;
+- filter control;
+- embedded form;
+- action button;
+- bar chart;
+- line chart;
+- area chart;
+- pie/donut chart;
+- scatter chart;
+- summary visualization.
+
+## Dashboard state
+
+Dashboard filter/input state is runtime state, not persisted application definition unless the developer explicitly defines defaults.
+
+Filters map to typed saved-query parameters.
+
+Changing filter state:
+
+1. validates/coerces input;
+2. cancels obsolete in-flight requests where practical;
+3. reruns dependent queries;
+4. updates all dependent components consistently.
+
+A dashboard must not create a second ad hoc query/state graph independent of application object dependencies.
+
+## Charts
+
+Charts consume tabular query output and define:
+
+- query stable ID;
+- parameter bindings;
+- field mappings;
+- aggregation expectation if not already in query output;
+- presentation options supported by the built-in chart schema.
+
+Complex data transformation belongs in the query, not hidden chart-specific SQL.
 
 ## Reuse rule
 
-Dashboards must reuse existing:
+Dashboards reuse:
 
-- grid;
-- query;
-- form/table;
-- expression;
-- action;
-- permission primitives.
+- shared grid;
+- saved queries;
+- form/table primitives;
+- expressions;
+- actions;
+- permissions;
+- common loading/error state.
 
-A dashboard-only state or data engine is prohibited.
+A dashboard-only layout, permission, action, or datasource engine is prohibited.
+
+## Error/loading states
+
+Every report/dashboard data component has explicit:
+
+- loading;
+- empty;
+- query error;
+- cancelled;
+- permission denied
+
+behavior.
+
+One failed dashboard component should not necessarily destroy unrelated components unless they share a required dependency.
 
 ## Acceptance criteria
 
-- Reports print/export to PDF deterministically for golden fixtures.
-- Page/group totals match source query results.
-- Dashboard filters update dependent datasets without bypassing query parameter rules.
+- Golden report fixtures produce stable pagination/PDF output within declared tolerances on all supported platforms.
+- Same data and report definition yield stable group/page totals.
+- PDF generation is not dependent on viewport dimensions.
+- Oversized/unsupported report constructs fail visibly rather than clipping silently.
+- Dashboard filters use typed query parameters and update all declared dependents.
+- Obsolete dashboard query results do not overwrite newer filter-state results.
 - Forms embedded in dashboards behave identically to forms elsewhere.
-- Unsupported report constructs fail validation before publish.
+- Chart components contain no independent datasource credentials/SQL mutation path.
+- Report/dashboard authorization is enforced when invoked directly, not only through navigation.
 
 ## Non-goals
 
 - nested subreports;
+- report scripting;
 - arbitrary HTML/CSS;
-- report scripts;
-- barcode/label-specialized tooling;
-- custom visualization plugins in MVP.
+- barcode/label-specialized authoring;
+- arbitrary custom chart plugins;
+- separate dashboard datasource/runtime engines.

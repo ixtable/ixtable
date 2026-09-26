@@ -5,82 +5,199 @@
 
 ## Objective
 
-Define the lifecycle of a local ixtable application, including creation, open, extraction, autosave, checkpointing, recovery, migration, and compatibility of the `.ixt` SQLite Archive.
+Define the lifecycle of a local ixtable application, including creation, open, extraction, autosave, checkpointing, external-file conflict handling, crash recovery, migration, and compatibility of the `.ixt` SQLite Archive.
 
-## Scope
+## Terminology and version domains
 
-The `.ixt` file is the durable application container and source of truth after a successful save. Working-session extraction exists only to support normal files and database connections while the application is open.
+These versions are distinct and must not be conflated:
 
-The archive must preserve:
+- **Archive format version**: physical `.ixt` SQLite schema compatibility.
+- **DocumentConfig version**: canonical application-definition schema compatibility.
+- **Design schema version**: serialized form/layout object compatibility.
+- **Application version**: version of the application being authored/distributed.
+- **Desktop product version**: version of ixtable itself.
 
-- application metadata and format version;
-- `DocumentConfig`;
-- embedded SQLite RecordStore payload;
-- application asset attachments;
-- future unknown archive tables where safe; and
-- application version metadata required by runtime distribution.
+Each domain must have independent validation and migration rules.
 
-## Required behavior
+## Source-of-truth model
 
-### Archive format
+The `.ixt` file is the durable application container and source of truth after a successful save. A working session is mutable WIP extracted from that checkpoint.
+
+Current archive tables are:
+
+- `archive_metadata`
+- `data_payload`
+- `document_config`
+- `attachments`
+
+Current working-session files are:
+
+- `data.db`
+- `document.json`
+- `config.yaml`
+- `attachments/<stable-id>/content`
+- `attachments/<stable-id>/metadata.json`
+
+These names are part of the MVP compatibility contract unless deliberately migrated.
+
+## Archive format
 
 - Use SQLite Archive semantics, not ZIP.
-- Preserve the existing archive schema and evolve it via explicit format migrations.
-- Reject unsupported future `format_version` values with an actionable compatibility error.
-- Keep stable document identity across saves and upgrades.
-- Validate checksums/structure before a rewritten archive becomes authoritative.
+- Extend the existing archive schema; do not introduce a second bundle format for editable applications.
+- `archive_metadata` contains exactly one logical archive identity, including stable `document_id`.
+- `data_payload` contains the compressed embedded SQLite RecordStore checkpoint.
+- `document_config` contains the canonical JSON application definition.
+- `attachments` contains application-definition assets, not runtime record attachments.
+- Payloads with checksums must verify checksum and uncompressed size on read.
+- Unknown future tables/rows are preserved where safe.
+- Unsupported future archive format versions fail before extraction or mutation.
 
-### Working session
+## Session lifecycle
 
-On open, ixtable extracts required objects into an isolated working directory. The working directory is disposable WIP, never a second published copy.
+### Create
 
-Required working files include:
+A new unsaved application:
 
-- embedded record store;
-- structured config projection;
-- YAML projection; and
-- extracted application assets.
+- receives a new stable `document_id`;
+- creates a valid empty embedded SQLite database;
+- creates the current default `DocumentConfig`;
+- has no authoritative filesystem path until Save As succeeds;
+- is dirty only after user-visible modification.
 
-### Saving
+### Open
 
-- Autosave is debounced.
-- Archive replacement is atomic: write temporary archive, validate, then rename/replace.
-- UI exposes dirty, saving, saved, recovery-needed, and save-error states.
-- No acknowledged save may disappear after a normal restart.
-- Application definition and embedded record data must checkpoint consistently.
+Opening an archive must:
 
-### Recovery
+1. open the source archive read-only;
+2. validate archive version and required singleton rows;
+3. verify compressed payload checksums/sizes;
+4. validate `DocumentConfig` and design schema;
+5. extract into an isolated recovery workspace;
+6. start the DuckDB read runtime against the extracted store;
+7. register a recovery-session record;
+8. fingerprint the source file for later external-conflict detection.
 
-- Detect abandoned working sessions after crash/forced termination.
-- Offer deterministic recovery when WIP is newer than the last valid archive.
-- Never overwrite the last known-good archive with invalid recovered state.
-- Preserve evidence/logs when recovery fails.
+Failure before step 7 must not create an apparently valid open session.
 
-### Compatibility and migrations
+### Save / Save As
 
-- Archive migrations are versioned and deterministic.
-- Upgrades create a recoverable checkpoint before destructive migration.
-- Downgrades are supported only where an explicit reverse migration exists.
-- Unknown future archive tables/rows are preserved when safe rather than silently discarded.
+Before packing:
 
-### Size and performance
+- `data.db` from the workspace is the current embedded SQLite WIP and must replace the in-memory payload;
+- `DocumentConfig`, YAML projection, and application assets must represent one consistent definition state.
 
-- Cloud-synchronized archives are limited to 500 MB in MVP.
+Archive replacement must be atomic:
+
+1. write a temporary SQLite archive in the destination directory;
+2. commit all archive rows;
+3. flush/sync the temporary file;
+4. reopen and fully validate the temporary archive;
+5. atomically replace/rename into the destination;
+6. sync the parent directory where supported.
+
+A failed save leaves the previous authoritative archive untouched.
+
+### Autosave
+
+For a saved application, autosave is eligible only when:
+
+- the session is dirty;
+- a destination path exists;
+- no external conflict is active;
+- another save is not active; and
+- the autosave debounce/interval has elapsed.
+
+The current implementation uses a 30-second eligibility interval. This value may become configurable, but changes must preserve the eligibility contract above.
+
+Unsaved applications require Save As and are never silently assigned a path.
+
+## External file conflicts
+
+ixtable must detect when the authoritative `.ixt` file changed outside the current session.
+
+The source fingerprint includes at least:
+
+- filesystem modification state;
+- file size; and
+- archive `document_id` identity validation.
+
+When an external change is detected:
+
+- autosave stops;
+- normal overwrite-save is blocked;
+- the session enters explicit conflict state;
+- the user may Reload or Save As;
+- ixtable must not silently merge two archive versions in MVP.
+
+Reload discards local WIP only after normal dirty/conflict protections are satisfied by the calling UX.
+
+## Recovery
+
+Every open session registers:
+
+- session ID;
+- document ID;
+- workspace path;
+- source document path when one exists;
+- last recovery update time.
+
+Recovery workspaces survive abnormal process termination.
+
+On next startup, ixtable must:
+
+- ignore recovery records whose workspace no longer exists;
+- identify valid abandoned sessions;
+- distinguish the last valid archive checkpoint from newer WIP;
+- validate recovered config and embedded data before creating a new archive checkpoint;
+- never overwrite the last known-good archive until recovered state validates.
+
+Normal close removes the workspace and its recovery registration only after close is allowed.
+
+## Archive and config migrations
+
+- Archive format migrations and config migrations are separate operations.
+- A migration must declare source version(s), target version, and whether reverse migration exists.
+- Destructive migration creates or preserves a recoverable pre-migration checkpoint.
+- Unsupported downgrade fails before source mutation.
+- Migration code must be deterministic and fixture-tested.
+- Application/schema migrations for user RecordStores are not archive-format migrations; see [RecordStores & Schema](./recordstores-and-schema.md).
+
+## Size and performance
+
+- Cloud-synchronized archives are limited to **500 MB** in MVP.
 - Studio reports total archive size and largest entries before publish/backup.
-- Large attachments must not cause partial archive corruption.
+- Over-limit archives remain usable locally.
+- Large application assets must not cause partial archive corruption.
+- Save operations should expose progress when packing/checkpointing becomes perceptible.
+
+## Required error classes
+
+Implementations may refine names, but callers must be able to distinguish at least:
+
+- missing source file;
+- unsupported archive version;
+- invalid archive schema/config;
+- corrupt payload/checksum failure;
+- external conflict;
+- Save As required;
+- I/O failure.
 
 ## Acceptance criteria
 
-- Create → save → close → reopen round-trips all application definitions and embedded data.
-- Forced termination during archive rewrite preserves the previous valid checkpoint.
+- Create → Save As → close → reopen round-trips application config, embedded records, metadata, and assets.
+- Forced termination before archive replacement preserves the previous valid checkpoint.
+- Temporary archives are never treated as authoritative before full validation.
+- A changed source file blocks overwrite/autosave and exposes explicit conflict state.
 - Recovery restores valid WIP without mutating the previous checkpoint until validation succeeds.
-- Unsupported format versions fail cleanly.
-- 500 MB boundary behavior is tested.
-- Fixtures cover upgrade and supported downgrade paths on Windows, macOS, and Linux.
+- Unsupported archive versions fail before extraction.
+- Corrupt `data_payload` or application assets fail checksum/size validation.
+- 500 MB cloud boundary behavior is tested without making local open/save illegal.
+- Upgrade and supported downgrade fixtures run on Windows, macOS, and Linux.
 
 ## Non-goals
 
 - semantic Git storage;
-- collaborative merging of archive contents;
+- collaborative archive merging;
 - row-level SQLite synchronization;
-- browser-native archive editing.
+- browser-native archive editing;
+- automatic conflict reconciliation.

@@ -81,7 +81,6 @@ Installation identity scopes:
 
 - embedded SQLite runtime data;
 - local async job queue;
-- local async job queue;
 - local runtime preferences/state;
 - optional future cloud backup stream.
 

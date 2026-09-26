@@ -309,7 +309,7 @@ There is no managed PostgreSQL offering in the MVP.
 
 ### 9.2 SQLite
 
-SQLite is the default local transactional store. Embedded records live in `data.sqlite` inside the `.ixt` archive.
+SQLite is the default local transactional store. Embedded records live in `data.db` inside the `.ixt` archive.
 
 ixtable exposes real SQLite capabilities:
 
@@ -324,7 +324,7 @@ ixtable exposes real SQLite capabilities:
 
 SQLite applications are independent local applications. Cloud archive upload provides backup and distribution, not concurrent multi-user SQLite record synchronization.
 
-For a runtime-only SQLite bundle, `data.sqlite` initializes that installation on first open. Thereafter, the installation's records and record attachments are independent local state. Application-definition updates preserve that state and apply declared migrations; they do not replace it with the Developer's bundled copy.
+For a runtime-only SQLite bundle, `data.db` initializes that installation on first open. Thereafter, the installation's records are independent local state. Application-definition updates preserve that state and apply declared migrations; they do not replace it with the Developer's bundled copy.
 
 ### 9.3 PostgreSQL
 
@@ -734,8 +734,8 @@ Activation sequence:
 2. Verify identity, entitlement, checksum, and signature.
 3. Create a local recovery checkpoint.
 4. Validate archive and Runtime compatibility.
-5. Separate incoming application definitions/assets from installation-owned records and attachments.
-6. Preserve the installation's `data.sqlite` and record attachments.
+5. Separate incoming application definitions/assets from installation-owned records.
+6. Preserve the installation's `data.db`.
 7. Preview and apply applicable migrations to installation-owned data.
 8. Run application health checks.
 9. Atomically activate the new definition version and migrated local state.
@@ -774,7 +774,7 @@ Requirements:
 - audit event for upload, restore, overwrite, and fork; and
 - 500 MB per-archive limit in MVP.
 
-For embedded SQLite applications, restoring a Developer checkpoint restores that Developer archive's definition, embedded data, and attachments together. Restoring a Runtime-installation backup restores only the selected independent installation stream.
+For embedded SQLite applications, restoring a Developer checkpoint restores that Developer archive's definition, embedded data, and application assets together. Restoring a Runtime-installation backup restores only the selected independent installation's SQLite state.
 
 For PostgreSQL applications, restoring an archive does **not** restore external PostgreSQL records. This limitation must be shown before restoration.
 
@@ -1117,8 +1117,8 @@ Exit criteria:
 - Unauthorized users cannot discover or download private applications.
 - Revoked users cannot obtain new bundles or key grants.
 - Failed updates revert without losing the prior working version.
-- Definition updates preserve each Runtime installation's local records and attachments.
-- Embedded SQLite checkpoints restore application, data, and attachments.
+- Definition updates preserve each Runtime installation's local records.
+- Embedded SQLite checkpoints restore application definition/assets and the applicable SQLite data checkpoint.
 - PostgreSQL restore limitations are explicit and tested.
 - Independent security review has no unresolved critical/high findings.
 

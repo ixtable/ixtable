@@ -1,15 +1,15 @@
-# PRD: Attachments & Application Assets
+# PRD: Application Assets
 
 **Parent:** [Commercial MVP](./commercial-mvp.md)  
 **Status:** MVP implementation contract
 
 ## Objective
 
-Define storage, lifecycle, integrity, safety, backup, and update behavior for application-definition assets and record attachments without conflating the two.
+Define storage, lifecycle, integrity, safety, backup, and update behavior for application-definition assets.
 
-## Attachment classes
+Record-linked/business-record attachments are explicitly deferred from the commercial MVP and require a separate future PRD before implementation.
 
-### 1. Application assets
+## Application assets
 
 Examples:
 
@@ -34,31 +34,13 @@ Working-session extraction uses stable-ID directories rather than user filenames
 
 Application assets are versioned with application definitions.
 
-### 2. Record attachments
-
-Examples:
-
-- invoice PDF attached to an invoice row;
-- work-order photo;
-- customer-provided document.
-
-Record attachments are business record state.
-
-They are not stored in the archive's application-asset table merely because the UI calls both concepts “attachments.”
-
-Their backend follows the owning RecordStore/runtime installation contract.
-
-For embedded SQLite Runtime, record attachments belong to the installation-local data state and survive application-definition updates.
-
-For PostgreSQL applications, the attachment storage strategy must be explicitly configured; the MVP must not falsely imply that ixtable Cloud backs up developer-owned external record attachment storage.
-
 ## Identity and references
 
-- Asset/attachment stable ID is storage identity.
+- Stable asset ID is storage identity.
 - Display filename is mutable metadata.
 - User-supplied path/filename never determines extraction path.
 - Definition objects reference application assets by stable ID.
-- Record attachment ownership references stable record identity/key according to the RecordStore model.
+- Renaming an asset never rewrites dependent references solely because the label changed.
 
 ## Import
 
@@ -75,16 +57,10 @@ Application-asset import marks the application definition dirty and participates
 
 ## Integrity
 
-For application assets:
-
-- checksum and uncompressed size validate on archive read;
-- corrupt assets make the archive invalid or explicitly degraded according to a defined recovery policy;
-- a save always recalculates integrity metadata from actual bytes.
-
-For record attachments:
-
-- integrity metadata is required when stored/managed by ixtable;
-- backup/restore verifies attachment integrity where included.
+- Checksum and uncompressed size validate on archive read.
+- Corrupt assets make the archive invalid or explicitly degraded according to a defined recovery policy.
+- A save recalculates integrity metadata from actual bytes.
+- Duplicate-by-content detection/deduplication may be used where practical, but stable asset IDs remain the reference contract.
 
 ## Media types and preview safety
 
@@ -115,21 +91,19 @@ Application-definition update may:
 
 Removing a referenced application asset must be blocked or require explicit dependent-object repair.
 
-Runtime-definition updates must never overwrite installation-local record attachments.
+Runtime-definition updates may replace application assets, but must not mutate installation-owned business records.
 
 ## Backup and restore
 
-### Editable/local archive
+Application assets are included in:
 
-Application assets are naturally included in `.ixt` checkpoints.
+- local `.ixt` checkpoints;
+- developer cloud archive checkpoints;
+- published runtime definitions as required by the app.
 
-### Runtime SQLite backup
+Restoring a developer checkpoint restores its application assets with the corresponding application definition.
 
-Where optional cloud backup of runtime SQLite state is enabled, record attachments managed as part of that installation's state are included consistently with the corresponding record checkpoint.
-
-### PostgreSQL/external storage
-
-The product must clearly state what is and is not backed up. Application-definition asset backup does not imply external record attachment backup.
+Runtime installation SQLite backup does not imply a separate record-attachment feature in MVP.
 
 ## Limits and accounting
 
@@ -145,14 +119,26 @@ Per-file and total limits must fail before destructive partial import/upload.
 - Renaming display filename does not change identity/references.
 - Replacing an asset by stable ID updates content without rewriting references.
 - Deleting a referenced asset produces dependency impact.
-- Runtime local record attachments survive definition upgrade/rollback.
-- SQLite runtime backup restores record data and managed record attachments consistently.
-- Cloud UI never describes external PostgreSQL attachment data as backed up unless it actually is.
-- Archive size accounting includes application assets.
+- Runtime definition update can replace app assets without replacing installation-owned SQLite records.
+- Cloud/archive size accounting includes application assets.
+- Product UI/docs do not expose record-linked attachments as an MVP capability.
+
+## Deferred: record-linked attachments
+
+A future PRD must define at least:
+
+- record ownership/reference model;
+- SQLite/PostgreSQL storage strategy;
+- local/cloud object storage options;
+- backup/restore semantics;
+- quotas and security;
+- cross-installation behavior.
+
+Implementors must not opportunistically add a partially specified record-attachment subsystem to MVP.
 
 ## Non-goals
 
+- record-linked/business-record attachments in MVP;
 - cloud document-management platform;
 - collaborative attachment editing;
-- executing embedded macros/scripts;
-- treating application assets and business record attachments as one storage table.
+- executing embedded macros/scripts.

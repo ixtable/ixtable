@@ -5,87 +5,196 @@
 
 ## Objective
 
-Provide a backend-neutral transactional write contract for SQLite and PostgreSQL while exposing real backend capabilities.
+Provide a backend-neutral transactional mutation and schema contract for SQLite and PostgreSQL while exposing genuine backend capability differences.
+
+## Architectural boundary
+
+The RecordStore owns:
+
+- transactional creates/updates/deletes;
+- schema introspection;
+- DDL and migrations;
+- constraint/index metadata;
+- backend-native transaction boundaries;
+- normalized mutation/schema errors.
+
+DuckDB owns application reads. Writes never flow through DuckDB.
 
 ## MVP RecordStores
 
 - `SQLiteRecordStore`
 - `PostgresRecordStore`
 
+SQLite is implemented first, but the public contract must not bake SQLite-only assumptions into UI or serialized application definitions.
+
 No managed PostgreSQL service is included.
 
-## Contract
+## Capability descriptor
 
-Every RecordStore reports capabilities for:
+Every RecordStore reports capabilities for at least:
 
-- logical types;
-- table/column DDL;
+- logical types and type mapping;
+- create/drop/rename table;
+- add/drop/rename/change column;
 - primary/composite keys;
-- foreign keys;
+- foreign keys and referential actions;
 - unique/check constraints;
 - defaults;
 - indexes;
-- generated values;
+- generated/default-generated values;
 - transactions;
 - parameter binding;
-- migration behavior;
-- concurrency/conflict support; and
+- migration atomicity/rebuild requirements;
+- concurrency/conflict facilities;
+- identifier limits/case behavior;
 - normalized error mapping.
 
-The UI must describe capabilities, not pretend all stores behave like SQLite.
+The schema designer consumes this descriptor. Unsupported operations are disabled or explained; they are not silently emulated unless the contract explicitly defines emulation.
+
+## Logical type contract
+
+ixtable requires a backend-neutral logical type layer.
+
+For every logical type, conformance fixtures must define:
+
+- accepted input representation;
+- SQLite physical mapping;
+- PostgreSQL physical mapping;
+- DuckDB read representation;
+- null behavior;
+- comparison/sort expectations;
+- serialization into UI/API values;
+- round-trip guarantees and known precision limits.
+
+At minimum the MVP must resolve behavior for text, integer, floating/decimal numeric values, boolean, date, time, timestamp/date-time, binary/blob, and identifiers used by relationships.
+
+Backend-specific types may be exposed as advanced capabilities but must not masquerade as portable logical types.
 
 ## SQLite
 
 - Default local transactional backend.
-- Embedded SQLite state lives in the application archive for Studio/local runtime.
-- Foreign keys must be enforced.
-- Runtime-only distributed SQLite installations become independent local record states after first initialization.
-- App-definition updates must preserve runtime-local records and apply explicit migrations.
+- Embedded Studio/local-runtime state uses workspace `data.db`, checkpointed into archive `data_payload`.
+- Foreign-key enforcement is enabled for every mutation connection.
+- Runtime-only distributed SQLite installations initialize from the bundle once.
+- Thereafter record data and record attachments belong to that installation.
+- Definition updates preserve installation-local data and execute declared application migrations.
+
+SQLite table-rebuild operations must be represented as migration operations with impact preview rather than hidden behind an in-place-DDL fiction.
 
 ## PostgreSQL
 
-- Developer supplies hosting, networking, TLS, backups, and credentials.
-- Runtime connects directly in MVP; ixtable does not proxy queries.
-- Support shared application credentials and per-runtime-user credentials.
-- Studio must warn when shared credentials reduce revocation/database attribution.
-- Non-TLS connections require an explicit severe warning/override.
+- Developer supplies hosting, networking, TLS, lifecycle, backups, and availability.
+- Runtime connects directly in MVP; ixtable does not proxy PostgreSQL.
+- Supported credential modes:
+  - one shared application credential;
+  - least-privileged per-runtime-user credential.
+- Studio warns that shared credentials weaken individual revocation and database-level attribution.
+- Non-TLS configuration requires a severe explicit warning/override and remains visible in validation/audit state.
 
-## Schema designer
+PostgreSQL object/schema namespace behavior must be specified before implementation; implementors must not assume SQLite's single-schema model.
 
-The visual designer supports:
+## Mutation API
+
+Normal record mutation entry points must be typed operations, not arbitrary SQL strings.
+
+Required classes:
+
+- insert record;
+- update record by stable row identity/key;
+- delete record by stable row identity/key;
+- transactional batch where required by an action;
+- schema/migration execution through the migration subsystem.
+
+Values are parameter-bound. Identifiers originate from validated schema metadata and are safely quoted.
+
+## Schema introspection and designer
+
+The visual schema designer supports:
 
 - tables/fields;
 - logical types;
 - nullability;
-- keys;
-- relationships;
-- uniqueness;
+- primary/composite keys;
+- foreign keys/relationships;
+- unique constraints;
 - defaults;
-- checks;
+- check constraints;
 - indexes;
-- cascade behavior.
+- update/delete referential actions.
 
-Destructive changes require an impact preview.
+Introspection must round-trip schemas created by ixtable without losing supported semantics.
 
-## Migrations
+Destructive or rebuild-requiring changes display:
 
-- Schema-changing application updates use explicit ordered migrations.
-- Migrations are transactional where the backend permits.
-- Failed migrations do not activate the new app definition.
-- Backend-specific rebuild operations are surfaced explicitly.
-- Migration history is tied to application version.
+- affected objects;
+- data-loss risk;
+- dependent application objects where known;
+- backend-specific execution strategy.
+
+## Application migrations
+
+Application migrations evolve runtime record schema/data and are distinct from archive/config migrations.
+
+Each migration has:
+
+- stable migration ID;
+- application version/order;
+- target RecordStore(s) or portable capability requirement;
+- ordered operations;
+- atomicity expectation;
+- forward transform;
+- optional explicit reverse transform;
+- checksum/identity so an already-applied migration cannot silently change.
+
+Rules:
+
+- applied migration history is stored with the runtime data state, not only the application definition;
+- a changed checksum for an already-applied migration is an error;
+- failed migration prevents activation of the new application definition;
+- transactional stores roll back atomically where supported;
+- non-atomic backend behavior requires preflight/restore strategy before it can be considered supported.
+
+## Concurrency contract
+
+Transactions alone are not conflict handling.
+
+Shared PostgreSQL entities must declare/implement a concurrency strategy before commercial publish where concurrent edits can occur. The MVP may use an optimistic version/timestamp check, but the chosen strategy must be explicit, testable, and surfaced as a conflict rather than silently overwriting data.
+
+Independent local SQLite installations do not participate in multi-user conflict resolution.
+
+## Normalized errors
+
+Callers must be able to distinguish at least:
+
+- validation/type error;
+- not-null violation;
+- unique violation;
+- foreign-key violation;
+- check violation;
+- missing object;
+- concurrency conflict;
+- connectivity/authentication error;
+- migration/DDL failure.
+
+Backend-native diagnostic detail may be attached, but UI behavior must not depend on parsing raw database error strings.
 
 ## Acceptance criteria
 
-- SQLite and PostgreSQL pass the same RecordStore conformance suite.
+- SQLite and PostgreSQL pass one RecordStore conformance suite for shared capabilities.
+- Logical-type fixtures round-trip through RecordStore writes and DuckDB reads.
 - Golden applications create equivalent logical schemas on both stores where capabilities overlap.
-- Constraints fail with normalized, actionable errors.
+- Constraint violations map to normalized actionable errors.
+- Mutation APIs use bound values and validated identifiers.
 - Runtime local SQLite data survives definition-only updates.
-- Migration failure leaves prior runtime version usable.
+- Applied migration history prevents mutation of historical migrations.
+- Failed migration leaves the previous runtime application version usable.
+- Concurrent PostgreSQL update conflicts are surfaced according to the declared policy.
+- Schema introspection round-trips ixtable-created supported constraints/indexes.
 
 ## Non-goals
 
 - MySQL/SQL Server in MVP;
 - cloud-managed PostgreSQL;
-- silently emulating unsupported backend features;
-- routing writes through DuckDB.
+- silently emulating every backend feature;
+- routing writes through DuckDB;
+- SQLite multi-user synchronization.

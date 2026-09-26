@@ -80,7 +80,7 @@ On first launch, a runtime bundle creates/claims an installation identity separa
 Installation identity scopes:
 
 - embedded SQLite runtime data;
-- record attachments;
+- local async job queue;
 - local async job queue;
 - local runtime preferences/state;
 - optional future cloud backup stream.
@@ -156,7 +156,7 @@ Password protection of the bundle is not automatically equivalent to secure per-
 - Wrong password/tampered encrypted bundle fails before activation.
 - Two applications with same display name cannot cross-update.
 - Reopening/reimporting a bundle does not reset established installation-local SQLite records.
-- Definition-only update preserves local records, record attachments, and installation identity.
+- Definition-only update preserves local records and installation identity.
 - Applied migration checksum mismatch blocks update.
 - Failed migration/update retains the prior active version and recoverable local data.
 - Irreversible migration prevents unsafe rollback with an actionable explanation.

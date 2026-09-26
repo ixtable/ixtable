@@ -129,7 +129,6 @@ Two installations must never share one mutable backup stream merely because they
 An installation checkpoint includes the ixtable-managed state required for consistent recovery:
 
 - embedded business record database;
-- managed 
 - applied migration history;
 - state metadata needed to match compatible application definition.
 

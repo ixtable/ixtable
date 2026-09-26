@@ -13,7 +13,7 @@ The product must distinguish:
 
 1. **Developer archive checkpoints** — editable `.ixt` snapshots uploaded/backed up.
 2. **Published application versions** — immutable versions eligible for Runtime distribution.
-3. **Runtime installation state backups** — optional per-installation SQLite/record-attachment state.
+3. **Runtime installation state backups** — optional per-installation SQLite state.
 
 These streams must not be conflated in API/UI/storage naming.
 
@@ -129,7 +129,7 @@ Two installations must never share one mutable backup stream merely because they
 An installation checkpoint includes the ixtable-managed state required for consistent recovery:
 
 - embedded business record database;
-- managed record attachments;
+- managed 
 - applied migration history;
 - state metadata needed to match compatible application definition.
 
@@ -154,7 +154,7 @@ Restore to an installation:
 
 - validates application/installation identity;
 - checks compatibility with target app definition;
-- restores records + managed record attachments as one consistent checkpoint;
+- restores records as one consistent checkpoint;
 - does not merge with current state;
 - creates recovery protection for the state being replaced.
 
@@ -205,7 +205,7 @@ Deleted backups must not remain restorable through stale object URLs.
 - Interrupted update before activation leaves previous version active.
 - Failed update does not enter unbounded auto-retry loop.
 - Installation A cannot overwrite/merge installation B's backup stream.
-- SQLite restore returns records + managed record attachments + migration history to one consistent checkpoint.
+- SQLite restore returns records + migration history to one consistent checkpoint.
 - Definition updates do not overwrite runtime-local business state.
 - PostgreSQL application restore UI never claims external records were recovered.
 - Revoked/deleted entitlement prevents future protected update retrieval.

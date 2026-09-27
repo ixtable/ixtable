@@ -773,13 +773,13 @@ For PostgreSQL applications, restoring an archive does **not** restore external 
 
 ## 24. Migrations
 
-Developers define migrations inside the application definition using visual operations plus an advanced SQL escape hatch. Migrations may be portable or explicitly target specific RecordStores/datasource connections.
+Developers define migrations according to authoring mode. Studio-managed apps use migrations stored in the application definition with visual operations plus an advanced SQL escape hatch. YAML IaC apps may instead reference ordered external `.sql` migration files, Ecto-style. Migrations may be portable or explicitly target specific RecordStores/datasource connections.
 
 Requirements:
 
 - target RecordStore declaration;
 - explicit ordering and immutable IDs/checksums after first application;
-- migration definitions in app config/YAML and execution history in each target data store;
+- migration definitions in app config for Studio-managed apps, or external referenced SQL files for YAML IaC apps; execution history remains in each target data store;
 - dependency validation;
 - SQL preview;
 - dry-run validation where feasible;

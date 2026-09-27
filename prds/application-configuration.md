@@ -90,7 +90,7 @@ Silent dangling references are prohibited.
 
 ### Authoring mode selection
 
-An application explicitly created/opened with a supplied authoritative YAML definition enters **YAML IaC mode**. YAML IaC supports one root YAML file with explicit imports/includes of additional YAML files; the include graph must be deterministic, cycle-checked, path-safe, and resolved before transactional validation.
+An application explicitly created/opened with a supplied authoritative YAML definition enters **YAML IaC mode**. YAML IaC supports one root YAML file with explicit imports/includes of additional YAML files; the include graph must be deterministic, cycle-checked, path-safe, and resolved before transactional validation. YAML IaC apps may also reference external migration SQL files rather than embedding migration SQL inside the YAML.
 
 Required behavior:
 
@@ -99,7 +99,8 @@ Required behavior:
 - Runtime/data editing remains available according to normal permissions;
 - reloading/applying changed YAML performs the full transactional validation pipeline before replacing the active normalized `DocumentConfig`;
 - invalid YAML leaves the last valid normalized definition active and reports the source error;
-- switching between Studio-managed and YAML IaC modes must be an explicit conversion/export operation, never an implicit side effect.
+- switching between Studio-managed and YAML IaC modes must be an explicit conversion/export operation, never an implicit side effect;
+- migration file references are resolved relative to the IaC project root, must remain inside that root unless explicitly allowed by future policy, and participate in validation/checksum calculation.
 
 ### Serialization
 
@@ -140,6 +141,8 @@ Studio-managed mode may persist incomplete/temporarily invalid draft definitions
 Credential material must live in the credential mechanism appropriate to local/manual/cloud execution and be referenced by stable opaque identifiers.
 
 ## Migration
+
+This section covers **ixtable configuration-schema migrations**, not user database migrations. User database migrations are defined in the RecordStores PRD.
 
 - Config migrations are explicit, ordered, deterministic transforms.
 - Migrations validate the output before committing it to the active session.

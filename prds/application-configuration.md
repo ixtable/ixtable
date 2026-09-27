@@ -9,7 +9,7 @@ Define the canonical application-definition model used by Studio and Runtime, it
 
 ## Canonical model
 
-`DocumentConfig` is the runtime/internal structured application-definition model, but ixtable supports **two mutually exclusive authoring modes**:
+`DocumentConfig` is the runtime/internal strongly typed Rust structured application-definition model, but ixtable supports **two mutually exclusive authoring modes**:
 
 1. **Studio-managed mode** — the archived `DocumentConfig` is authoritative and Studio may edit the application definition.
 2. **YAML IaC mode** — an explicitly supplied `config.yaml` is the authoritative application definition. Studio may inspect, preview, validate, and run the app, but application-definition editing is read-only in the in-app designer.
@@ -58,7 +58,7 @@ RecordStore-owned relational schema remains outside `DocumentConfig`.
 
 ## Stable identity
 
-Every referencable application object must have an immutable stable ID.
+Every referencable application object must have an immutable stable ID generated as UUIDv7 unless an imported supported definition already provides a valid stable ID.
 
 Rules:
 
@@ -82,11 +82,7 @@ At minimum it must support:
 - publish/export blockers;
 - deletion impact preview.
 
-Deleting a referenced object requires either:
-
-- explicit cascading deletion of declared dependents;
-- explicit reference repair/rebinding; or
-- cancellation.
+Deletion cascades automatically only for true owned-child relationships declared by the schema. Shared/reused dependencies block deletion until the developer repairs/rebinds them or explicitly removes those dependents. Silent dangling references are never created.
 
 Silent dangling references are prohibited.
 
@@ -94,7 +90,7 @@ Silent dangling references are prohibited.
 
 ### Authoring mode selection
 
-An application explicitly created/opened with a supplied authoritative YAML definition enters **YAML IaC mode**.
+An application explicitly created/opened with a supplied authoritative YAML definition enters **YAML IaC mode**. YAML IaC supports one root YAML file with explicit imports/includes of additional YAML files; the include graph must be deterministic, cycle-checked, path-safe, and resolved before transactional validation.
 
 Required behavior:
 
@@ -110,7 +106,7 @@ Required behavior:
 - YAML serialization is deterministic.
 - Stable object ordering should minimize diff churn where ordering is not semantically meaningful.
 - Secret values are never written in plaintext.
-- Unsupported/unknown config fields must follow an explicit compatibility policy; they must not be silently discarded by a harmless load/save round-trip.
+- Unknown fields inside a supported schema version are preserved where structurally possible and must not be silently discarded by a harmless load/save round-trip.
 
 ### Loading
 
@@ -135,7 +131,7 @@ Validation has four required stages:
 3. **Semantic** — object-specific constraints and RecordStore/datasource capability compatibility.
 4. **Distribution** — requirements that may be valid locally but block runtime export/publish, such as missing credentials, unresolved permissions, unsupported migrations, or invalid dependencies.
 
-Studio editing may temporarily permit incomplete draft objects when the editor can represent them safely. Publish/runtime export requires zero blocking errors.
+Studio-managed mode may persist incomplete/temporarily invalid draft definitions into local autosave checkpoints when the editor can represent them safely. Runtime execution of affected objects and publish/runtime export remain blocked until blocking validation errors are resolved.
 
 ## Secrets and datasource configuration
 
@@ -174,6 +170,7 @@ If a feature needs durable definition state, it should normally extend `Document
 ## Non-goals
 
 - arbitrary user-defined config database tables;
+- mandatory directory/project layouts beyond the root YAML + optional explicit includes;
 - storing business records in `DocumentConfig`;
 - arbitrary JavaScript/Python/Lua in configuration;
 - multi-developer merge semantics;

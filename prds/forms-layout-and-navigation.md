@@ -39,6 +39,8 @@ The canonical grid supports:
 - Named regions are unique within their layout.
 - Breakpoints are deterministic and may override layout properties explicitly defined by the schema; they are not arbitrary CSS media queries.
 
+Interactive resizing snaps to the serialized shared grid; arbitrary pixel-positioned controls are not part of MVP.
+
 ### Responsive rules
 
 Breakpoint ordering and overlap behavior must be deterministic.
@@ -58,7 +60,8 @@ A form has:
 
 - stable form ID;
 - display name;
-- optional primary record source;
+- at most one primary editable datasource/entity;
+- optional additional read-only query/datasource bindings;
 - shared grid layout;
 - ordered controls;
 - runtime mode capabilities;
@@ -91,7 +94,7 @@ MVP controls include at least:
 - button/action;
 - related-record list.
 
-A control has stable identity within its form and a renderer-neutral placement.
+Tabs and sections are first-class container controls and may themselves have expression-driven visibility/enabled state. A control has stable identity within its form and a renderer-neutral placement.
 
 ## Data binding
 
@@ -108,6 +111,7 @@ Binding definitions must distinguish writable from read-only sources.
 
 For RecordStore-backed fields:
 
+- references use stable datasource/schema/object/field identity rather than mutable display names;
 - table/field references must resolve against current schema metadata;
 - schema rename/migration tooling must update or invalidate affected bindings explicitly;
 - incompatible type/control combinations are validation errors.
@@ -134,9 +138,13 @@ Required behavior:
 
 Cancel discards unsaved form draft state, not previously committed records.
 
+The default form behavior is explicit Save: edits accumulate in draft state and commit in one RecordStore transaction. A form may opt into record autosave, but autosave is off by default and must retain equivalent validation/concurrency semantics.
+
 Dirty form state and dirty application-definition state are separate concepts.
 
 ## Validation
+
+Validation runs incrementally at useful field boundaries (change/blur as appropriate) and always performs full validation on Save/submit.
 
 Validation may combine:
 
@@ -165,6 +173,8 @@ Arbitrarily recursive/nested subforms are not supported.
 
 Generated CRUD is scaffolding, not a separate runtime.
 
+Generated forms are one-time scaffolding: regeneration does not remain a live hidden source of truth and must not overwrite later custom edits without an explicit destructive replace flow.
+
 Generated forms:
 
 - use the same serialized schema;
@@ -175,7 +185,7 @@ Generated forms:
 
 ## Navigation
 
-Applications define a navigation tree using stable application-object references.
+Applications define an arbitrary-depth navigation tree using stable application-object references. Each application declares an explicit home/start object rather than relying on first-item or last-opened behavior.
 
 Navigation entries may target:
 
@@ -186,7 +196,7 @@ Navigation entries may target:
 
 Navigation supports label/icon/order/group metadata without making those values identity.
 
-Runtime navigation is permission-filtered, but permission filtering is not the security boundary: direct object invocation must perform the same authorization checks.
+Navigation visibility may depend on both role authorization and the common application expression engine. Runtime navigation is permission-filtered, but permission filtering is not the security boundary: direct object invocation must perform the same authorization checks.
 
 ## Studio/runtime parity
 
@@ -201,7 +211,11 @@ Runtime navigation is permission-filtered, but permission filtering is not the s
 - Grid fixtures serialize/deserialise without semantic drift.
 - Invalid spans/regions/breakpoints fail schema validation.
 - Responsive fixtures select deterministic layouts at boundary widths.
-- Generated CRUD forms reopen as ordinary editable form definitions.
+- Generated CRUD forms reopen as ordinary editable form definitions and custom edits are not silently overwritten by regeneration.
+- Each editable form has only one primary mutation datasource/entity; additional sources are read-only unless invoked through explicit actions.
+- Form bindings use stable datasource/schema/object/field identities.
+- Record autosave is opt-in and off by default.
+- Navigation supports arbitrary tree depth, explicit home/start target, and expression-driven visibility.
 - Editable bindings mutate through RecordStore; query/computed bindings remain read-only.
 - Form save does not become clean until mutation + required refresh succeeds.
 - Cancel never rolls back an already committed record mutation.

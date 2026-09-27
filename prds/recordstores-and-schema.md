@@ -66,7 +66,7 @@ For every logical type, conformance fixtures must define:
 - serialization into UI/API values;
 - round-trip guarantees and known precision limits.
 
-At minimum the MVP must resolve behavior for text, integer, floating/decimal numeric values, boolean, date, time, timestamp/date-time, binary/blob, and identifiers used by relationships.
+At minimum the MVP must resolve behavior for text, integer, floating numeric, **exact decimal**, boolean, date, time, timestamp/date-time, binary/blob, and identifiers used by relationships. Exact decimal must not be implemented as binary floating point; scale/precision and round-trip behavior are part of the portable logical-type contract.
 
 Backend-specific types may be exposed as advanced capabilities but must not masquerade as portable logical types.
 
@@ -95,7 +95,7 @@ PostgreSQL supports **full multi-schema access within a configured connection**.
 
 ## Mutation API
 
-Normal record mutation entry points must be typed operations, not arbitrary SQL strings.
+Normal record mutation entry points must be typed operations, not arbitrary SQL strings. Editable entities must expose an explicit stable primary/unique key; ixtable does not update rows by comparing all original column values and does not silently inject hidden row IDs into external schemas.
 
 Required classes:
 
@@ -108,6 +108,8 @@ Required classes:
 Values are parameter-bound. Identifiers originate from validated schema metadata and are safely quoted.
 
 ## Schema introspection and designer
+
+Composite primary keys are fully supported for CRUD, relationships, query binding, and migrations in MVP.
 
 The visual schema designer supports:
 
@@ -135,12 +137,15 @@ Destructive or rebuild-requiring changes display:
 
 Application migrations evolve runtime record schema/data and are distinct from archive/config migrations.
 
+Each migration definition lives in the application definition/YAML and may target one or more specific RecordStores/datasource connections. Applied migration execution history lives in each target data store.
+
 Each migration has:
 
 - stable migration ID;
 - application version/order;
 - target RecordStore(s) or portable capability requirement;
-- ordered operations;
+- ordered operations authored through visual migration operations with an advanced raw-SQL escape hatch;
+- explicit target backend/datasource scope when backend-specific behavior is used;
 - atomicity expectation;
 - forward transform;
 - optional explicit reverse transform;
@@ -148,6 +153,8 @@ Each migration has:
 
 Rules:
 
+- unapplied migration definitions may be edited;
+- once a migration ID/checksum has been applied to any target, that historical migration identity/content is immutable;
 - applied migration history is stored with the runtime data state, not only the application definition;
 - a changed checksum for an already-applied migration is an error;
 - failed migration prevents activation of the new application definition;
@@ -161,6 +168,10 @@ Transactions alone are not conflict handling.
 Shared PostgreSQL entities use **explicit optimistic concurrency via a version column** for editable concurrent records. The developer must designate a compatible version column for each concurrently editable entity; ixtable does not inject a hidden version field in MVP. Updates/deletes include the previously read version value in the mutation predicate and increment/update the version atomically. A zero-row mutation caused by a stale version is surfaced as a normalized concurrency conflict rather than silently overwriting data.
 
 Independent local SQLite installations do not participate in multi-user conflict resolution.
+
+## Datasource identity
+
+Every datasource has a stable datasource ID. References to PostgreSQL objects are qualified as `datasource -> schema -> object` rather than assuming table names are globally unique across the application. SQLite uses the same datasource-ID abstraction even though its embedded default store has a single primary namespace.
 
 ## Normalized errors
 
@@ -192,6 +203,10 @@ Backend-native diagnostic detail may be attached, but UI behavior must not depen
 - One application can define and use multiple PostgreSQL connections with independent credentials and schema namespaces.
 - PostgreSQL introspection/querying preserves schema-qualified identity across multiple schemas.
 - Schema introspection round-trips ixtable-created supported constraints/indexes.
+- Editable tables without an explicit stable primary/unique key are rejected for mutation while remaining eligible for read-only use.
+- Composite primary keys work across CRUD and relationship fixtures.
+- Exact decimal fixtures round-trip without binary-floating-point corruption.
+- Migration definitions can target a specific datasource/backend and applied histories are tracked per target.
 
 ## Non-goals
 

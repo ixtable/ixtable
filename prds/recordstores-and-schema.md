@@ -76,7 +76,7 @@ Backend-specific types may be exposed as advanced capabilities but must not masq
 - Embedded Studio/local-runtime state uses workspace `data.db`, checkpointed into archive `data_payload`.
 - Foreign-key enforcement is enabled for every mutation connection.
 - Runtime-only distributed SQLite installations initialize from the bundle once.
-- Thereafter record data and record attachments belong to that installation.
+- Thereafter record data belongs to that installation.
 - Definition updates preserve installation-local data and execute declared application migrations.
 
 SQLite table-rebuild operations must be represented as migration operations with impact preview rather than hidden behind an in-place-DDL fiction.
@@ -85,13 +85,13 @@ SQLite table-rebuild operations must be represented as migration operations with
 
 - Developer supplies hosting, networking, TLS, lifecycle, backups, and availability.
 - Runtime connects directly in MVP; ixtable does not proxy PostgreSQL.
-- Supported credential modes:
-  - one shared application credential;
-  - least-privileged per-runtime-user credential.
+- An application may define **multiple independent PostgreSQL connections**.
+- Each PostgreSQL connection has its own datasource identity, host/database/options, schema visibility, credential reference, and TLS policy.
+- Each connection may independently use shared application credentials or per-runtime-user credentials.
 - Studio warns that shared credentials weaken individual revocation and database-level attribution.
 - Non-TLS configuration requires a severe explicit warning/override and remains visible in validation/audit state.
 
-PostgreSQL object/schema namespace behavior must be specified before implementation; implementors must not assume SQLite's single-schema model.
+PostgreSQL supports **full multi-schema access within a configured connection**. Schema-qualified object identity is part of the datasource/object contract; implementors must not flatten PostgreSQL into SQLite's single-schema model. Introspection, query building, relationships, and migrations must preserve schema qualification.
 
 ## Mutation API
 
@@ -158,7 +158,7 @@ Rules:
 
 Transactions alone are not conflict handling.
 
-Shared PostgreSQL entities must declare/implement a concurrency strategy before commercial publish where concurrent edits can occur. The MVP may use an optimistic version/timestamp check, but the chosen strategy must be explicit, testable, and surfaced as a conflict rather than silently overwriting data.
+Shared PostgreSQL entities use **explicit optimistic concurrency via a version column** for editable concurrent records. The developer must designate a compatible version column for each concurrently editable entity; ixtable does not inject a hidden version field in MVP. Updates/deletes include the previously read version value in the mutation predicate and increment/update the version atomically. A zero-row mutation caused by a stale version is surfaced as a normalized concurrency conflict rather than silently overwriting data.
 
 Independent local SQLite installations do not participate in multi-user conflict resolution.
 
@@ -188,7 +188,9 @@ Backend-native diagnostic detail may be attached, but UI behavior must not depen
 - Runtime local SQLite data survives definition-only updates.
 - Applied migration history prevents mutation of historical migrations.
 - Failed migration leaves the previous runtime application version usable.
-- Concurrent PostgreSQL update conflicts are surfaced according to the declared policy.
+- Concurrent PostgreSQL update/delete conflicts are detected through the designated explicit version column and surfaced as normalized concurrency conflicts.
+- One application can define and use multiple PostgreSQL connections with independent credentials and schema namespaces.
+- PostgreSQL introspection/querying preserves schema-qualified identity across multiple schemas.
 - Schema introspection round-trips ixtable-created supported constraints/indexes.
 
 ## Non-goals

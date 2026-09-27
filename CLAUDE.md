@@ -75,3 +75,14 @@ writing tells, enforced by:
 ```bash
 python3 .claude/skills/writing/scripts/readability.py path/to/doc.mdx
 ```
+
+
+## Product requirements
+
+Product requirements live under `/prds`.
+
+- Start with `prds/README.md` to identify the applicable subsystem PRD.
+- `prds/commercial-mvp.md` is the product-level source of truth for MVP scope and commercial boundaries.
+- Before implementing a major feature, read both the parent PRD and the relevant subsystem PRD.
+- Link implementation PRs/issues to the acceptance criteria they satisfy.
+- Do not silently implement deferred/non-goal scope. Material architecture changes should be recorded as an ADR and reflected back into the PRD.

@@ -1,5 +1,7 @@
 # ixtable — Commercial MVP Product Requirements Document
 
+> **PRD hierarchy:** This is the product-level contract. Detailed subsystem requirements live in [`prds/`](./README.md). When a sub-PRD conflicts with this document, this product-level PRD wins until the conflict is explicitly resolved.
+
 **Status:** Scoped for implementation  
 **Product:** ixtable  
 **Category:** Local-first relational application builder  
@@ -276,7 +278,7 @@ Before publishing or backup, Studio reports the archive size and largest entries
 
 `DocumentConfig` is JSON stored in `document_config`. That is the structured application catalog. It is not a second SQLite catalog of definitions.
 
-The same document also keeps a YAML projection (`config.yaml` in the working session). YAML is the code-first editing surface. Loading YAML replaces `DocumentConfig`. Saving or updating config rewrites YAML so the two stay in sync.
+ixtable supports two application-definition authoring modes. In Studio-managed mode, `DocumentConfig` is authoritative and `config.yaml` is an export/projection. In YAML IaC mode, an explicitly supplied `config.yaml` is authoritative: Studio can inspect, validate, preview, and run the app but definition editing is read-only. Reloading YAML transactionally replaces the normalized in-memory `DocumentConfig` only after full validation.
 
 `DocumentConfig` includes:
 
@@ -286,7 +288,7 @@ The same document also keeps a YAML projection (`config.yaml` in the working ses
 - design schema (forms, shared grid layouts, navigation)
 - and later reports, dashboards, expressions, actions, triggers, roles, migrations, datasource definitions, and dependency metadata as fields on this same object
 
-ixtable owns the configuration schema and migrates it during product upgrades and downgrades where supported.
+ixtable owns the configuration schema and migrates it during product upgrades and downgrades where supported. Stable application-object IDs use UUIDv7 for newly created objects. YAML IaC may use a root file with explicit YAML imports/includes.
 
 Stable object IDs are mandatory. Display names are not identity.
 
@@ -307,7 +309,7 @@ There is no managed PostgreSQL offering in the MVP.
 
 ### 9.2 SQLite
 
-SQLite is the default local transactional store. Embedded records live in `data.sqlite` inside the `.ixt` archive.
+SQLite is the default local transactional store. Embedded records live in `data.db` inside the `.ixt` archive.
 
 ixtable exposes real SQLite capabilities:
 
@@ -322,7 +324,7 @@ ixtable exposes real SQLite capabilities:
 
 SQLite applications are independent local applications. Cloud archive upload provides backup and distribution, not concurrent multi-user SQLite record synchronization.
 
-For a runtime-only SQLite bundle, `data.sqlite` initializes that installation on first open. Thereafter, the installation's records and record attachments are independent local state. Application-definition updates preserve that state and apply declared migrations; they do not replace it with the Developer's bundled copy.
+For a runtime-only SQLite bundle, `data.db` initializes that installation on first open. Thereafter, the installation's records are independent local state. Application-definition updates preserve that state and apply declared migrations; they do not replace it with the Developer's bundled copy.
 
 ### 9.3 PostgreSQL
 
@@ -330,10 +332,7 @@ The application developer supplies PostgreSQL hosting, networking, credentials, 
 
 Runtime clients connect directly to PostgreSQL. ixtable does not proxy queries in the MVP.
 
-Supported credential modes:
-
-- one shared application credential; or
-- separate least-privileged credentials per runtime user.
+An application may define multiple PostgreSQL connections. Each connection independently defines its database/network/TLS settings, accessible PostgreSQL schemas, and credential reference. A connection may use either one shared application credential or separate least-privileged credentials per runtime user.
 
 Studio warns that shared credentials reduce revocation and database-level attribution.
 
@@ -358,7 +357,7 @@ Every RecordStore publishes capabilities for:
 - error mapping; and
 - concurrency facilities.
 
-SQLite and PostgreSQL must pass the same conformance suite. Backend-specific capability differences remain visible rather than being silently emulated.
+SQLite and PostgreSQL must pass the same conformance suite. Backend-specific capability differences remain visible rather than being silently emulated. Editable tables require an explicit stable primary/unique key; composite primary keys and exact decimal semantics are first-class MVP requirements.
 
 ---
 
@@ -579,7 +578,7 @@ Triggers may be:
 - synchronous, inside the initiating workflow; or
 - asynchronous, through a durable local queue.
 
-The asynchronous queue runs only while the desktop application is running. It provides retries, status, attempt history, cancellation, and idempotency keys.
+The asynchronous queue runs only while the desktop application is running and is persisted in installation-local SQLite. It provides bounded exponential retries, failed/dead-letter state, status, attempt history, cancellation, and idempotency keys. Jobs retain their originating definition version and recheck current authorization before execution.
 
 Schedules, webhooks, cloud workers, email integrations, and always-on execution are deferred.
 
@@ -610,13 +609,7 @@ Record-linked or object-storage attachments are deferred.
 
 ixtable does not impose one universal record-conflict policy.
 
-The developer selects a policy per entity:
-
-- optimistic version check and reject;
-- last-write-wins; or
-- custom transactional action.
-
-Generated entities default to optimistic rejection. Publishing validation fails if an entity exposed to multiple Runtime Users has no resolved policy.
+For shared PostgreSQL entities, editable concurrent records use an **explicit developer-designated version column** for optimistic concurrency. ixtable does not inject hidden version columns in the MVP. Stale updates/deletes fail with a conflict instead of silently overwriting newer data. Publishing validation fails if an entity exposed to multiple Runtime Users lacks the required concurrency configuration.
 
 RecordStore transactions provide atomicity but are not themselves a conflict policy.
 
@@ -732,8 +725,8 @@ Activation sequence:
 2. Verify identity, entitlement, checksum, and signature.
 3. Create a local recovery checkpoint.
 4. Validate archive and Runtime compatibility.
-5. Separate incoming application definitions/assets from installation-owned records and attachments.
-6. Preserve the installation's `data.sqlite` and record attachments.
+5. Separate incoming application definitions/assets from installation-owned records.
+6. Preserve the installation's `data.db`.
 7. Preview and apply applicable migrations to installation-owned data.
 8. Run application health checks.
 9. Atomically activate the new definition version and migrated local state.
@@ -772,7 +765,7 @@ Requirements:
 - audit event for upload, restore, overwrite, and fork; and
 - 500 MB per-archive limit in MVP.
 
-For embedded SQLite applications, restoring a Developer checkpoint restores that Developer archive's definition, embedded data, and attachments together. Restoring a Runtime-installation backup restores only the selected independent installation stream.
+For embedded SQLite applications, restoring a Developer checkpoint restores that Developer archive's definition, embedded data, and application assets together. Restoring a Runtime-installation backup restores only the selected independent installation's SQLite state.
 
 For PostgreSQL applications, restoring an archive does **not** restore external PostgreSQL records. This limitation must be shown before restoration.
 
@@ -780,12 +773,13 @@ For PostgreSQL applications, restoring an archive does **not** restore external 
 
 ## 24. Migrations
 
-Developers define arbitrary SQL `up` and `down` migrations inside the application.
+Developers define migrations according to authoring mode. Studio-managed apps use migrations stored in the application definition with visual operations plus an advanced SQL escape hatch. YAML IaC apps may instead reference ordered external `.sql` migration files, Ecto-style. Migrations may be portable or explicitly target specific RecordStores/datasource connections.
 
 Requirements:
 
 - target RecordStore declaration;
-- explicit ordering and immutable IDs;
+- explicit ordering and immutable IDs/checksums after first application;
+- migration definitions in app config for Studio-managed apps, or external referenced SQL files for YAML IaC apps; execution history remains in each target data store;
 - dependency validation;
 - SQL preview;
 - dry-run validation where feasible;
@@ -955,7 +949,7 @@ An agent-only judgment may block CI only when it produces a deterministic failin
 - Median install-to-working CRUD application: under 30 minutes.
 - Typical application open: under 3 seconds after warm start.
 - Local field edit acknowledgement: under 100 ms, excluding backend latency.
-- Typical autosave completion: under 2 seconds.
+- Typical autosave completion after the 60-second debounced/coalesced interval becomes eligible: under 2 seconds for the reference fixture.
 - Runtime navigation between already loaded pages: under 200 ms.
 - Report/dashboard queries expose cancellation and progress after 2 seconds.
 
@@ -1115,8 +1109,8 @@ Exit criteria:
 - Unauthorized users cannot discover or download private applications.
 - Revoked users cannot obtain new bundles or key grants.
 - Failed updates revert without losing the prior working version.
-- Definition updates preserve each Runtime installation's local records and attachments.
-- Embedded SQLite checkpoints restore application, data, and attachments.
+- Definition updates preserve each Runtime installation's local records.
+- Embedded SQLite checkpoints restore application definition/assets and the applicable SQLite data checkpoint.
 - PostgreSQL restore limitations are explicit and tested.
 - Independent security review has no unresolved critical/high findings.
 

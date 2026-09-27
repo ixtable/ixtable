@@ -20,7 +20,20 @@ They must be:
 - inspectable in Studio;
 - safe to execute without filesystem/process/general network access.
 
-## Expression language
+## Expression surfaces
+
+ixtable intentionally uses two related expression surfaces:
+
+1. **SQL expressions** inside saved DuckDB queries for data filtering, projection, aggregation, grouping, and other relational calculations.
+2. **Common application expressions** for UI/business-rule contexts that are not database rows: form validation, computed UI values, visibility/enabled state, report application-level calculations, dashboard interaction rules, and action/trigger conditions.
+
+The common application language uses familiar SQL-like operators/functions where practical, but it is a constrained language parsed into a typed AST rather than arbitrary SQL execution. It cannot open tables or execute statements. This preserves SQL familiarity without coupling UI state to a database engine.
+
+## Common expression engine
+
+The common engine is one typed parser/validator/evaluator reused by forms, reports, dashboards, actions, and triggers. Each expression is parsed and validated before Runtime execution; runtime does not repeatedly interpret unchecked ad hoc strings.
+
+Expressions reference stable object/field identities behind readable author-facing syntax so renames can be handled safely.
 
 Expressions support:
 
@@ -79,11 +92,11 @@ Function categories may include:
 - null handling;
 - safe formatting.
 
-Non-deterministic functions such as current time/randomness must be explicitly identified because they affect validation, testing, caching, and report reproducibility.
+`now()`/current-time access is allowed but marks an expression explicitly nondeterministic. Randomness is not implicitly deterministic and requires an explicitly supported function if ever exposed. Nondeterministic expressions affect caching/testing/report reproducibility and must be tracked as such.
 
 ## Actions
 
-An action is a declarative ordered graph/list of supported steps.
+An action is a declarative ordered sequence with conditional branches; MVP does not require a general workflow-graph editor.
 
 MVP action steps may include:
 
@@ -102,7 +115,7 @@ MVP action steps may include:
 
 Record mutations inside one action must declare whether they require one transaction.
 
-Default for a bounded sequence of mutations against one RecordStore should be atomic when the backend supports it.
+Default for a bounded sequence of mutations against one RecordStore is atomic when the backend supports it. Actions may contain sequential steps targeting multiple RecordStores, but each store's transaction is independent and the action must never present the overall multi-store operation as atomic.
 
 Non-transactional side effects must not be presented as rollback-safe.
 
@@ -138,13 +151,15 @@ The implementation must define whether each trigger runs:
 
 That choice must be explicit because failure semantics differ.
 
-For transaction-safe record-only trigger actions, same-transaction execution is preferred where feasible.
+Transaction-safe record-only synchronous trigger actions run inside the originating RecordStore transaction in MVP.
 
 A synchronous trigger failure must never be silently converted into success.
 
 ## Asynchronous local queue
 
-Async triggers enqueue durable local jobs.
+Async triggers enqueue durable jobs in an installation-local SQLite queue.
+
+Each queued job preserves the initiating user/principal identity and the relevant permission context, then rechecks current authorization at execution time. Deferred work must not continue solely because an old permission snapshot once allowed it.
 
 Each job records:
 
@@ -162,7 +177,7 @@ Queue requirements:
 
 - survives application/process restart;
 - bounded concurrency;
-- bounded retry/backoff;
+- bounded exponential retry/backoff with a terminal failed/dead-letter state;
 - manual retry/cancel where appropriate;
 - history visible to the developer/runtime user subject to permissions;
 - poison jobs do not block unrelated jobs forever.
@@ -171,10 +186,7 @@ Queue requirements:
 
 Queued async work must not accidentally execute arbitrary new semantics after an application update.
 
-The system must either:
-
-- bind queued jobs to the action/trigger definition version they were created with; or
-- explicitly migrate/cancel incompatible queued jobs during update.
+Queued jobs are pinned to the action/trigger definition version they were created with. Application update packaging must retain the executable declarative definition needed by pending compatible jobs, or explicitly cancel jobs that cannot be retained safely.
 
 This must be testable.
 
@@ -186,9 +198,13 @@ Protect against:
 - action A invokes B invokes A;
 - cascades that exceed bounded depth.
 
-The runtime tracks execution lineage/depth and fails with an actionable loop error.
+Actions may invoke other actions. The runtime tracks execution lineage/depth for both action-to-action calls and trigger cascades and enforces a hard configurable product maximum; unlimited recursion is never allowed.
 
 A developer may not disable all loop protection.
+
+## Prohibited side effects in MVP
+
+Actions/triggers do not expose arbitrary network/HTTP requests or arbitrary filesystem APIs in MVP. Export/print operations remain the bounded product capabilities already defined elsewhere.
 
 ## Permissions
 
@@ -214,6 +230,7 @@ Protected credentials/secret values are redacted.
 
 ## Acceptance criteria
 
+- SQL remains the expression surface for relational query calculations, while UI/business-rule expressions use the common typed SQL-like AST evaluator.
 - Expression fixtures define deterministic type/null/comparison semantics.
 - Invalid references/functions fail publish/export validation.
 - One-action atomic mutations roll back together where atomicity is promised.

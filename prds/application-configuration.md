@@ -9,14 +9,17 @@ Define the canonical application-definition model used by Studio and Runtime, it
 
 ## Canonical model
 
-`DocumentConfig` JSON stored in the archive is the canonical application-definition model.
+`DocumentConfig` is the runtime/internal structured application-definition model, but ixtable supports **two mutually exclusive authoring modes**:
 
-The working session exposes two projections:
+1. **Studio-managed mode** — the archived `DocumentConfig` is authoritative and Studio may edit the application definition.
+2. **YAML IaC mode** — an explicitly supplied `config.yaml` is the authoritative application definition. Studio may inspect, preview, validate, and run the app, but application-definition editing is read-only in the in-app designer.
 
-- `document.json`: canonical JSON projection for inspection/tooling;
-- `config.yaml`: human/code-first YAML projection.
+The working session may expose:
 
-Neither working file is independently authoritative after a successful archive save. Both project the same in-memory `DocumentConfig`.
+- `document.json`: normalized JSON projection for inspection/tooling;
+- `config.yaml`: the IaC source when YAML mode is enabled, otherwise an exported/generated projection.
+
+In YAML IaC mode, Studio must never silently rewrite the authoritative YAML as a side effect of visual editing because visual application-definition editing is disabled.
 
 ## Versioning
 
@@ -89,6 +92,19 @@ Silent dangling references are prohibited.
 
 ## YAML projection
 
+### Authoring mode selection
+
+An application explicitly created/opened with a supplied authoritative YAML definition enters **YAML IaC mode**.
+
+Required behavior:
+
+- the YAML file is the source of truth for application-definition changes;
+- Studio definition editors are read-only;
+- Runtime/data editing remains available according to normal permissions;
+- reloading/applying changed YAML performs the full transactional validation pipeline before replacing the active normalized `DocumentConfig`;
+- invalid YAML leaves the last valid normalized definition active and reports the source error;
+- switching between Studio-managed and YAML IaC modes must be an explicit conversion/export operation, never an implicit side effect.
+
 ### Serialization
 
 - YAML serialization is deterministic.
@@ -98,7 +114,7 @@ Silent dangling references are prohibited.
 
 ### Loading
 
-Applying YAML is transactional at the config level:
+Applying/reloading authoritative YAML is transactional at the config level:
 
 1. parse the complete YAML;
 2. deserialize to the expected config schema;
@@ -147,7 +163,8 @@ If a feature needs durable definition state, it should normally extend `Document
 - Renaming any stable-ID object leaves all references valid.
 - Duplicate IDs are rejected.
 - Deleting a referenced object produces an exact impact list.
-- JSON → YAML → JSON is semantically stable.
+- Studio-managed JSON → exported YAML → normalized JSON is semantically stable.
+- In YAML IaC mode, application-definition editors are read-only and external YAML changes are the only supported definition-edit path.
 - Invalid YAML never partially replaces active config.
 - Unsupported future config/design versions fail clearly.
 - Secrets do not appear in `document.json`, `config.yaml`, logs, or normal archive config rows.

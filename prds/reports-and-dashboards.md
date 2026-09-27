@@ -18,6 +18,12 @@ They must not:
 - bypass query parameter validation;
 - mutate records except through embedded forms/actions.
 
+## Unified interactive composition model
+
+Forms, report-like analytical views, charts, filters, KPIs, and tables may be composed together in the same runtime UI. A developer can build a page where input controls drive typed query parameters and the connected tables/charts/report regions update from those inputs.
+
+This does **not** collapse printed reports and interactive forms into one serialization model: interactive composition uses the shared grid/component system, while printable reports retain the dedicated freeform physical-page canvas. The same saved queries, expression engine, controls, and parameter-binding primitives are reused across both.
+
 ## Reports
 
 A report has:
@@ -99,7 +105,7 @@ PDF output is a first-class deterministic artifact, not a screenshot of the UI.
 
 ## Calculations
 
-Report calculations use the common expression engine.
+Report calculations use the **common application expression engine** for non-query/application-state calculations. This is the typed, constrained evaluator shared by forms, reports, dashboards, actions, and triggers. Data-set calculations that naturally belong in SQL remain in saved DuckDB queries.
 
 Supported scopes must be explicit, such as:
 
@@ -109,6 +115,10 @@ Supported scopes must be explicit, such as:
 - report total.
 
 A calculation must not execute arbitrary code.
+
+Reports may bind multiple explicit saved queries. Arbitrary hidden SQL is not embedded directly inside report components.
+
+Nested subreports remain deferred from MVP.
 
 ## Dashboards
 
@@ -141,9 +151,13 @@ Changing filter state:
 3. reruns dependent queries;
 4. updates all dependent components consistently.
 
+Developer-defined defaults are persisted in the application definition; end-user runtime filter state is ephemeral by default.
+
 A dashboard must not create a second ad hoc query/state graph independent of application object dependencies.
 
 ## Charts
+
+MVP chart rendering uses **Apache ECharts** behind ixtable's own versioned renderer-neutral chart configuration schema. Application definitions must not persist arbitrary ECharts JavaScript callbacks/functions.
 
 Charts consume tabular query output and define:
 
@@ -153,7 +167,13 @@ Charts consume tabular query output and define:
 - aggregation expectation if not already in query output;
 - presentation options supported by the built-in chart schema.
 
-Complex data transformation belongs in the query, not hidden chart-specific SQL.
+Complex data transformation belongs in the query, not hidden chart-specific SQL. The chart layer maps fields/presentation only.
+
+### Cross-filtering and interaction
+
+MVP supports BI-style chart cross-filtering: chart selections/clicks may publish typed filter values into the page/dashboard interaction state and drive other connected queries/components. Cross-filter definitions must be explicit in the application model, use typed parameter bindings, prevent stale results from overwriting newer interaction state, and be cycle-safe.
+
+Interactive forms/input controls and chart/table selections can therefore participate in the same dependency graph.
 
 ## Reuse rule
 
@@ -189,7 +209,11 @@ One failed dashboard component should not necessarily destroy unrelated componen
 - Same data and report definition yield stable group/page totals.
 - PDF generation is not dependent on viewport dimensions.
 - Oversized/unsupported report constructs fail visibly rather than clipping silently.
-- Dashboard filters use typed query parameters and update all declared dependents.
+- Dashboard/form input filters use typed query parameters and update all declared dependents.
+- Chart selections can cross-filter other connected components through explicit typed bindings.
+- Apache ECharts is the MVP chart renderer, while application definitions persist ixtable's safe declarative chart schema rather than executable chart code.
+- Interactive pages can compose form inputs, tables, charts, KPIs, and report-like regions in one shared UI.
+- Printable reports continue to use the dedicated deterministic freeform physical-page renderer.
 - Obsolete dashboard query results do not overwrite newer filter-state results.
 - Forms embedded in dashboards behave identically to forms elsewhere.
 - Chart components contain no independent datasource credentials/SQL mutation path.

@@ -137,23 +137,42 @@ Destructive or rebuild-requiring changes display:
 
 Application migrations evolve runtime record schema/data and are distinct from archive/config migrations.
 
-Each migration definition lives in the application definition/YAML and may target one or more specific RecordStores/datasource connections. Applied migration execution history lives in each target data store.
+Migration authoring depends on application authoring mode:
+
+- **Studio-managed apps:** migration definitions live inside the application definition and may use visual operations plus an advanced SQL escape hatch.
+- **YAML IaC apps:** migrations may be external `.sql` files referenced from YAML, following an Ecto-style filesystem workflow. SQL files are the authoritative migration source for those entries rather than duplicated SQL embedded in YAML.
+
+Applied migration execution history lives in each target data store.
 
 Each migration has:
 
 - stable migration ID;
 - application version/order;
 - target RecordStore(s) or portable capability requirement;
-- ordered operations authored through visual migration operations with an advanced raw-SQL escape hatch;
+- ordered operations authored through visual migration operations with an advanced raw-SQL escape hatch for Studio-managed apps, or external SQL migration files for YAML IaC apps;
 - explicit target backend/datasource scope when backend-specific behavior is used;
 - atomicity expectation;
 - forward transform;
 - optional explicit reverse transform;
-- checksum/identity so an already-applied migration cannot silently change.
+- checksum/identity over the authoritative migration definition/file contents so an already-applied migration cannot silently change.
+
+### YAML IaC migration files
+
+For YAML IaC apps:
+
+- migration files use stable sortable names such as `YYYYMMDDHHMMSS_description.sql` or an equivalent monotonically ordered identifier;
+- YAML declares the target datasource/connection and migration directory/list;
+- migration order is derived deterministically from the stable migration identifier;
+- each file is checksummed from exact bytes/content normalization policy defined by implementation;
+- migration files are packaged into the application/runtime bundle required to execute pending migrations;
+- path traversal outside the IaC project root is rejected;
+- duplicate migration IDs are invalid;
+- renaming or modifying a migration that has already been applied is rejected by checksum/history validation;
+- future support for paired `up`/`down` files or migration metadata may be added, but MVP must not infer unsafe reversibility from arbitrary SQL.
 
 Rules:
 
-- unapplied migration definitions may be edited;
+- unapplied migration definitions/files may be edited;
 - once a migration ID/checksum has been applied to any target, that historical migration identity/content is immutable;
 - applied migration history is stored with the runtime data state, not only the application definition;
 - a changed checksum for an already-applied migration is an error;
@@ -207,6 +226,7 @@ Backend-native diagnostic detail may be attached, but UI behavior must not depen
 - Composite primary keys work across CRUD and relationship fixtures.
 - Exact decimal fixtures round-trip without binary-floating-point corruption.
 - Migration definitions can target a specific datasource/backend and applied histories are tracked per target.
+- YAML IaC apps can execute ordered external SQL migration files whose IDs/checksums are validated against per-target migration history.
 
 ## Non-goals
 

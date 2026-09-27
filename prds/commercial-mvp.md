@@ -278,7 +278,7 @@ Before publishing or backup, Studio reports the archive size and largest entries
 
 `DocumentConfig` is JSON stored in `document_config`. That is the structured application catalog. It is not a second SQLite catalog of definitions.
 
-The same document also keeps a YAML projection (`config.yaml` in the working session). YAML is the code-first editing surface. Loading YAML replaces `DocumentConfig`. Saving or updating config rewrites YAML so the two stay in sync.
+ixtable supports two application-definition authoring modes. In Studio-managed mode, `DocumentConfig` is authoritative and `config.yaml` is an export/projection. In YAML IaC mode, an explicitly supplied `config.yaml` is authoritative: Studio can inspect, validate, preview, and run the app but definition editing is read-only. Reloading YAML transactionally replaces the normalized in-memory `DocumentConfig` only after full validation.
 
 `DocumentConfig` includes:
 
@@ -332,10 +332,7 @@ The application developer supplies PostgreSQL hosting, networking, credentials, 
 
 Runtime clients connect directly to PostgreSQL. ixtable does not proxy queries in the MVP.
 
-Supported credential modes:
-
-- one shared application credential; or
-- separate least-privileged credentials per runtime user.
+An application may define multiple PostgreSQL connections. Each connection independently defines its database/network/TLS settings, accessible PostgreSQL schemas, and credential reference. A connection may use either one shared application credential or separate least-privileged credentials per runtime user.
 
 Studio warns that shared credentials reduce revocation and database-level attribution.
 
@@ -612,13 +609,7 @@ Record-linked or object-storage attachments are deferred.
 
 ixtable does not impose one universal record-conflict policy.
 
-The developer selects a policy per entity:
-
-- optimistic version check and reject;
-- last-write-wins; or
-- custom transactional action.
-
-Generated entities default to optimistic rejection. Publishing validation fails if an entity exposed to multiple Runtime Users has no resolved policy.
+For shared PostgreSQL entities, editable concurrent records use an **explicit developer-designated version column** for optimistic concurrency. ixtable does not inject hidden version columns in the MVP. Stale updates/deletes fail with a conflict instead of silently overwriting newer data. Publishing validation fails if an entity exposed to multiple Runtime Users lacks the required concurrency configuration.
 
 RecordStore transactions provide atomicity but are not themselves a conflict policy.
 
@@ -957,7 +948,7 @@ An agent-only judgment may block CI only when it produces a deterministic failin
 - Median install-to-working CRUD application: under 30 minutes.
 - Typical application open: under 3 seconds after warm start.
 - Local field edit acknowledgement: under 100 ms, excluding backend latency.
-- Typical autosave completion: under 2 seconds.
+- Typical autosave completion after the 60-second debounced/coalesced interval becomes eligible: under 2 seconds for the reference fixture.
 - Runtime navigation between already loaded pages: under 200 ms.
 - Report/dashboard queries expose cancellation and progress after 2 seconds.
 

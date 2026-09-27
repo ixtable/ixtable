@@ -578,7 +578,7 @@ Triggers may be:
 - synchronous, inside the initiating workflow; or
 - asynchronous, through a durable local queue.
 
-The asynchronous queue runs only while the desktop application is running. It provides retries, status, attempt history, cancellation, and idempotency keys.
+The asynchronous queue runs only while the desktop application is running and is persisted in installation-local SQLite. It provides bounded exponential retries, failed/dead-letter state, status, attempt history, cancellation, and idempotency keys. Jobs retain their originating definition version and recheck current authorization before execution.
 
 Schedules, webhooks, cloud workers, email integrations, and always-on execution are deferred.
 

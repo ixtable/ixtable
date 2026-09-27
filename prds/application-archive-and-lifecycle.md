@@ -49,8 +49,16 @@ These names are part of the MVP compatibility contract unless deliberately migra
 - `document_config` contains the canonical JSON application definition.
 - `attachments` contains application-definition assets, not runtime record attachments.
 - Payloads with checksums must verify checksum and uncompressed size on read.
-- Unknown future tables/rows are preserved where safe.
+- Unknown future tables/rows are preserved byte-for-byte where technically possible when the overall archive version is otherwise supported.
 - Unsupported future archive format versions fail before extraction or mutation.
+
+## Working-session storage
+
+Working sessions live in a persistent ixtable app-data recovery directory, keyed by session ID/document ID rather than beside the source `.ixt` file. This supports crash recovery, multiple application sessions, diagnostics, and controlled cleanup without polluting user project directories.
+
+Only one read/write Studio session for the same authoritative `.ixt` is allowed in the same ixtable process in MVP. A second open is blocked rather than creating competing writers.
+
+Unsaved applications still receive a durable recovery workspace before first Save As. This workspace is recovery WIP only; it is not a hidden authoritative `.ixt` file.
 
 ## Session lifecycle
 
@@ -115,18 +123,14 @@ Unsaved applications require Save As and are never silently assigned a path.
 
 ixtable must detect when the authoritative `.ixt` file changed outside the current session.
 
-The source fingerprint includes at least:
-
-- filesystem modification state;
-- file size; and
-- archive `document_id` identity validation.
+The source fingerprint uses filesystem modification state + file size + archive `document_id` identity validation. Full-file hashing is not required for routine external-change detection.
 
 When an external change is detected:
 
 - autosave stops;
 - normal overwrite-save is blocked;
 - the session enters explicit conflict state;
-- the user may Reload or Save As;
+- the user may Reload or Save As; direct overwrite of the externally changed path is not offered in MVP;
 - ixtable must not silently merge two archive versions in MVP.
 
 Reload discards local WIP only after normal dirty/conflict protections are satisfied by the calling UX.
@@ -153,9 +157,14 @@ On next startup, ixtable must:
 
 Normal close removes the workspace and its recovery registration only after close is allowed.
 
+## Corrupt application-asset handling
+
+If application config/data remain valid but one application asset is corrupt, ixtable opens the app in degraded mode, marks the broken asset explicitly, and blocks only behaviors that require that asset. It must not silently discard the corrupt asset or make the entire business application inaccessible solely because one non-critical asset is damaged.
+
 ## Archive and config migrations
 
 - Archive format migrations and config migrations are separate operations.
+- Opening an older supported archive is non-destructive: ixtable migrates into the working representation, but persistence of the upgraded archive format occurs only on explicit/automatic Save.
 - A migration must declare source version(s), target version, and whether reverse migration exists.
 - Destructive migration creates or preserves a recoverable pre-migration checkpoint.
 - Unsupported downgrade fails before source mutation.
@@ -169,6 +178,7 @@ Normal close removes the workspace and its recovery registration only after clos
 - Over-limit archives remain usable locally.
 - Large application assets must not cause partial archive corruption.
 - Save operations should expose progress when packing/checkpointing becomes perceptible.
+- MVP compression uses fixed deterministic zstd settings rather than adaptive per-payload heuristics.
 
 ## Required error classes
 

@@ -107,7 +107,7 @@ For a saved application, autosave is eligible only when:
 - another save is not active; and
 - the autosave debounce/interval has elapsed.
 
-The current implementation uses a 30-second eligibility interval. This value may become configurable, but changes must preserve the eligibility contract above.
+The MVP uses a **60-second autosave interval with debounce/coalescing**. Changes made during the interval are coalesced; once the interval is eligible, autosave waits for a short quiet period so bursts of edits produce one archive rewrite rather than repeated rewrites. Autosave must not rewrite the archive more frequently than the 60-second interval unless the user explicitly invokes Save.
 
 Unsaved applications require Save As and are never silently assigned a path.
 

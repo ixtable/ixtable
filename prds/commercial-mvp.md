@@ -288,7 +288,7 @@ ixtable supports two application-definition authoring modes. In Studio-managed m
 - design schema (forms, shared grid layouts, navigation)
 - and later reports, dashboards, expressions, actions, triggers, roles, migrations, datasource definitions, and dependency metadata as fields on this same object
 
-ixtable owns the configuration schema and migrates it during product upgrades and downgrades where supported.
+ixtable owns the configuration schema and migrates it during product upgrades and downgrades where supported. Stable application-object IDs use UUIDv7 for newly created objects. YAML IaC may use a root file with explicit YAML imports/includes.
 
 Stable object IDs are mandatory. Display names are not identity.
 
@@ -357,7 +357,7 @@ Every RecordStore publishes capabilities for:
 - error mapping; and
 - concurrency facilities.
 
-SQLite and PostgreSQL must pass the same conformance suite. Backend-specific capability differences remain visible rather than being silently emulated.
+SQLite and PostgreSQL must pass the same conformance suite. Backend-specific capability differences remain visible rather than being silently emulated. Editable tables require an explicit stable primary/unique key; composite primary keys and exact decimal semantics are first-class MVP requirements.
 
 ---
 
@@ -773,12 +773,13 @@ For PostgreSQL applications, restoring an archive does **not** restore external 
 
 ## 24. Migrations
 
-Developers define arbitrary SQL `up` and `down` migrations inside the application.
+Developers define migrations inside the application definition using visual operations plus an advanced SQL escape hatch. Migrations may be portable or explicitly target specific RecordStores/datasource connections.
 
 Requirements:
 
 - target RecordStore declaration;
-- explicit ordering and immutable IDs;
+- explicit ordering and immutable IDs/checksums after first application;
+- migration definitions in app config/YAML and execution history in each target data store;
 - dependency validation;
 - SQL preview;
 - dry-run validation where feasible;

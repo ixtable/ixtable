@@ -56,11 +56,12 @@ Every saved query has at least:
 
 - immutable stable ID;
 - mutable display name;
-- SQL or serialized visual-query representation;
+- canonical typed query AST for visual-mode queries;
 - typed parameter definitions;
+- cached/introspected output schema;
 - optional persisted designer/filter state.
 
-The initial implementation may persist SQL plus designer state, but the PRD requires one canonical executable query definition and deterministic regeneration if a richer visual AST is introduced.
+Visual-mode queries use the typed AST as canonical definition and deterministically generate DuckDB SQL. Raw-SQL queries are a separate explicit query mode whose SQL text is canonical.
 
 ## Visual query builder
 
@@ -76,9 +77,17 @@ The visual builder supports:
 - parameters;
 - preview.
 
-Advanced users may edit SQL directly.
+Advanced users may use raw SQL in a separate query mode. Conversion from raw SQL back to visual mode is offered only when the SQL can be represented losslessly by the visual AST. Unsupported constructs remain raw SQL; ixtable never silently discards semantics.
 
-Switching between visual and raw-SQL modes must have an explicit policy for constructs the visual builder cannot represent; it must not silently discard SQL semantics.
+## Cross-datasource queries
+
+DuckDB may join/read across multiple configured datasources, including the embedded SQLite store and multiple PostgreSQL connections/schemas, subject to extension and credential policy. Cross-datasource reads are a first-class query capability.
+
+Cross-datasource writes are not supported. Each mutation is scoped to one RecordStore/datasource transaction. Actions may sequence independent mutations across stores only under the non-atomic semantics defined by the Actions PRD.
+
+## Query output schema
+
+The query subsystem introspects and caches a saved query's declared output schema. The schema is invalidated/recomputed when the canonical query definition or relevant datasource schema changes. Consumers bind to stable query identity plus output field identity/alias metadata rather than re-inferring ad hoc on every render.
 
 ## Read-only enforcement
 
@@ -99,6 +108,7 @@ Query parameters are typed application inputs.
 
 Requirements:
 
+- parameter definitions are explicit and typed in application config;
 - values use parameter binding;
 - user input is never concatenated into SQL;
 - identifiers cannot be supplied through ordinary value parameters;
@@ -152,8 +162,21 @@ Where identical semantics cannot be guaranteed, the limitation must be explicit 
 
 MVP starts with the extension(s) required for SQLite and PostgreSQL integration. Adding another extension-backed source requires explicit capability/security review.
 
+## Pagination and interactive limits
+
+Interactive query consumers use bounded paged reads rather than materializing full result sets client-side. Preview/table/dashboard components enforce configurable product limits on rows/materialized bytes. Export/report pipelines may stream or chunk beyond interactive limits.
+
+## Query caching
+
+MVP does not introduce a general automatic query-result cache. Correctness and predictable invalidation take priority. Individual future components may add explicit cache semantics only with documented invalidation rules.
+
+## PostgreSQL read credentials
+
+DuckDB reuses the configured datasource credential by default. A developer may optionally configure a distinct read-only credential/reference for a PostgreSQL datasource. Both forms remain scoped to that datasource's stable ID.
+
 ## Cancellation, progress, and resource limits
 
+- Each application has a session-scoped DuckDB runtime capable of cancellable concurrent reads; there is no single process-global query connection and no requirement to create one connection per query.
 - Long-running report/dashboard/query preview work must be cancellable.
 - Progress/running state is exposed after the parent PRD threshold.
 - Cancellation must not corrupt the session runtime.
@@ -186,7 +209,12 @@ Raw engine diagnostics may be attached for debugging but should not be the only 
 - Read-only execution rejects mutating and multi-statement bypass attempts.
 - Bundled extension integrity failure prevents runtime startup/read use rather than falling back to arbitrary installation.
 - Long-running report/dashboard/query preview work supports cancellation and visible running/progress state.
-- Raw SQL that cannot round-trip through the visual builder is preserved or explicitly requires confirmation before lossy conversion.
+- Visual saved queries use a canonical typed AST and deterministically generated SQL.
+- Raw SQL that cannot round-trip losslessly through the visual builder remains in raw-SQL mode.
+- Cross-datasource joins work through DuckDB while mutations remain single-RecordStore scoped.
+- Query parameters are explicit typed definitions.
+- Interactive consumers use bounded pagination/result limits while exports may stream larger results.
+- Query output schemas are cached/introspected and invalidated when definitions/schema change.
 
 ## Non-goals
 

@@ -20,10 +20,15 @@ async function renderSettledDocument() {
   return user;
 }
 
+async function openSqlTab(user: Awaited<ReturnType<typeof renderSettledDocument>>) {
+  await user.click(screen.getByRole("button", { name: "New query" }));
+  await user.click(await screen.findByRole("tab", { name: "SQL" }, { timeout: 20_000 }));
+  return screen.findByRole("textbox", { name: "SQL editor" });
+}
+
 it("executes typed read SQL and rejects write SQL through the visible workspace", async () => {
   const user = await renderSettledDocument();
-  await user.click(screen.getByRole("button", { name: "New query" }));
-  const editor = await screen.findByRole("textbox", { name: "SQL editor" });
+  const editor = await openSqlTab(user);
   await user.clear(editor);
   await user.type(editor, "SELECT 7 AS id, 'seven' AS label");
   await user.click(screen.getByRole("button", { name: "Run" }));
@@ -34,6 +39,7 @@ it("executes typed read SQL and rejects write SQL through the visible workspace"
   await user.type(editor, "DELETE FROM imaginary_table");
   await user.click(screen.getByRole("button", { name: "Run" }));
   expect(await screen.findByRole("alert")).toHaveTextContent(/read-only/i);
+  expect(screen.getByRole("alert")).toHaveTextContent(/migration/i);
   const persisted = await invoke<{ rows: unknown[][] }>("execute_read_query", {
     windowLabel: "main",
     sql: "SELECT 7 AS id",
@@ -76,10 +82,8 @@ it("persists saved-query metadata through public commands", async () => {
 
 it("creates, saves, runs, and updates a query through the visible workspace", async () => {
   const user = await renderSettledDocument();
-  await user.click(screen.getByRole("button", { name: "New query" }));
-
-  const name = await screen.findByRole("textbox", { name: "Query name" });
-  const editor = screen.getByRole("textbox", { name: "SQL editor" });
+  const editor = await openSqlTab(user);
+  const name = screen.getByRole("textbox", { name: "Query name" });
   await user.clear(name);
   await user.type(name, "Initial value");
   await user.clear(editor);
@@ -110,9 +114,12 @@ it("creates, saves, runs, and updates a query through the visible workspace", as
   });
 
   await user.click(screen.getByRole("button", { name: "New query" }));
+  expect(screen.getByRole("textbox", { name: "Query name" })).toHaveValue("Untitled query");
   await user.click(screen.getByRole("button", { name: "Updated value" }));
-  await waitFor(() => expect(editor).toHaveValue("SELECT 84 AS value"));
-  expect(name).toHaveValue("Updated value");
+  await waitFor(() =>
+    expect(screen.getByRole("textbox", { name: "SQL editor" })).toHaveValue("SELECT 84 AS value"),
+  );
+  expect(screen.getByRole("textbox", { name: "Query name" })).toHaveValue("Updated value");
   await user.click(screen.getByRole("button", { name: "Run" }));
   expect(await screen.findByText("84")).toBeInTheDocument();
 });

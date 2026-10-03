@@ -7,7 +7,9 @@ mod checks;
 mod upgrade;
 pub use checks::{table_issues, validate, validate_tables};
 /// Grid rules shared with dashboards (PRD §13: one grid system for forms and dashboards).
-pub(crate) use checks::{validate_layout as validate_grid_layout, validate_span as validate_grid_span};
+pub(crate) use checks::{
+    validate_layout as validate_grid_layout, validate_span as validate_grid_span,
+};
 
 pub const DESIGN_SCHEMA_VERSION: u32 = 3;
 

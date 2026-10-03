@@ -52,7 +52,7 @@ the UI with `userEvent`, query by role/label, use `findBy*` with
   `src/persistence/` (autosave, recovery, checkpoints).
 - Rust: `manager.rs` (sessions, save), `archive*.rs` (`.ixt` format),
   `data/` (DuckDB reader), `recordstore/` + `postgres/` (writes),
-  `queries/`, `design/`, `reports.rs`, `dashboards.rs`, `automation.rs`,
+  `queries/`, `design/`, `reports.rs`, `dashboards/`, `automation.rs`,
   `jobs.rs` (async trigger queue), `bundle*.rs` + `installation*.rs`
   (runtime bundles), `validation.rs`.
 

@@ -1,11 +1,4 @@
-import { ModePlaceholder } from "../shell/FeaturePlaceholder";
-
-/** Dashboards mode (PRD §16). Placeholder until the Dashboards feature lands. */
-export function DashboardsMode() {
-  return (
-    <ModePlaceholder
-      title="Dashboards"
-      description="Arrange charts, KPIs, tables, and filters on the shared grid."
-    />
-  );
-}
+/** Dashboards feature (PRD §16). `DashboardView` is embedded by Runtime navigation. */
+export { Chart } from "./charts/Chart";
+export { DashboardsMode } from "./DashboardsMode";
+export { DashboardView, type DashboardViewProps } from "./DashboardView";

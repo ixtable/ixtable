@@ -16,6 +16,8 @@ every risk-retirement spike. This index maps each spike to its record.
 | [Runtime bundles](./runtime-bundles.md) | password-protected manual runtime bundle | accepted, cloud bundles out of scope |
 | [Async trigger queue](./async-trigger-queue.md) | local async trigger queue | accepted |
 | [Expression language](./expression-language.md) | none. Records the PRD §17.1 language design | accepted |
+| [Cloud architecture](./cloud-architecture.md) | none. ixtable Cloud control plane: schema, RLS, functions, local stack | accepted (foundation) |
+| [Cloud security model](./cloud-security-model.md) | signed personalized bundle and envelope-encryption threat model | accepted, external review pending |
 
 The Phase 0 item "signed personalized bundle and envelope-encryption threat
 model" belongs to ixtable Cloud. The desktop work does not build it. The

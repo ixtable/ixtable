@@ -1,0 +1,8 @@
+{
+  "name": "ixtable-edge-functions",
+  "private": true,
+  "description": "npm dependencies for the Edge Functions. Installed into node_modules by scripts/cloud/up.mjs so the Edge runtime boots without registry access.",
+  "dependencies": {
+    "@supabase/supabase-js": "2.110.7"
+  }
+}

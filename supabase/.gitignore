@@ -1,3 +1,7 @@
 .branches
 .temp
 .env
+
+# Local Edge Function secrets (scripts/cloud/dev-secrets.mjs)
+functions/.env.local
+functions/node_modules

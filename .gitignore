@@ -7,6 +7,8 @@ src-tauri/target/
 scripts/screenshot/.generated/
 web/web-qa/.generated/
 web/e2e/.generated/
+web/e2e/service-qa/.generated/
+web/test-results/
 .agents/skills/treq*/
 .claude/skills/treq*/
 src-tauri/resources/duckdb/*/

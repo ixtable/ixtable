@@ -16,10 +16,7 @@ const objects = () =>
     all.map((o) => o.name),
   );
 
-async function clickWhenEnabled(
-  user: Awaited<ReturnType<typeof renderNewDocument>>,
-  name: string,
-) {
+async function clickWhenEnabled(user: Awaited<ReturnType<typeof renderNewDocument>>, name: string) {
   const button = await screen.findByRole("button", { name }, LONG);
   await waitFor(() => expect(button).toBeEnabled(), LONG);
   await user.click(button);

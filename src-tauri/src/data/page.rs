@@ -18,6 +18,7 @@ impl ReadRuntime {
         if limit == 0 || limit > 1000 {
             return Err("Page size must be between 1 and 1000".into());
         }
+        let _gate = self.read_gate()?;
         let mut meta = self.schema(table)?;
         let visible = self.duckdb_columns(table)?;
         meta.columns.retain(|c| visible.contains(&c.name));

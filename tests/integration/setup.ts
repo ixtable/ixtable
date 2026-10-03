@@ -21,7 +21,25 @@ export const dialogMock = {
   save: vi.fn<() => Promise<string | null>>(),
 };
 
+type EventHandler = (event: { event: string; id: number; payload: unknown }) => void;
+const eventHandlers = new Map<string, Set<EventHandler>>();
+const eventMock = {
+  listen: async (event: string, handler: EventHandler) => {
+    const handlers = eventHandlers.get(event) ?? new Set<EventHandler>();
+    handlers.add(handler);
+    eventHandlers.set(event, handlers);
+    return () => {
+      handlers.delete(handler);
+    };
+  },
+};
+/** Delivers a Tauri event to the app's listeners, as an `emit` from Rust would. */
+export const emitTauriEvent = (event: string, payload: unknown) => {
+  for (const handler of eventHandlers.get(event) ?? []) handler({ event, id: 0, payload });
+};
+
 vi.mock("@tauri-apps/api/core", () => ({ invoke: testBridge.invoke }));
+vi.mock("@tauri-apps/api/event", () => eventMock);
 vi.mock("@tauri-apps/plugin-dialog", () => dialogMock);
 vi.mock("@monaco-editor/react", () => ({
   default: ({ value, onChange }: { value: string; onChange: (value: string) => void }) =>
@@ -72,6 +90,7 @@ afterEach(async () => {
   vi.restoreAllMocks();
   dialogMock.open.mockReset();
   dialogMock.save.mockReset();
+  eventHandlers.clear();
   try {
     await testBridge.invoke("close_document", { windowLabel: "main", force: true });
   } catch {

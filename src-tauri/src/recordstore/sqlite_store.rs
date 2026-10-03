@@ -58,10 +58,10 @@ impl RecordStore for SqliteRecordStore {
         capabilities::sqlite()
     }
     fn table_names(&mut self) -> Result<Vec<String>, StoreError> {
-        table_names_on(&self.connection()?)
+        table_names_on(&*self.connection()?)
     }
     fn table_def(&mut self, table: &str) -> Result<TableDef, StoreError> {
-        sqlite::table_def(&self.connection()?, table)
+        sqlite::table_def(&*self.connection()?, table)
     }
     fn insert(&mut self, table: &str, values: &[NamedValue]) -> Result<Vec<DataValue>, StoreError> {
         self.transaction(|c| sqlite::insert_on(c, table, values))
@@ -99,7 +99,7 @@ impl RecordStore for SqliteRecordStore {
         Ok(statements)
     }
     fn plan_alter(&mut self, table: &str, ops: &[AlterTable]) -> Result<ChangePlan, StoreError> {
-        Ok(plan_changes(&self.connection()?, table, ops)?.0)
+        Ok(plan_changes(&*self.connection()?, table, ops)?.0)
     }
     fn alter_table(&mut self, table: &str, ops: &[AlterTable]) -> Result<ChangePlan, StoreError> {
         let mut c = self.connection()?;
@@ -153,7 +153,7 @@ impl RecordStore for SqliteRecordStore {
         Ok(out)
     }
     fn impact(&mut self, table: &str) -> Result<TableImpact, StoreError> {
-        impact_on(&self.connection()?, table)
+        impact_on(&*self.connection()?, table)
     }
     fn run_script(
         &mut self,

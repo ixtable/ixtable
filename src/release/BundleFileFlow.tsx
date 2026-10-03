@@ -1,6 +1,7 @@
 import { type FormEvent, type ReactNode, useId, useState } from "react";
 import { asTauriError, type TauriError } from "../lib/api";
 import { chooseBundleToOpen } from "../lib/dialog";
+import { type OpenRequest, useEachRequest } from "../lib/launch";
 import type { SessionState } from "../lib/types";
 import { inspectRuntimeBundle } from "./api";
 import { BundleError } from "./BundleError";
@@ -15,6 +16,7 @@ type Pending = { path: string; summary: BundleSummary };
  */
 export function BundleFileFlow({
   act,
+  request,
   onDone,
   onCancel,
   disabled,
@@ -23,6 +25,8 @@ export function BundleFileFlow({
   children,
 }: {
   act: Act;
+  /** A bundle the OS asked to open: runs the flow for it without the file dialog. */
+  request?: OpenRequest | null;
   onDone: (state: SessionState, summary: BundleSummary) => void;
   onCancel?: () => void;
   disabled?: boolean;
@@ -67,6 +71,12 @@ export function BundleFileFlow({
       onCancel?.();
       return;
     }
+    await verify(path);
+  };
+  const verify = async (path: string) => {
+    setError(null);
+    setDowngrade(null);
+    setPrompt(null);
     setBusy(true);
     try {
       const summary = await inspectRuntimeBundle(path);
@@ -78,6 +88,9 @@ export function BundleFileFlow({
       setError(asTauriError(reason));
     }
   };
+  useEachRequest(request, (opened) => {
+    verify(opened.path).catch((reason: unknown) => setError(asTauriError(reason)));
+  });
 
   const submit = (event: FormEvent) => {
     event.preventDefault();

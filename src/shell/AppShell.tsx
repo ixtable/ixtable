@@ -19,6 +19,8 @@ import { findMode, type ModeId, modes } from "./modes";
 import { SaveStatus } from "../persistence";
 import { type Autosave, useAutosave } from "../persistence/useAutosave";
 import { RuntimeBar } from "../release";
+import type { OpenRequest } from "../lib/launch";
+import { useOpenRequestInShell } from "./openRequests";
 
 const fromSession = (state: SessionState): Doc => ({
   name: state.name,
@@ -32,7 +34,14 @@ const fromSession = (state: SessionState): Doc => ({
 });
 
 /** The open-document frame: sidebar, mode switch, ribbon, and the active mode's workspace. */
-export function AppShell({ initial, onClosed }: { initial: SessionState; onClosed: () => void }) {
+export function AppShell({
+  initial,
+  onClosed,
+  ...requests
+}: {
+  initial: SessionState;
+  onClosed: () => void;
+} & OpenRequestProps) {
   const [doc, setDoc] = useState<Doc>(() => fromSession(initial));
   const adopt = useCallback((state: SessionState) => setDoc(fromSession(state)), []);
   const autosave = useAutosave(adopt, initial);
@@ -54,10 +63,18 @@ export function AppShell({ initial, onClosed }: { initial: SessionState; onClose
         applySession={applySession}
         onClosed={onClosed}
         autosave={autosave}
+        {...requests}
       />
     </DocumentConfigProvider>
   );
 }
+
+/** Files the OS asks to open while a document is open (see `useOpenRequests`). */
+type OpenRequestProps = {
+  openRequest?: OpenRequest | null;
+  onRequestHandled?: (id: number) => void;
+  onOpened?: (state: SessionState) => void;
+};
 
 function ShellFrame({
   doc,
@@ -65,13 +82,16 @@ function ShellFrame({
   applySession: applyState,
   onClosed,
   autosave,
+  openRequest,
+  onRequestHandled,
+  onOpened,
 }: {
   doc: Doc;
   setDoc: (update: (doc: Doc) => Doc) => void;
   applySession: (state: SessionState) => void;
   onClosed: () => void;
   autosave: Autosave;
-}) {
+} & OpenRequestProps) {
   const store = useDocumentConfig();
   const { observe } = store;
   // States from commands outside the config store may carry backend config changes.
@@ -90,6 +110,18 @@ function ShellFrame({
   const [metadataError, setMetadataError] = useState("");
   const [selection, select] = useState<Selection | null>(null);
   const [dismissed, setDismissed] = useState<TauriError | null>(null);
+  useOpenRequestInShell({
+    request: openRequest,
+    onHandled: onRequestHandled,
+    onOpened,
+    onClosed,
+    doc,
+    autosave,
+    applySession,
+    setPending,
+    setError,
+    setNotice,
+  });
 
   const reloadMetadata = useCallback(async () => {
     setMetadataLoading(true);

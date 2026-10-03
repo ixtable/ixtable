@@ -37,6 +37,13 @@
         "description": "Portable ixtable database archive",
         "role": "Editor",
         "mimeType": "application/x-ixtable"
+      },
+      {
+        "ext": ["ixtr"],
+        "name": "ixtable Runtime Bundle",
+        "description": "Signed ixtable application bundle",
+        "role": "Viewer",
+        "mimeType": "application/x-ixtable-runtime"
       }
     ]
   }

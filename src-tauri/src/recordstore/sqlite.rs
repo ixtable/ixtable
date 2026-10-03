@@ -441,12 +441,18 @@ pub fn apply_op(c: &Connection, op: &WriteOp) -> Result<WriteOutcome, StoreError
     })
 }
 
+/// A store connection holding the file's exclusive gate (see `data::gate`).
+pub type GatedConnection = data::gate::Gated<Connection>;
+
 impl SqliteRecordStore {
     pub fn new(path: impl Into<PathBuf>) -> Self {
         Self { path: path.into() }
     }
-    pub fn connection(&self) -> Result<Connection, StoreError> {
-        open(&self.path)
+    /// A connection that holds the file's gate exclusively until dropped, so no
+    /// DuckDB read of the same file overlaps it (see `data::gate`).
+    pub fn connection(&self) -> Result<GatedConnection, StoreError> {
+        let gate = data::gate::exclusive(&self.path).map_err(|e| StoreError::new("BUSY", e))?;
+        Ok(GatedConnection::new(open(&self.path)?, Some(gate)))
     }
     /// Runs `f` in one transaction; any error rolls everything back.
     pub fn transaction<T>(

@@ -405,21 +405,32 @@ impl DocumentManager {
             .ok_or_else(|| AppError::new("NO_DOCUMENT", "No document is open"))?
             .reader
             .query(sql)
-            .map_err(|e| AppError::new("READ_ONLY", e))
+            .map_err(|e| read_error(sql, e))
     }
     /// A fresh DuckDB connection to the session's read database (queries.rs runs long, cancellable reads on it without holding the session lock).
-    pub fn read_connection(&self, window: &str) -> Result<duckdb::Connection, AppError> {
+    /// It holds the embedded file's shared gate until dropped, so a RecordStore write never overlaps the read (see `data::gate`).
+    pub fn read_connection(
+        &self,
+        window: &str,
+    ) -> Result<data::gate::Gated<duckdb::Connection>, AppError> {
         let all = self.sessions.lock().unwrap();
-        let connection = all
+        let reader = &all
             .get(window)
             .ok_or_else(|| AppError::new("NO_DOCUMENT", "No document is open"))?
-            .reader
+            .reader;
+        let connection = reader
             .connection()
             .try_clone()
             .map_err(|e| AppError::new("DATABASE_ERROR", e.to_string()))?;
+        let embedded = (*reader.target() == data::ReadTarget::Sqlite)
+            .then(|| reader.workspace.join("data.db"));
         drop(all);
+        let gate = embedded
+            .map(|db| data::gate::shared(&db))
+            .transpose()
+            .map_err(|e| AppError::new("BUSY", e))?;
         let _ = connection.execute_batch("USE data");
-        Ok(connection)
+        Ok(data::gate::Gated::new(connection, gate))
     }
     pub fn save_query(
         &self,
@@ -430,7 +441,7 @@ impl DocumentManager {
         filter_state: Option<serde_json::Value>,
     ) -> Result<DocumentConfig, AppError> {
         // Prepared, not run: `$name` parameters need no values to be saved.
-        crate::queries::check_on(&self.read_connection(window)?, &sql)?;
+        crate::queries::check_on(&*self.read_connection(window)?, &sql)?;
         let mut config = self.config(window)?;
         let id = id.unwrap_or_else(|| Uuid::new_v4().to_string());
         let previous = config.saved_queries.iter().find(|query| query.id == id);
@@ -741,6 +752,23 @@ pub(crate) fn refresh_after_write(s: &mut Session) {
             ));
         }
     }
+}
+/// Classifies a failed ad-hoc read: only SQL the read-only guard rejects is
+/// `READ_ONLY`; a busy file is `BUSY` (never mislabelled as read-only, see
+/// `data::gate`); anything else is a `DATABASE_ERROR`.
+fn read_error(sql: &str, message: String) -> AppError {
+    let lower = message.to_ascii_lowercase();
+    let code = if data::read_only_guard(sql).is_err() {
+        "READ_ONLY"
+    } else if message == data::gate::BUSY_MESSAGE
+        || lower.contains("database is locked")
+        || lower.contains("database is busy")
+    {
+        "BUSY"
+    } else {
+        "DATABASE_ERROR"
+    };
+    AppError::new(code, message)
 }
 pub(crate) fn read_only_guard(s: &Session) -> Result<(), AppError> {
     if crate::installation::runtime_session(&s.id).is_some() {

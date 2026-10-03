@@ -6,11 +6,14 @@
 pub mod ddl;
 #[cfg(test)]
 mod ddl_tests;
+pub mod gate;
 pub mod logical;
 #[cfg(test)]
 mod logical_tests;
 pub mod model;
 pub mod page;
+#[cfg(test)]
+mod race_tests;
 pub mod read;
 pub mod sqltext;
 pub mod support;

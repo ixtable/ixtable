@@ -90,6 +90,9 @@ impl ReadRuntime {
         if self.target != ReadTarget::Sqlite || self.attach_error.is_some() {
             return self.rebuild();
         }
+        // Exclusive: connections cloned from this database (`read_connection`)
+        // must not run while `data` is detached and re-attached.
+        let _gate = super::gate::exclusive(&self.workspace.join("data.db"))?;
         let _ = self.connection.execute_batch("USE memory; DETACH data");
         let result = attach(&self.connection, &self.workspace, &self.target);
         self.attach_error = result.as_ref().err().cloned();
@@ -97,6 +100,14 @@ impl ReadRuntime {
     }
     pub fn connection(&self) -> &duckdb::Connection {
         &self.connection
+    }
+    /// Shared access to the embedded file for one read (see `data::gate`); a
+    /// PostgreSQL target needs none.
+    pub fn read_gate(&self) -> Result<Option<super::gate::GateGuard>, String> {
+        match self.target {
+            ReadTarget::Sqlite => super::gate::shared(&self.workspace.join("data.db")).map(Some),
+            ReadTarget::Postgres { .. } => Ok(None),
+        }
     }
     fn ready(&self) -> Result<(), String> {
         match &self.attach_error {
@@ -117,6 +128,7 @@ impl ReadRuntime {
 
     pub fn objects(&self) -> Result<Vec<DbObject>, String> {
         self.ready()?;
+        let _gate = self.read_gate()?;
         let mut stmt = self
             .connection
             .prepare(
@@ -153,6 +165,7 @@ impl ReadRuntime {
     /// Counts rows of any table, including internal `_ixtable_` tables.
     pub fn row_count(&self, table: &str) -> Result<u64, String> {
         self.ready()?;
+        let _gate = self.read_gate()?;
         self.connection
             .query_row(
                 &format!("SELECT count(*) FROM {}", self.from(table)),
@@ -163,6 +176,7 @@ impl ReadRuntime {
     }
     pub fn query(&self, sql: &str) -> Result<QueryResult, String> {
         self.ready()?;
+        let _gate = self.read_gate()?;
         let trimmed = read_only_guard(sql)?;
         let mut stmt = self
             .connection
@@ -199,6 +213,7 @@ impl ReadRuntime {
     /// The full definition (columns, keys, constraints, indexes) of a table or view.
     pub fn table_def(&self, table: &str) -> Result<TableDef, String> {
         self.ready()?;
+        let _gate = self.read_gate()?;
         let Some(kind) = self.table_exists(table)? else {
             return Err(format!("Table or view {table:?} does not exist"));
         };
@@ -305,6 +320,7 @@ impl ReadRuntime {
     }
     /// Columns DuckDB can read (SQLite generated columns are not scanned).
     pub(super) fn duckdb_columns(&self, table: &str) -> Result<HashSet<String>, String> {
+        let _gate = self.read_gate()?;
         let mut stmt = self
             .connection
             .prepare("SELECT column_name FROM information_schema.columns WHERE table_catalog='data' AND table_schema=? AND table_name=?")
@@ -317,6 +333,7 @@ impl ReadRuntime {
         names
     }
     pub fn schema(&self, table: &str) -> Result<TableSchema, String> {
+        let _gate = self.read_gate()?;
         let def = self.table_def(table)?;
         let object_type = self.table_exists(table)?.unwrap_or_else(|| "table".into());
         Ok(TableSchema::from_def(def, object_type))
@@ -371,6 +388,10 @@ fn open_locked(
             .map_err(|e| format!("{what} extension startup: {e}"))
     };
     load(sqlite_extension, "SQLite")?;
+    let _gate = match target {
+        ReadTarget::Sqlite => Some(super::gate::shared(&workspace.join("data.db"))?),
+        ReadTarget::Postgres { .. } => None,
+    };
     let attached = match target {
         ReadTarget::Sqlite => Ok(()),
         ReadTarget::Postgres { .. } => {

@@ -239,19 +239,22 @@ fn delete_saved_query(window_label: String, id: String) -> Result<DocumentConfig
     Ok(c)
 }
 
-/// Event the main window receives with the `.ixt` paths a second launch was asked to open.
+/// Event the main window receives with the `.ixt`/`.ixtr` paths a later launch (or the OS) asked to open.
 pub const OPEN_FILES_EVENT: &str = "ixtable://open-files";
 
-/// Paths among a launch's arguments that name `.ixt` documents, resolved against its cwd.
+/// Whether a path names a file ixtable opens: an `.ixt` document or an `.ixtr` runtime bundle.
+pub fn is_openable_file(path: &str) -> bool {
+    std::path::Path::new(path)
+        .extension()
+        .is_some_and(|e| e.eq_ignore_ascii_case("ixt") || e.eq_ignore_ascii_case("ixtr"))
+}
+
+/// Paths among a launch's arguments that name `.ixt` documents or `.ixtr` bundles, resolved against its cwd.
 pub fn open_file_args(args: &[String], cwd: &str) -> Vec<String> {
     args.iter()
         .skip(1)
         .filter(|a| !a.starts_with('-'))
-        .filter(|a| {
-            std::path::Path::new(a)
-                .extension()
-                .is_some_and(|e| e.eq_ignore_ascii_case("ixt"))
-        })
+        .filter(|a| is_openable_file(a))
         .map(|a| {
             std::path::Path::new(cwd)
                 .join(a)
@@ -259,6 +262,47 @@ pub fn open_file_args(args: &[String], cwd: &str) -> Vec<String> {
                 .into_owned()
         })
         .collect()
+}
+
+/// Files this process was asked to open before the UI could listen: the first
+/// launch's arguments (an OS file association) and, on macOS, `Opened` events.
+fn launch_files() -> &'static std::sync::Mutex<Option<Vec<String>>> {
+    static FILES: OnceLock<std::sync::Mutex<Option<Vec<String>>>> = OnceLock::new();
+    FILES.get_or_init(|| {
+        let args: Vec<String> = std::env::args().collect();
+        let cwd = std::env::current_dir()
+            .map(|d| d.to_string_lossy().into_owned())
+            .unwrap_or_default();
+        std::sync::Mutex::new(Some(open_file_args(&args, &cwd)))
+    })
+}
+
+/// Returns the files the app was launched with, once; later calls return none
+/// (later requests arrive as `ixtable://open-files` events).
+#[tauri::command]
+fn take_launch_files(window_label: String) -> Result<Vec<String>, AppError> {
+    let _ = window_label;
+    let mut files = launch_files().lock().unwrap_or_else(|e| e.into_inner());
+    Ok(files.replace(vec![]).unwrap_or_default())
+}
+
+/// Delivers files the OS asked to open: queued for `take_launch_files` and sent to the main window.
+#[cfg_attr(not(any(target_os = "macos", target_os = "ios")), allow(dead_code))]
+fn deliver_open_files(app: &tauri::AppHandle, files: Vec<String>) {
+    use tauri::{Emitter, Manager};
+    if files.is_empty() {
+        return;
+    }
+    if let Some(queued) = launch_files()
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .as_mut()
+    {
+        queued.extend(files.iter().cloned());
+    }
+    if let Some(window) = app.get_webview_window("main") {
+        let _ = window.emit(OPEN_FILES_EVENT, files);
+    }
 }
 
 fn forward_open_args(app: &tauri::AppHandle, args: Vec<String>, cwd: String) {
@@ -283,6 +327,8 @@ pub fn run() {
             use tauri::Manager;
             // Durable state lives in the app's local data dir, resolved before any command runs.
             paths::init_app_dir(app.path().app_local_data_dir()?);
+            // Read the first launch's file arguments before anything changes the cwd.
+            let _ = launch_files();
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -318,6 +364,8 @@ pub fn run() {
             alter_database_table,
             save_query,
             delete_saved_query,
+            // launch commands
+            take_launch_files,
             // archive commands
             manager::autosave_document,
             recovery::recover_session,
@@ -391,17 +439,42 @@ pub fn run() {
             installation_commands::preview_installation_reset,
             installation_commands::reset_runtime_installation_data,
         ])
-        .run(tauri::generate_context!())
-        .expect("error while running ixtable")
+        .build(tauri::generate_context!())
+        .expect("error while building ixtable")
+        .run(|_app, _event| {
+            // macOS hands file-association opens to the running app as events, not arguments.
+            #[cfg(any(target_os = "macos", target_os = "ios"))]
+            if let tauri::RunEvent::Opened { urls, .. } = _event {
+                let files = urls
+                    .iter()
+                    .filter_map(|u| u.to_file_path().ok())
+                    .map(|p| p.to_string_lossy().into_owned())
+                    .filter(|p| is_openable_file(p))
+                    .collect();
+                deliver_open_files(_app, files);
+            }
+        })
 }
 
 #[cfg(test)]
 mod launch_args_tests {
     #[test]
     fn a_second_launch_forwards_only_ixt_paths_resolved_against_its_cwd() {
-        let args = ["ixtable", "--flag", "notes.IXT", "/abs/b.ixt", "readme.txt"].map(String::from);
+        let args = [
+            "ixtable",
+            "--flag",
+            "notes.IXT",
+            "/abs/b.ixt",
+            "readme.txt",
+            "app.ixtr",
+        ]
+        .map(String::from);
         let files = super::open_file_args(&args, "/home/u");
-        assert_eq!(files.len(), 2);
+        assert_eq!(files.len(), 3);
+        assert_eq!(
+            std::path::Path::new(&files[2]),
+            std::path::Path::new("/home/u/app.ixtr")
+        );
         assert_eq!(
             std::path::Path::new(&files[0]),
             std::path::Path::new("/home/u/notes.IXT")
@@ -410,5 +483,20 @@ mod launch_args_tests {
             std::path::Path::new(&files[1]),
             std::path::Path::new("/abs/b.ixt")
         );
+    }
+
+    #[test]
+    fn launch_files_are_taken_once() {
+        // The test binary's own arguments name no documents.
+        assert!(super::take_launch_files("main".into()).unwrap().is_empty());
+        super::launch_files()
+            .lock()
+            .unwrap()
+            .replace(vec!["/docs/a.ixt".into()]);
+        assert_eq!(
+            super::take_launch_files("main".into()).unwrap(),
+            vec!["/docs/a.ixt".to_string()]
+        );
+        assert!(super::take_launch_files("main".into()).unwrap().is_empty());
     }
 }

@@ -182,7 +182,9 @@ describe("DashboardView", () => {
     await act(async () => {
       render(<PageView page={{ kind: "dashboard", id: "d1" }} />);
     });
-    expect(within(screen.getByRole("region", { name: "Open orders" })).getByText("5")).toBeInTheDocument();
+    expect(
+      within(screen.getByRole("region", { name: "Open orders" })).getByText("5"),
+    ).toBeInTheDocument();
   });
 
   it("reports a missing dashboard", () => {

@@ -10,7 +10,8 @@
       "!**/.docusaurus",
       "!**/.generated",
       "!src-tauri/resources",
-      "!src-tauri/gen"
+      "!src-tauri/gen",
+      "!**/.evidence"
     ]
   },
   "formatter": {

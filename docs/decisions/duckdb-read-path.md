@@ -40,6 +40,30 @@ commit before the refresh returns, a workflow that writes and then reads gets
 its own write back. Config edits re-attach only when `datasource` changed, and
 build the new reader outside the sessions lock.
 
+### Writes and reads of one file never overlap
+
+rusqlite and `sqlite_scanner` each link their own SQLite. SQLite coordinates
+connections with `fcntl` advisory locks, which belong to the process, so one
+copy cannot see the locks the other holds. Picture a DuckDB read that starts
+while a RecordStore transaction is open. It finds the writer's rollback
+journal, sees no lock on it, and takes it for a crashed writer's hot journal.
+Since `data` is attached `READ_ONLY`, it fails with
+`attempt to write a readonly database`. Some hosts export their own SQLite
+symbols: the `cargo test` binary, and the Linux app because of `build.rs`.
+There the extension binds to rusqlite's copy instead. The writer and the
+scanner's several handles can then deadlock on SQLite's locks until both fail
+with `database is locked`.
+
+`data::gate` arbitrates in process, per file. A RecordStore connection holds
+the gate exclusively for its whole life. Every `ReadRuntime` read and every
+connection from `DocumentManager::read_connection` holds it shared. The
+SQLite refresh after a write holds it exclusively too, because it detaches the
+`data` catalog that cloned query connections are using. Waiting writers block
+new readers, a thread that already holds the gate passes through, and a wait
+longer than 30 seconds fails with `BUSY`. The order stays write, commit,
+refresh, read, so read-your-writes holds. An ad-hoc read error is `READ_ONLY`
+only when `read_only_guard` rejected the SQL.
+
 User SQL also passes `read_only_guard`, as defense in depth. It ignores string
 literals, quoted identifiers, and comments (`data::sqltext::mask`), allows one
 statement with an optional trailing `;`, and rejects writes, DDL, `ATTACH`,
@@ -99,6 +123,10 @@ Linux for extensions that do.
 - `src-tauri/src/queries/tests.rs`: named placeholders rewritten outside
   literals, typed binding, injection attempts bound, mutating SQL rejected,
   cancellation.
+- `src-tauri/src/data/race_tests.rs` and `tests/integration/read-write-race.test.tsx`:
+  concurrent writes and reads on one file and one session never fail, and
+  each write is visible to the next read. Without the gate the integration
+  test fails with `attempt to write a readonly database`.
 - `tests/integration/sql-and-metadata.test.tsx` and
   `tests/integration/query-mode.test.tsx`: read SQL, write rejection,
   parameters, and cancel through the UI and the real bridge.

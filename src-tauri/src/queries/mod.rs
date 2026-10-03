@@ -282,7 +282,7 @@ pub fn check_on(connection: &duckdb::Connection, sql: &str) -> Result<Vec<String
 /// Validates query SQL before it is saved (see `check_on`).
 #[tauri::command]
 pub async fn check_query_sql(window_label: String, sql: String) -> Result<Vec<String>, AppError> {
-    blocking(move || check_on(&crate::manager()?.read_connection(&window_label)?, &sql)).await
+    blocking(move || check_on(&*crate::manager()?.read_connection(&window_label)?, &sql)).await
 }
 
 /// Interrupts a running query (`run_id`) or every running query of the window.

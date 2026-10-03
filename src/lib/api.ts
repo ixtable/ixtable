@@ -65,6 +65,8 @@ export const saveDocument = () => call<SessionState>("save_document");
 export const saveDocumentAs = (path: string) => call<SessionState>("save_document_as", { path });
 export const closeDocument = (force: boolean) => call<void>("close_document", { force });
 export const listRecentFiles = () => call<RecentFile[]>("list_recent_files");
+/** Files the app was launched with (an OS file association); returned once per process. */
+export const takeLaunchFiles = () => call<string[]>("take_launch_files");
 
 export const readDocumentConfig = () => call<DocumentConfig>("read_document_config");
 export const updateDocumentConfig = (config: DocumentConfig) =>

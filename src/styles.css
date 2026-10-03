@@ -2354,7 +2354,9 @@ button {
   background: #f6f7f5;
   border: 1px solid #e3e6e1;
   border-radius: 5px;
-  font: 12px ui-monospace, monospace;
+  font:
+    12px ui-monospace,
+    monospace;
   white-space: pre-wrap;
 }
 .query-param-values {

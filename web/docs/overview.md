@@ -5,9 +5,9 @@ slug: /
 
 # Overview
 
-_ixtable stores a small business app as one portable project file._
+_ixtable is a desktop app that stores a small business application as one portable `.ixt` file._
 
-You work in two modes. **Data view** is where you inspect tables, follow relationships, and edit records. **Design view** is where you assemble the interface that people use to work with that data.
+You design the application in **Studio** and run it in the **Runtime**. Both are part of the same desktop app on Windows, macOS, and Linux, and neither needs an account. The `.ixt` file holds the tables, records, queries, forms, reports, dashboards, actions, and assets together.
 
 ![An ixtable project open in Data view](./assets/data-view.png)
 
@@ -15,28 +15,36 @@ _This screenshot is generated from the real ixtable app by the repository's scre
 
 ## The project file
 
-An ixtable project keeps the app definition and its data together. The project browser lists tables, saved queries, and SQL scripts on the left. Save and close actions apply to the whole project.
+An `.ixt` file is a SQLite database with a fixed set of archive tables. While a project is open, ixtable works on an extracted copy and saves it back into the file. Saves write a new file beside the old one, check it, and then replace the old one. A crash or a full disk leaves the last good save in place.
 
-The current app opens a new, untitled project in memory. Saving that project requires a destination. The app reports `SAVE_AS_REQUIRED` until a Save As flow supplies one.
+ixtable autosaves a titled project a moment after each change. The save status shows when the project has unsaved changes, is saving, is saved, or failed to save. After a crash, the start screen offers to recover the unsaved work.
 
-:::note TODO
+## Modes
 
-Document the project file format, Save As flow, and compatibility rules when those parts are implemented.
+Studio groups its tools into modes. Switch modes with the mode buttons in the sidebar.
 
-:::
+| Mode | Use it for |
+| --- | --- |
+| [Data](./concepts/data-view) | Create tables, design columns and relationships, and edit records in a grid |
+| Query | Write SQL or build a query visually, add parameters, and save it |
+| [Design](./concepts/design-view) | Build forms on a resizable grid with validation and computed fields |
+| Reports | Lay out printable reports with groups and totals, then print or save a PDF |
+| Dashboards | Arrange charts, numbers, forms, and reports on the same grid that forms use |
+| Automation | Define actions and record triggers, and watch background jobs |
+| Settings | Manage assets, the datasource, roles, migrations, releases, and logs |
+| Runtime | Run the application the way its users will see it |
 
-## The two views
+## Where records live
 
-| View | Use it for | Current state |
-| --- | --- | --- |
-| [Data view](./concepts/data-view) | Browse tables and relationships, then edit records in a grid | Available |
-| [Design view](./concepts/design-view) | Build forms and preview an app interface | Work in progress |
+Records live in an embedded SQLite database inside the project file, or in a PostgreSQL database you connect in Settings. ixtable writes each change straight to that database. Every list, form, query, report, and dashboard then reads through DuckDB, so a change is visible to the next read. PostgreSQL hosting and backups stay your responsibility.
 
-Testing and deployment will complete the workflow from project file to running app. Both areas are still being designed.
+## Sharing an application
+
+You can share an application two ways. Send the `.ixt` file to give someone an editable copy. Export a runtime-only bundle from Settings to give someone an application they can run but not edit. [Deployment](./concepts/deployment) covers bundles.
 
 ## Generated screenshots
 
-The images in these docs come from `scripts/screenshot/specs/app-shell.spec.tsx`. The test renders `src/App.tsx`, performs user actions, and captures the resulting app state with Playwright.
+The images in these docs come from `scripts/screenshot/specs/app-shell.spec.tsx`. The test renders the app, performs user actions, and captures the resulting app state with Playwright.
 
 Regenerate the documentation images from the repository root:
 

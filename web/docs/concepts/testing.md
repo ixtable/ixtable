@@ -26,10 +26,11 @@ Define the test file format, fixtures, assertions, runner, result history, and c
 
 ## Repository tests
 
-Contributors can test the current ixtable codebase from the repository root:
+Contributors can test the ixtable codebase from the repository root. `npm test` first builds the Rust core as a Node module, then runs the unit tests and the integration tests. Integration tests render the real interface and send every command to the real Rust code.
 
 ```shell
 npm test
+cd src-tauri && cargo test --lib
 ```
 
 The screenshot suite renders the real React app, drives its controls, and captures checked states:
@@ -38,7 +39,7 @@ The screenshot suite renders the real React app, drives its controls, and captur
 npm run screenshot
 ```
 
-These commands test ixtable itself. They do not test a user-created ixtable project.
+Continuous integration runs these suites on Windows, macOS, and Linux, plus a PostgreSQL conformance suite on Linux. These commands test ixtable itself. They do not test a user-created ixtable project.
 
 ## Next steps
 

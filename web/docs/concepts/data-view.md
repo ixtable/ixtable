@@ -14,13 +14,13 @@ Open Data view to see how tables relate before you change their records. The obj
 
 The **object browser** groups tables, saved queries, and SQL scripts in the project sidebar. Select a table to make it active. Use the search field to narrow a larger project by object name.
 
-Each table entry includes its record count. Queries and SQL scripts are visible in the current app, but their editors and execution flows are not implemented.
+Each table entry includes its record count. Selecting a saved query opens it in Query mode, where you edit the SQL or the visual builder and run it with parameters.
 
-:::note TODO
+## Table designer
 
-Document query editing, SQL execution, and object creation when those actions are implemented.
+Create a table from the object browser, then open its designer to change columns, the primary key, relationships, unique and check constraints, and indexes. Changes are staged in a pending list first. Each staged change shows whether the database applies it in place or rebuilds the table. A table rebuild or a drop shows its effect on existing rows before you apply it.
 
-:::
+Columns use logical types such as `text`, `integer`, `decimal`, `date`, and `boolean`. ixtable maps each one to the matching SQLite or PostgreSQL type, so the same design works on either database.
 
 ## Table browser
 
@@ -38,23 +38,11 @@ The **records grid** displays fields as columns and records as rows. Enter value
 
 The screenshot shows a draft order with `ORD-10483` and `CUST-001`. The active row stays aligned with the fields above it so you can compare the new values with existing records.
 
-:::note TODO
-
-Document validation, persistence, sorting, filtering, and record deletion when those behaviors are implemented.
-
-:::
+Each edit is written to the database at once. Constraint failures, such as a duplicate key or a missing related record, appear next to the grid and leave the record unchanged. Tables with optimistic concurrency reject an edit made from stale values and show the current ones. Page through large tables with the previous and next page buttons.
 
 ## Ribbon commands
 
-The ribbon groups workspace actions by task. Home stays. The View control switches Data view and Design view.
-
-Query-action labels that do not run (Make Table, Append, Update, Delete, Show Table, Insert Rows) stay out of the ribbon until those commands exist.
-
-:::note TODO
-
-Add each real ribbon command when it performs an operation. Document its effect on project data.
-
-:::
+The ribbon groups workspace actions by task. The View control switches between every mode, and Undo and Redo apply to design changes across the project. Record edits are not part of undo, because they are already saved in the database.
 
 ## Next steps
 

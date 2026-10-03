@@ -4,29 +4,25 @@ sidebar_position: 4
 
 # Deployment
 
-_Deployment support for ixtable projects is planned and not implemented._
+_Deploy an ixtable application by exporting a signed runtime-only bundle and sending it to the people who use it._
 
-Design view can render a local preview of an app. It does not package, publish, host, or update that app.
+A **runtime-only bundle** is an `.ixtr` file that holds a complete application. Recipients open it in ixtable and can run the application but not edit its design. You distribute the file yourself, by email or a shared drive. ixtable Cloud publishing is not available yet.
 
-:::warning Work in progress
+## Export a bundle
 
-Deployment is a documentation stub. Preview app is the final implemented step in the current workflow.
+Open Settings, then the Release tab. Enter a version such as `1.2.0`, release notes, and an optional minimum Runtime version, then choose **Export runtime bundle**. ixtable signs every bundle with a key it creates on your computer the first time you export. After an export, the Release tab shows the signer fingerprint so recipients can check it.
 
-:::
+You can also protect the bundle with a password. A password protects the bundle at rest and against casual unauthorized opening. It does not stop someone who knows the password from reading the data that the application shows them.
 
-## Planned scope
+## Open and update a bundle
 
-A deployment flow needs a runtime artifact, environment configuration, data access rules, and a release process. Those boundaries have not been defined.
+Recipients choose **Open runtime bundle** on the start screen. ixtable checks the signature before it reads anything else, so a changed or damaged file does not open. The first bundle for an application also pins your signing key. A later bundle for that application signed by any other key is refused.
 
-:::note TODO
+Each recipient keeps their own records. The bundle's records seed the installation on first open only. To install a new version, the recipient chooses **Check for update** and picks the new file. ixtable applies the new design and its migrations to a copy of the recipient's records. It switches to that copy only after every migration and health check passes. A failed update leaves the previous version running. Installing an older version requires an explicit confirmation.
 
-Define build output, target environments, secrets, migrations, access control, release history, rollback, and custom domains.
+## Databases
 
-:::
-
-## Preview is not deployment
-
-The Design view preview runs inside the editor and uses the current prototype state. Treat it as a design check. It provides no public URL or production isolation.
+An application that uses the embedded SQLite database gives every recipient a separate copy of the records. An application that uses PostgreSQL connects each recipient to the database you configured. The bundle never contains the PostgreSQL password. The project file only stores a reference to a password saved on your computer.
 
 ## Next steps
 

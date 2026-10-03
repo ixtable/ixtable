@@ -4,39 +4,27 @@ sidebar_position: 2
 
 # Design view
 
-_Design view is a work-in-progress interface for building the app that sits on top of project data._
+_Design view builds the forms that people use to list, view, create, and edit records._
 
-The current prototype has a component library, a form canvas, and a properties panel. It also previews the inventory app without leaving the project.
+A form reads from a table or a saved query and shows its fields as controls on a grid. You can generate a starting set of forms from a table, then rearrange and extend them. The Runtime renders the same form definition that you design here.
 
-:::warning Work in progress
-
-This page is a documentation stub. The design model and editing behavior can change while the feature is under development.
-
-:::
-
-![The form builder prototype in Design view](../assets/design-view.png)
+![The form builder in Design view](../assets/design-view.png)
 
 ## Form builder
 
-The form builder arranges controls on a shared grid and exposes settings for the selected control. Layout is a track-based grid (fractional, fixed, and content-sized columns, spans, gaps, named regions, breakpoints). The renderer maps that model to CSS Grid. It does not store CSS strings as the application schema.
+The form builder places controls on a shared grid and shows settings for the selected control. The grid has fractional, fixed, and content-sized columns, row and column spans, gaps, named regions, and breakpoints for narrow windows. Dashboards use the same grid. ixtable stores the grid model in the project file and turns it into CSS only when it draws the form.
 
-:::note TODO
+Controls include text, number, decimal, date, time, check box, and select inputs. Relationship pickers choose a related record, and related lists show child records inside a parent form. Sections and tabs group controls, and buttons run actions from Automation mode. Resize or move the selected control with the toolbar buttons or with Alt and the arrow keys.
 
-Document component placement, data binding, properties, layout rules, undo, and project persistence after the behavior is implemented.
+## Rules and expressions
 
-:::
+Validation rules, computed fields, and conditions that hide or disable a control use the ixtable expression language. An expression reads like a spreadsheet formula, such as `record.quantity * record.unitPrice`. Each expression field checks the formula as you type and flags unknown names. Expressions only see the record, the form, and the application state, and they cannot run code.
 
-## App preview
+## Modes and navigation
 
-Preview mode renders the current design as an inventory app with metrics, search, filters, and product records. It gives the design a runtime-shaped surface for review.
+Each form has list, detail, create, and edit modes. Preview a mode in the designer with live records. The navigation editor builds the application menu from forms, reports, dashboards, and tables. Roles in Settings control which of those items each user can open and change.
 
-![The generated runtime preview for the inventory app](../assets/app-preview.png)
-
-:::note TODO
-
-Connect preview state to saved form definitions and project data. Document the boundary between preview and a deployed app.
-
-:::
+![A form previewed with live records](../assets/app-preview.png)
 
 ## Next steps
 

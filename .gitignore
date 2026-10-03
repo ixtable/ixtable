@@ -11,3 +11,4 @@ web/e2e/.generated/
 .claude/skills/treq*/
 src-tauri/resources/duckdb/*/
 src-tauri/gen/schemas/linux-schema.json
+reports/

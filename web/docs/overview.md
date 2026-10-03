@@ -1,6 +1,10 @@
 ---
 sidebar_position: 1
 slug: /
+title: "ixtable docs: projects, Data view, and Design view"
+sidebar_label: Overview
+pagination_label: Overview
+description: How ixtable stores an app as one portable project file, and how Data view and Design view split working with data from building the interface.
 ---
 
 # Overview
@@ -29,8 +33,8 @@ Document the project file format, Save As flow, and compatibility rules when tho
 
 | View | Use it for | Current state |
 | --- | --- | --- |
-| [Data view](./concepts/data-view) | Browse tables and relationships, then edit records in a grid | Available |
-| [Design view](./concepts/design-view) | Build forms and preview an app interface | Work in progress |
+| [Data view](./concepts/data-view.md) | Browse tables and relationships, then edit records in a grid | Available |
+| [Design view](./concepts/design-view.md) | Build forms and preview an app interface | Work in progress |
 
 Testing and deployment will complete the workflow from project file to running app. Both areas are still being designed.
 
@@ -48,7 +52,7 @@ The command tests the captured states before it copies selected images beside th
 
 ## Next steps
 
-- [Data view](./concepts/data-view)
-- [Design view](./concepts/design-view)
-- [Testing](./concepts/testing)
-- [Deployment](./concepts/deployment)
+- [Data view](./concepts/data-view.md)
+- [Design view](./concepts/design-view.md)
+- [Testing](./concepts/testing.md)
+- [Deployment](./concepts/deployment.md)

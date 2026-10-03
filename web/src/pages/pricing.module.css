@@ -1,0 +1,104 @@
+.page {
+  max-width: 1080px;
+  margin: 0 auto;
+  padding: 72px 16px 96px;
+}
+.header {
+  max-width: 680px;
+  margin-bottom: 48px;
+}
+.header h1 {
+  font-size: clamp(40px, 6vw, 64px);
+  letter-spacing: -0.04em;
+  margin-bottom: 16px;
+}
+.header p {
+  font-size: 18px;
+  line-height: 1.6;
+}
+.plans {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 24px;
+  align-items: start;
+}
+.plan {
+  display: flex;
+  flex-direction: column;
+  padding: 32px;
+  border: 1px solid var(--ifm-color-emphasis-300);
+  border-radius: 10px;
+  background: var(--ifm-background-surface-color);
+}
+.plan h2 {
+  margin-bottom: 12px;
+}
+.plan ul {
+  padding-left: 20px;
+  margin-bottom: 24px;
+}
+.plan li {
+  margin-bottom: 6px;
+}
+.price {
+  margin-bottom: 8px;
+  font-size: 16px;
+}
+.price b {
+  font-size: 36px;
+  letter-spacing: -0.03em;
+}
+.license {
+  color: var(--ifm-color-emphasis-700);
+}
+.draft {
+  align-self: flex-start;
+  margin-bottom: 12px;
+  padding: 4px 10px;
+  font-size: 13px;
+  font-weight: 700;
+  color: #5c4500;
+  background: #fbefc8;
+  border: 1px solid #e6cd7a;
+  border-radius: 4px;
+}
+.terms {
+  font-weight: 600;
+}
+.primaryButton,
+.secondaryButton {
+  align-self: flex-start;
+  padding: 13px 20px;
+  font-weight: 700;
+  border-radius: 4px;
+  text-decoration: none !important;
+}
+.primaryButton {
+  color: #fff !important;
+  background: #315c45;
+}
+.secondaryButton {
+  color: var(--ifm-font-color-base) !important;
+  border: 1px solid var(--ifm-color-emphasis-400);
+}
+.section {
+  margin-top: 64px;
+}
+.tableWrap {
+  overflow-x: auto;
+}
+.tableWrap table {
+  display: table;
+  width: 100%;
+}
+@media (max-width: 800px) {
+  .page {
+    padding-top: 48px;
+  }
+  .plans {
+    grid-template-columns: 1fr;
+  }
+  .plan {
+    padding: 24px;
+  }
+}

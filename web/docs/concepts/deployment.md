@@ -31,5 +31,5 @@ The Design view preview runs inside the editor and uses the current prototype st
 ## Next steps
 
 - [Overview](/docs/)
-- [Design view](./design-view)
-- [Testing](./testing)
+- [Design view](./design-view.md)
+- [Testing](./testing.md)

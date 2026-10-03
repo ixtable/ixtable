@@ -40,6 +40,6 @@ Connect preview state to saved form definitions and project data. Document the b
 
 ## Next steps
 
-- [Data view](./data-view)
-- [Testing](./testing)
-- [Deployment](./deployment)
+- [Data view](./data-view.md)
+- [Testing](./testing.md)
+- [Deployment](./deployment.md)

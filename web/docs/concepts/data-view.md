@@ -59,5 +59,5 @@ Add each real ribbon command when it performs an operation. Document its effect 
 ## Next steps
 
 - [Overview](/docs/)
-- [Design view](./design-view)
-- [Testing](./testing)
+- [Design view](./design-view.md)
+- [Testing](./testing.md)

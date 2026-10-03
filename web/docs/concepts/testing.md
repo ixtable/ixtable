@@ -42,6 +42,6 @@ These commands test ixtable itself. They do not test a user-created ixtable proj
 
 ## Next steps
 
-- [Data view](./data-view)
-- [Design view](./design-view)
-- [Deployment](./deployment)
+- [Data view](./data-view.md)
+- [Design view](./design-view.md)
+- [Deployment](./deployment.md)

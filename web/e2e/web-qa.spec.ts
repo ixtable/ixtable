@@ -11,7 +11,7 @@ async function capture(
   fullPage = true,
 ): Promise<void> {
   await mkdir(outputDir, { recursive: true });
-  await page.locator("img").evaluateAll(async (images) => {
+  await page.locator("img").evaluateAll(async (images: HTMLImageElement[]) => {
     for (const image of images) image.loading = "eager";
     await Promise.all(
       images.map((image) =>
@@ -38,11 +38,11 @@ async function capture(
 async function darkPixelsInFlowCanvas(page: Page, imageName: RegExp): Promise<number> {
   const image = page.getByRole("img", { name: imageName });
   await expect(image).toBeVisible();
-  await image.evaluate(async (element) => {
+  await image.evaluate(async (element: HTMLImageElement) => {
     element.loading = "eager";
     await element.decode();
   });
-  return image.evaluate((element) => {
+  return image.evaluate((element: HTMLImageElement) => {
     const canvas = document.createElement("canvas");
     canvas.width = element.naturalWidth;
     canvas.height = element.naturalHeight;
@@ -98,7 +98,7 @@ test.describe("web QA", () => {
     expect(await darkPixelsInFlowCanvas(page, /new order entered/i)).toBeGreaterThan(2_000);
     const flowImage = page.getByRole("img", { name: /Customers, Products, Orders/i });
     await expect(flowImage).toBeVisible();
-    await flowImage.evaluate(async (image) => {
+    await flowImage.evaluate(async (image: HTMLImageElement) => {
       image.loading = "eager";
       await image.decode();
     });
@@ -133,7 +133,9 @@ test.describe("web QA", () => {
     await expect(page.getByRole("heading", { level: 1 })).toHaveText(
       /Build the app\s*your business needs\./,
     );
-    await expect(page.getByRole("link", { name: /Get started free/i })).toBeVisible();
+    await expect(
+      page.getByRole("button", { name: "Join the waitlist" }).first(),
+    ).toBeVisible();
     await expect(page.getByLabel("Preview of the ixtable app builder")).toBeVisible();
     await expect(
       page.getByRole("heading", { name: /More capable than a spreadsheet/i }),
@@ -150,7 +152,7 @@ test.describe("web QA", () => {
     await expect(page.locator("main")).not.toHaveCSS("overflow-x", "scroll");
 
     await capture(page, "landing-01-desktop", [
-      "The hero, primary action, and ixtable product preview are visible above the fold.",
+      "The hero, waitlist form, GitHub link, disabled download note, and product preview are visible.",
       "Feature sections form a clear editorial rhythm without clipped or overlapping content.",
       "The final call to action is visible at the bottom of the page.",
     ]);
@@ -161,7 +163,9 @@ test.describe("web QA", () => {
     await page.goto("/");
 
     await expect(page.getByRole("heading", { level: 1 })).toBeVisible();
-    await expect(page.getByRole("link", { name: /Get started free/i })).toBeVisible();
+    await expect(
+      page.getByRole("button", { name: "Join the waitlist" }).first(),
+    ).toBeVisible();
     await expect(page.getByLabel("Preview of the ixtable app builder")).toBeVisible();
     const pageWidth = await page.evaluate(() => document.documentElement.scrollWidth);
     expect(pageWidth).toBeLessThanOrEqual(390);
@@ -170,6 +174,30 @@ test.describe("web QA", () => {
       "Hero copy and calls to action fit the viewport without horizontal scrolling.",
       "The product preview and feature sections collapse into a readable single column.",
       "Text remains legible and no content is visibly clipped.",
+    ]);
+  });
+
+  test("pricing page compares the free and Cloud editions", async ({ page }) => {
+    await page.setViewportSize({ width: 1440, height: 1000 });
+    await page.goto("/pricing/");
+    await expect(page.getByRole("region", { name: "Free desktop" })).toBeVisible();
+    await expect(page.getByRole("region", { name: "ixtable Cloud" })).toBeVisible();
+    await expect(page.getByRole("table")).toBeVisible();
+    await capture(page, "pricing-01-desktop", [
+      "The free desktop and ixtable Cloud columns sit side by side with readable lists.",
+      "The planned pricing label is visible next to the Cloud price.",
+      "The comparison table and the What Cloud is not list fit without clipping.",
+    ]);
+
+    await page.setViewportSize({ width: 390, height: 844 });
+    await page.goto("/pricing/");
+    await expect(page.getByRole("region", { name: "ixtable Cloud" })).toBeVisible();
+    expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(
+      390,
+    );
+    await capture(page, "pricing-02-mobile", [
+      "The two pricing columns stack into one readable column.",
+      "The comparison table fits the viewport without horizontal page scrolling.",
     ]);
   });
 });

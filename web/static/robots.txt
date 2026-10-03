@@ -1,0 +1,7 @@
+User-agent: *
+Disallow: /login/
+Disallow: /account/
+Disallow: /forgot-password/
+Disallow: /reset-password/
+
+Sitemap: https://ixtable.com/sitemap.xml

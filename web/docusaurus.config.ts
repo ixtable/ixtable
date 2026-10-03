@@ -11,6 +11,11 @@ const SUPABASE_ANON_KEY =
   process.env.SUPABASE_ANON_KEY ??
   "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZS1kZW1vIiwicm9sZSI6ImFub24iLCJleHAiOjE5ODM4MTI5OTZ9.CRXP1A7WOeoJeXxjNni43kdQwgnWNReilDMblYTn_I0";
 
+// GA4 runs on the marketing site only, and only when the deploy workflow sets
+// GA4_MEASUREMENT_ID. Local builds and e2e runs ship no tracking. The desktop
+// app and ixtable Cloud never load third-party analytics.
+const GA4_MEASUREMENT_ID = process.env.GA4_MEASUREMENT_ID?.trim();
+
 const config: Config = {
   title: "ixtable",
   tagline: "Build the business app you need",
@@ -23,6 +28,10 @@ const config: Config = {
 
   url: "https://ixtable.com",
   baseUrl: "/",
+  // Cloudflare Pages serves each page from `<path>/index.html` and answers
+  // `/<path>` with a 308 to `/<path>/`. Emit trailing-slash URLs so canonical
+  // links and the sitemap point at the final URL, not at a redirect.
+  trailingSlash: true,
 
   organizationName: "ixtable",
   projectName: "ixtable",
@@ -49,9 +58,21 @@ const config: Config = {
         docs: {
           sidebarPath: "./sidebars.ts",
         },
-        blog: false,
+        blog: {
+          path: "blog",
+          blogTitle: "Product notes and updates",
+          blogDescription:
+            "Notes on building ixtable, the free local-first desktop app builder, and ixtable Cloud for private app distribution.",
+          showReadingTime: true,
+          blogSidebarCount: "ALL",
+          blogSidebarTitle: "All posts",
+          onUntruncatedBlogPosts: "ignore",
+        },
+        ...(GA4_MEASUREMENT_ID
+          ? { gtag: { trackingID: GA4_MEASUREMENT_ID, anonymizeIP: true } }
+          : {}),
         sitemap: {
-          ignorePatterns: ["/login", "/account", "/forgot-password", "/reset-password"],
+          ignorePatterns: ["/login/**", "/account/**", "/forgot-password/**", "/reset-password/**"],
         },
         theme: {
           customCss: "./src/css/custom.css",
@@ -78,6 +99,8 @@ const config: Config = {
           position: "left",
           label: "Docs",
         },
+        { to: "/pricing", label: "Pricing", position: "left" },
+        { to: "/blog", label: "Blog", position: "left" },
         {
           href: "https://github.com/ixtable/ixtable",
           label: "GitHub",
@@ -99,6 +122,13 @@ const config: Config = {
               label: "Overview",
               to: "/docs/",
             },
+          ],
+        },
+        {
+          title: "Product",
+          items: [
+            { label: "Pricing", to: "/pricing" },
+            { label: "Blog", to: "/blog" },
           ],
         },
         {

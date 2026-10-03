@@ -1,8 +1,15 @@
 pub mod archive;
+pub mod automation;
+pub mod dashboards;
 pub mod data;
 pub mod design;
 pub mod manager;
+pub mod migrations;
+pub mod recordstore;
+pub mod reports;
+pub mod roles;
 pub mod storage;
+pub mod validation;
 
 use archive::{Attachment, DocumentConfig};
 use manager::{AppError, DocumentManager, SessionState};
@@ -293,7 +300,18 @@ pub fn run() {
             create_database_table,
             alter_database_table,
             save_query,
-            delete_saved_query
+            delete_saved_query,
+            // archive commands
+            validation::validate_document,
+            // reports commands
+            // dashboards commands
+            // automation commands
+            // migrations commands
+            // recordstore commands
+            // roles commands
+            // design commands
+            // queries commands
+            // bundle commands
         ])
         .run(tauri::generate_context!())
         .expect("error while running ixtable")

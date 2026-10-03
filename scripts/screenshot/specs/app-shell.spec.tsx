@@ -3,7 +3,7 @@ import userEvent from "@testing-library/user-event";
 import { expect, it, vi } from "vitest";
 import { invoke } from "@tauri-apps/api/core";
 import App from "../../../src/App";
-import type { DocumentConfig, SessionState } from "../../../src/App";
+import type { DocumentConfig, SessionState } from "../../../src/lib/types";
 import { captureDocument } from "../capture";
 
 const column = (name: string, type = "TEXT", primaryKeyPosition = 0) => ({

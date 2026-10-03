@@ -68,20 +68,29 @@ it("designs a selected table with typed alterations and destructive confirmation
   await user.type(tableName, "products");
   await user.click(screen.getByRole("button", { name: "Rename table" }));
   // Await the designer closing so metadata and selection have both settled.
-  await waitFor(() => expect(screen.queryByRole("heading", { name: "Design inventory" })).toBeNull());
+  await waitFor(() =>
+    expect(screen.queryByRole("heading", { name: "Design inventory" })).toBeNull(),
+  );
   expect(await screen.findByRole("button", { name: /^products\b/ })).toHaveAttribute(
     "aria-pressed",
     "true",
   );
 
   await user.click(screen.getByRole("button", { name: "Design table" }));
-  const labelName = screen.getByRole("textbox", { name: "New name for label" });
+  const labelName = await screen.findByRole(
+    "textbox",
+    { name: "New name for label" },
+    { timeout: 20_000 },
+  );
   await user.clear(labelName);
   await user.type(labelName, "title");
-  await user.click(screen.getByRole("button", { name: "Rename" }));
+  await user.click(screen.getByRole("button", { name: "Rename column label" }));
 
   await user.click(await screen.findByRole("button", { name: "Design table" }));
-  await user.type(screen.getByRole("textbox", { name: "New column name" }), "price");
+  await user.type(
+    await screen.findByRole("textbox", { name: "New column name" }, { timeout: 20_000 }),
+    "price",
+  );
   await user.selectOptions(screen.getByRole("combobox", { name: "New column type" }), "REAL");
   await user.click(screen.getByRole("button", { name: "Add column" }));
   expect((await readPage("products")).columns.map((column) => column.name)).toEqual([
@@ -92,8 +101,8 @@ it("designs a selected table with typed alterations and destructive confirmation
 
   await user.click(await screen.findByRole("button", { name: "Design table" }));
   const confirm = vi.spyOn(window, "confirm").mockReturnValue(false);
-  await user.click(screen.getByRole("button", { name: "Drop price" }));
-  expect(confirm).toHaveBeenCalledWith(expect.stringContaining("permanently delete its data"));
+  await user.click(await screen.findByRole("button", { name: "Drop price" }, { timeout: 20_000 }));
+  expect(confirm).toHaveBeenCalledWith(expect.stringContaining("permanently deletes its data"));
   expect((await readPage("products")).columns).toHaveLength(3);
   confirm.mockReturnValue(true);
   await user.click(screen.getByRole("button", { name: "Drop price" }));

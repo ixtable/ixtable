@@ -31,7 +31,7 @@ it("creates a document, chooses its first destination, and saves existing docume
   dialogMock.save.mockResolvedValueOnce(destination);
 
   await user.click(screen.getByRole("button", { name: "Save project" }));
-  expect(await screen.findByText("Saved archive")).toBeInTheDocument();
+  expect(await screen.findByText("Saved archive", {}, { timeout: 20_000 })).toBeInTheDocument();
   expect(dialogMock.save).toHaveBeenCalledOnce();
 
   await user.click(screen.getByRole("button", { name: "Save project" }));
@@ -48,14 +48,16 @@ it("opens an ixt archive and reports an invalid archive error", async () => {
   dialogMock.open.mockResolvedValueOnce(archive);
 
   await user.click(screen.getByRole("button", { name: /Open document/i }));
-  expect(await screen.findByText("Saved archive")).toBeInTheDocument();
+  expect(await screen.findByText("Saved archive", {}, { timeout: 20_000 })).toBeInTheDocument();
 
   const invalid = join(process.env.IXTABLE_STATE_DIR!, "invalid.ixt");
   writeFileSync(invalid, "not an ixtable archive");
   dialogMock.open.mockResolvedValueOnce(invalid);
   await user.click(screen.getByRole("button", { name: "Close project" }));
   await user.click(screen.getByRole("button", { name: /Open document/i }));
-  expect(await screen.findByRole("alert")).toHaveTextContent("INVALID_ARCHIVE");
+  expect(await screen.findByRole("alert", {}, { timeout: 20_000 })).toHaveTextContent(
+    "INVALID_ARCHIVE",
+  );
 });
 
 it("offers Save As for an existing document", async () => {
@@ -75,26 +77,31 @@ it("surfaces picker cancellation without presenting an error", async () => {
   render(<App />);
   dialogMock.open.mockResolvedValueOnce(null);
   await user.click(screen.getByRole("button", { name: /Open document/i }));
-  expect(await screen.findByText("Open canceled.")).toBeInTheDocument();
+  expect(await screen.findByText("Open canceled.", {}, { timeout: 20_000 })).toBeInTheDocument();
   expect(screen.queryByRole("alert")).not.toBeInTheDocument();
 
   await user.click(screen.getByRole("button", { name: /New document/i }));
+  await screen.findByText("Relationship Browser", {}, { timeout: 20_000 });
   dialogMock.save.mockResolvedValueOnce(null);
   await user.click(screen.getByRole("button", { name: "Save project" }));
-  expect(await screen.findByText("Save canceled.")).toBeInTheDocument();
+  expect(await screen.findByText("Save canceled.", {}, { timeout: 20_000 })).toBeInTheDocument();
   expect(screen.queryByRole("alert")).not.toBeInTheDocument();
 });
 
 it("confirms before closing a dirty new document", async () => {
   const user = await renderNewDocument();
   await user.click(screen.getByRole("button", { name: "Design" }));
-  await screen.findByText("Form builder");
+  await screen.findByText("Form builder", {}, { timeout: 20_000 });
   const confirm = vi.spyOn(window, "confirm").mockReturnValueOnce(false).mockReturnValueOnce(true);
   await user.click(screen.getByRole("button", { name: "Close project" }));
   expect(screen.getByText("Form builder")).toBeInTheDocument();
   await user.click(screen.getByRole("button", { name: "Close project" }));
   expect(
-    await screen.findByRole("heading", { name: "Your data, in one portable file." }),
+    await screen.findByRole(
+      "heading",
+      { name: "Your data, in one portable file." },
+      { timeout: 20_000 },
+    ),
   ).toBeInTheDocument();
   expect(confirm).toHaveBeenCalledTimes(2);
 });

@@ -1,4 +1,4 @@
-import { readFileSync, readdirSync } from "node:fs";
+import { existsSync, readFileSync, readdirSync } from "node:fs";
 import { dirname, join } from "node:path";
 
 const API_FILES = [join("src", "lib", "api.ts"), join("src", "lib", "api-extra.ts")];
@@ -39,6 +39,7 @@ function collectApiExports(rootDir) {
   const byName = new Map();
 
   for (const relPath of API_FILES) {
+    if (!existsSync(join(rootDir, relPath))) continue;
     const text = readFileSync(join(rootDir, relPath), "utf8");
     const exports = [];
 

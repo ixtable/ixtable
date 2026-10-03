@@ -267,11 +267,13 @@ impl DocumentManager {
         self.read_query(window, &sql)?;
         let mut config = self.config(window)?;
         let id = id.unwrap_or_else(|| Uuid::new_v4().to_string());
+        let previous = config.saved_queries.iter().find(|query| query.id == id);
         let query = SavedQuery {
             id: id.clone(),
             name,
             sql,
             filter_state,
+            ..previous.cloned().unwrap_or_default()
         };
         if let Some(saved) = config.saved_queries.iter_mut().find(|query| query.id == id) {
             *saved = query;

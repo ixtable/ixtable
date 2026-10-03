@@ -5,6 +5,8 @@
 //! attachments. Working sessions extract `data.db`, `document.json`, and
 //! `config.yaml`. The `.ixt` file is the source of truth after a successful save.
 use crate::design::DesignSchema;
+use crate::{automation, dashboards, migrations, recordstore, reports, roles};
+pub use crate::validation::{check_named_ids, validate_config, Issue, Severity};
 use chrono::Utc;
 use rusqlite::{params, Connection};
 use serde::{Deserialize, Serialize};
@@ -16,6 +18,8 @@ use std::{
 use uuid::Uuid;
 
 pub const FORMAT_VERSION: i64 = 1;
+/// Current `DocumentConfig.version`. Version 2 configs load through serde defaults.
+pub const CONFIG_VERSION: u32 = 3;
 
 #[derive(Debug, thiserror::Error)]
 pub enum ArchiveError {
@@ -45,9 +49,27 @@ pub struct DocumentConfig {
     pub saved_queries: Vec<SavedQuery>,
     #[serde(default)]
     pub design: DesignSchema,
+    #[serde(default)]
+    pub reports: Vec<reports::Report>,
+    #[serde(default)]
+    pub dashboards: Vec<dashboards::Dashboard>,
+    #[serde(default)]
+    pub actions: Vec<automation::ActionDef>,
+    #[serde(default)]
+    pub triggers: Vec<automation::Trigger>,
+    #[serde(default)]
+    pub migrations: Vec<migrations::Migration>,
+    #[serde(default)]
+    pub datasource: recordstore::DatasourceConfig,
+    #[serde(default)]
+    pub entities: Vec<recordstore::EntitySettings>,
+    #[serde(default)]
+    pub roles: Vec<roles::Role>,
+    #[serde(default)]
+    pub release: ReleaseInfo,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct SavedQuery {
     pub id: String,
@@ -55,18 +77,65 @@ pub struct SavedQuery {
     pub sql: String,
     #[serde(default)]
     pub filter_state: Option<serde_json::Value>,
+    #[serde(default)]
+    pub parameters: Vec<QueryParameter>,
+    #[serde(default)]
+    pub builder: Option<serde_json::Value>,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct QueryParameter {
+    pub name: String,
+    pub logical_type: String,
+    #[serde(default)]
+    pub default_value: Option<serde_json::Value>,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct ReleaseInfo {
+    #[serde(default)]
+    pub version: String,
+    #[serde(default)]
+    pub notes: String,
+    #[serde(default)]
+    pub min_runtime_version: Option<String>,
+}
+
+impl DocumentConfig {
+    /// Brings an older config up to `CONFIG_VERSION`; newer versions are rejected.
+    pub fn upgrade(mut self) -> Result<Self, ArchiveError> {
+        if self.version > CONFIG_VERSION {
+            return Err(ArchiveError::Invalid(format!(
+                "unsupported config version {}",
+                self.version
+            )));
+        }
+        self.version = CONFIG_VERSION;
+        Ok(self)
+    }
 }
 
 impl Default for DocumentConfig {
     fn default() -> Self {
         Self {
-            version: 2,
+            version: CONFIG_VERSION,
             name: "Untitled".into(),
             active_mode: "data".into(),
             navigation_state: serde_json::json!({}),
             settings: serde_json::json!({}),
             saved_queries: vec![],
             design: DesignSchema::default(),
+            reports: vec![],
+            dashboards: vec![],
+            actions: vec![],
+            triggers: vec![],
+            migrations: vec![],
+            datasource: recordstore::DatasourceConfig::default(),
+            entities: vec![],
+            roles: vec![],
+            release: ReleaseInfo::default(),
         }
     }
 }
@@ -76,8 +145,9 @@ pub fn document_config_yaml(config: &DocumentConfig) -> Result<String, ArchiveEr
 }
 
 pub fn document_config_from_yaml(yaml: &str) -> Result<DocumentConfig, ArchiveError> {
-    let config: DocumentConfig =
-        serde_yaml::from_str(yaml).map_err(|e| ArchiveError::Invalid(e.to_string()))?;
+    let config = serde_yaml::from_str::<DocumentConfig>(yaml)
+        .map_err(|e| ArchiveError::Invalid(e.to_string()))?
+        .upgrade()?;
     config.design.validate().map_err(ArchiveError::Invalid)?;
     Ok(config)
 }
@@ -259,8 +329,9 @@ pub fn read_archive(path: &Path) -> Result<ArchiveDocument, ArchiveError> {
     let json: String = conn.query_row("SELECT json FROM document_config WHERE id=1", [], |r| {
         r.get(0)
     })?;
-    let config: DocumentConfig =
-        serde_json::from_str(&json).map_err(|e| ArchiveError::Invalid(e.to_string()))?;
+    let config = serde_json::from_str::<DocumentConfig>(&json)
+        .map_err(|e| ArchiveError::Invalid(e.to_string()))?
+        .upgrade()?;
     config.design.validate().map_err(ArchiveError::Invalid)?;
     let mut stmt=conn.prepare("SELECT id,display_name,media_type,checksum,uncompressed_size,created_at,updated_at,contents FROM attachments ORDER BY created_at,id")?;
     let rows = stmt.query_map([], |r| {
@@ -385,6 +456,99 @@ mod tests {
         .unwrap();
         assert_eq!(config.design.version, crate::design::DESIGN_SCHEMA_VERSION);
         assert!(config.design.validate().is_ok());
+    }
+
+    #[test]
+    fn version_two_config_loads_as_version_three() {
+        let legacy = serde_json::json!({
+            "version": 2, "name": "Legacy", "activeMode": "data",
+            "savedQueries": [{"id": "q1", "name": "All", "sql": "SELECT 1"}]
+        });
+        let config = serde_json::from_value::<DocumentConfig>(legacy)
+            .unwrap()
+            .upgrade()
+            .unwrap();
+        assert_eq!(config.version, CONFIG_VERSION);
+        assert!(config.reports.is_empty() && config.roles.is_empty());
+        assert_eq!(config.datasource.kind, "sqlite");
+        assert!(config.saved_queries[0].parameters.is_empty());
+        let yaml = document_config_from_yaml("name: Old\nactiveMode: data\nversion: 2\n").unwrap();
+        assert_eq!(yaml.version, CONFIG_VERSION);
+        assert!(document_config_from_yaml("name: New\nactiveMode: data\nversion: 99\n").is_err());
+    }
+
+    #[test]
+    fn yaml_round_trips_feature_fields() {
+        let mut config = DocumentConfig::default();
+        config.saved_queries.push(SavedQuery {
+            id: "q1".into(),
+            name: "By customer".into(),
+            sql: "SELECT 1".into(),
+            parameters: vec![QueryParameter {
+                name: "customer".into(),
+                logical_type: "text".into(),
+                default_value: Some(serde_json::json!("CUST-001")),
+            }],
+            builder: Some(serde_json::json!({"source": "Customers"})),
+            ..Default::default()
+        });
+        config.reports.push(crate::reports::Report {
+            id: "r1".into(),
+            name: "Sales".into(),
+        });
+        config.dashboards.push(crate::dashboards::Dashboard {
+            id: "d1".into(),
+            name: "Overview".into(),
+        });
+        config.actions.push(crate::automation::ActionDef {
+            id: "a1".into(),
+            name: "Approve".into(),
+        });
+        config.triggers.push(crate::automation::Trigger {
+            id: "t1".into(),
+            name: "On create".into(),
+        });
+        config.migrations.push(crate::migrations::Migration {
+            id: "m1".into(),
+            name: "Add index".into(),
+        });
+        config.entities.push(crate::recordstore::EntitySettings {
+            id: "e1".into(),
+            table: "Orders".into(),
+        });
+        config.roles.push(crate::roles::Role {
+            id: "role1".into(),
+            name: "Clerk".into(),
+        });
+        config.release.version = "1.2.0".into();
+        config.release.min_runtime_version = Some("1.0.0".into());
+        let yaml = document_config_yaml(&config).unwrap();
+        assert!(yaml.contains("minRuntimeVersion"));
+        assert_eq!(document_config_from_yaml(&yaml).unwrap(), config);
+        assert!(validate_config(&config).is_empty());
+    }
+
+    #[test]
+    fn validate_config_reports_duplicate_ids_and_design_errors() {
+        let mut config = DocumentConfig::default();
+        for name in ["One", ""] {
+            config.reports.push(crate::reports::Report {
+                id: "same".into(),
+                name: name.into(),
+            });
+        }
+        config.design.version += 1;
+        let issues = validate_config(&config);
+        assert!(issues.iter().any(|i| i.object_kind == "design" && i.severity == Severity::Error));
+        assert!(issues
+            .iter()
+            .any(|i| i.object_kind == "report" && i.message.contains("duplicate")));
+        assert!(issues
+            .iter()
+            .any(|i| i.object_kind == "report" && i.severity == Severity::Warning));
+        let json = serde_json::to_value(&issues[0]).unwrap();
+        assert_eq!(json["severity"], "error");
+        assert!(json.get("objectKind").is_some());
     }
 
     #[test]

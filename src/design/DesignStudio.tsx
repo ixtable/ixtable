@@ -1,7 +1,8 @@
-import { invoke } from "@tauri-apps/api/core";
-import { Columns3, ListFilter, Redo2, Rows3, Shapes, Trash2, Undo2 } from "lucide-react";
+import { Columns3, ListFilter, Rows3, Shapes, Trash2 } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
-import type { DataValue, DbColumn, DbObject, DbPage, DocumentConfig } from "../App";
+import { inspectTable, readTablePage } from "../lib/api";
+import { useDocumentConfig } from "../lib/config-store";
+import type { DataValue, DbColumn, DbObject, DbPage } from "../lib/types";
 import {
   type ControlKind,
   type DesignControl,
@@ -11,54 +12,30 @@ import {
   placementStyle,
 } from "./schema";
 
-type Props = { preview: boolean; objects: DbObject[]; onDirty: () => void };
+type Props = { preview: boolean; objects: DbObject[] };
 const valueText = (value?: DataValue) => (value?.type === "null" ? "" : String(value?.value ?? ""));
 
-export function DesignStudio({ preview, objects, onDirty }: Props) {
-  const [config, setConfig] = useState<DocumentConfig>();
+export function DesignStudio({ preview, objects }: Props) {
+  const { config, update } = useDocumentConfig();
   const [selected, setSelected] = useState<string>();
   const [columns, setColumns] = useState<DbColumn[]>([]);
   const [rows, setRows] = useState<DbPage>();
-  const [history, setHistory] = useState<DesignSchema[]>([]);
-  const [future, setFuture] = useState<DesignSchema[]>([]);
-  const design = config?.design;
+  const design = config.design;
   const form = design?.forms[0];
   const control = form?.controls.find((item) => item.id === selected);
 
-  useEffect(() => {
-    void invoke<DocumentConfig>("read_document_config", { windowLabel: "main" }).then(setConfig);
-  }, []);
   useEffect(() => {
     if (!form?.table) {
       setColumns([]);
       setRows(undefined);
       return;
     }
-    void invoke<{ columns: DbColumn[] }>("inspect_table", {
-      windowLabel: "main",
-      table: form.table,
-    }).then((schema) => setColumns(schema.columns));
-    void invoke<DbPage>("read_table_page", {
-      windowLabel: "main",
-      table: form.table,
-      offset: 0,
-      limit: 25,
-      sorts: [],
-      filters: [],
-    }).then(setRows);
+    void inspectTable(form.table).then((schema) => setColumns(schema.columns));
+    void readTablePage(form.table, { limit: 25 }).then(setRows);
   }, [form?.table]);
 
-  const saveDesign = async (next: DesignSchema, remember = true) => {
-    if (!config || !design) return;
-    if (remember) {
-      setHistory((items) => [...items, design]);
-      setFuture([]);
-    }
-    const nextConfig = { ...config, design: next };
-    setConfig(nextConfig);
-    await invoke("update_document_config", { windowLabel: "main", config: nextConfig });
-    onDirty();
-  };
+  const saveDesign = (next: DesignSchema) =>
+    update((draft) => ({ ...draft, design: next }), "Edit form").catch(() => undefined);
   const changeForm = (patch: Partial<NonNullable<typeof form>>) =>
     form &&
     design &&
@@ -70,15 +47,6 @@ export function DesignStudio({ preview, objects, onDirty }: Props) {
         item.id === control.id ? { ...item, ...patch } : item,
       ),
     });
-  const travel = (back: boolean) => {
-    if (!design) return;
-    const source = back ? history : future;
-    const target = source.at(-1);
-    if (!target) return;
-    (back ? setHistory : setFuture)(source.slice(0, -1));
-    (back ? setFuture : setHistory)((items) => [...items, design]);
-    void saveDesign(target, false);
-  };
   const bound = useMemo(() => form?.controls.filter((item) => item.binding), [form]);
 
   if (!form) return <section className="studio-canvas">Loading design…</section>;
@@ -107,14 +75,6 @@ export function DesignStudio({ preview, objects, onDirty }: Props) {
             {label}
           </button>
         ))}
-        <div className="studio-history">
-          <button disabled={!history.length} onClick={() => travel(true)} aria-label="Undo">
-            <Undo2 />
-          </button>
-          <button disabled={!future.length} onClick={() => travel(false)} aria-label="Redo">
-            <Redo2 />
-          </button>
-        </div>
       </aside>
       <div className="studio-canvas">
         <div className="form-card">

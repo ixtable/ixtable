@@ -1936,3 +1936,187 @@ button {
 .workbench.relationship-only .flow-browser {
   height: calc(100% - 30px);
 }
+
+/* Shell: mode switch, start-screen recents, application settings, feature placeholders. */
+.mode-switch {
+  gap: 2px;
+}
+.mode-switch button {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  text-align: left;
+}
+.mode-switch button svg {
+  width: 11px;
+  height: 11px;
+  flex: none;
+}
+.mode-switch button:focus-visible,
+.settings-tabs button:focus-visible,
+.recent-list button:focus-visible {
+  outline: 2px solid #6f9a78;
+  outline-offset: 1px;
+}
+.mode-switch button:disabled {
+  cursor: default;
+  opacity: 0.6;
+}
+.ribbon-tools button:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+.start-main .notice {
+  position: static;
+  margin-top: 16px;
+  width: fit-content;
+}
+.recent-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 4px;
+}
+.recent-list button {
+  width: 100%;
+  border: 1px solid #e2e2dc;
+  border-radius: 8px;
+  background: #fff;
+  padding: 10px 12px;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  text-align: left;
+  color: #3d3d38;
+}
+.recent-list button:hover {
+  background: #f1f3ef;
+}
+.recent-list svg {
+  width: 18px;
+  color: #6c8a72;
+  flex: none;
+}
+.recent-list span {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+.recent-list small {
+  color: #8a8a82;
+  font-size: 11px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.recent-list time {
+  margin-left: auto;
+  font-size: 11px;
+  color: #8a8a82;
+  white-space: nowrap;
+}
+.feature-placeholder .empty-recent,
+.settings-panel .empty-recent {
+  margin: 24px 30px;
+}
+.runtime-info {
+  color: #8a9088;
+  font-size: 11px;
+}
+.settings-tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 2px;
+  padding: 0 30px;
+  background: #fbfcfa;
+  border-bottom: 1px solid #d9dcd7;
+}
+.settings-tabs button {
+  border: 0;
+  background: none;
+  padding: 10px 12px;
+  font-size: 12px;
+  color: #5d635c;
+  border-bottom: 2px solid transparent;
+}
+.settings-tabs button.active {
+  color: #244a31;
+  font-weight: 700;
+  border-bottom-color: #52775b;
+}
+.settings-body {
+  padding: 20px 30px;
+}
+.settings-panel h2 {
+  font-size: 16px;
+  margin: 0 0 8px;
+}
+.settings-panel p {
+  font-size: 12px;
+  color: #5d635c;
+}
+.settings-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 10px 0;
+  font-size: 12px;
+}
+.settings-actions button {
+  border: 1px solid #d3d7d1;
+  background: #fff;
+  padding: 7px 12px;
+  border-radius: 6px;
+  font-size: 12px;
+}
+.settings-actions button.save {
+  background: #29352c;
+  color: #fff;
+}
+.settings-actions button:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+.yaml-panel textarea {
+  width: 100%;
+  min-height: 420px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 12px;
+  line-height: 1.5;
+  padding: 12px;
+  border: 1px solid #d3d7d1;
+  border-radius: 6px;
+  background: #fff;
+}
+.problem-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 6px;
+}
+.problem-list li {
+  display: flex;
+  gap: 10px;
+  align-items: flex-start;
+  padding: 9px 11px;
+  border-radius: 6px;
+  background: #fff;
+  border: 1px solid #e0e3de;
+  font-size: 12px;
+}
+.problem-list li span {
+  display: grid;
+  gap: 2px;
+}
+.problem-list svg {
+  width: 15px;
+  flex: none;
+}
+.problem-list .issue-error svg {
+  color: #b42318;
+}
+.problem-list .issue-warning svg {
+  color: #b54708;
+}

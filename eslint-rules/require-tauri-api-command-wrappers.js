@@ -1,4 +1,4 @@
-import { readFileSync, readdirSync } from "node:fs";
+import { existsSync, readFileSync, readdirSync } from "node:fs";
 import { dirname, join } from "node:path";
 
 const API_FILES = [join("src", "lib", "api.ts"), join("src", "lib", "api-extra.ts")];
@@ -6,7 +6,9 @@ const API_REPORT_FILE = API_FILES[0];
 const RUST_SRC_DIR = join("src-tauri", "src");
 const COMMAND_REGEX =
   /#\[\s*tauri::command(?:\([^)]*\))?\s*]\s*(?:pub(?:\([^)]*\))?\s+)?(?:async\s+)?fn\s+([A-Za-z_]\w*)/gms;
-const INVOKE_REGEX = /invoke\(\s*(?:"([^"]+)"|'([^']+)'|`([^`$]+)`)/g;
+const INVOKE_REGEX = /\b(?:invoke|call)(?:<[^>()]*>)?\(\s*(?:"([^"]+)"|'([^']+)'|`([^`$]+)`)/g;
+const SRC_DIR = "src";
+const RECORDS_FILE = join("src", "lib", "records.ts");
 
 function collectRustFiles(dir, out = []) {
   for (const entry of readdirSync(dir, { withFileTypes: true })) {
@@ -35,10 +37,20 @@ function collectRustCommandNames(rootDir) {
   return names;
 }
 
+function featureApiFiles(rootDir) {
+  const srcDir = join(rootDir, SRC_DIR);
+  if (!existsSync(srcDir)) return [];
+  return readdirSync(srcDir, { withFileTypes: true })
+    .filter((entry) => entry.isDirectory())
+    .map((entry) => join(SRC_DIR, entry.name, "api.ts"))
+    .filter((relPath) => existsSync(join(rootDir, relPath)));
+}
+
 function collectApiCommandNames(rootDir) {
   const names = new Set();
 
-  for (const relPath of API_FILES) {
+  for (const relPath of new Set([...API_FILES, RECORDS_FILE, ...featureApiFiles(rootDir)])) {
+    if (!existsSync(join(rootDir, relPath))) continue;
     const text = readFileSync(join(rootDir, relPath), "utf8");
     for (const match of text.matchAll(INVOKE_REGEX)) {
       names.add(match[1] ?? match[2] ?? match[3]);
@@ -52,13 +64,14 @@ export default {
   meta: {
     type: "problem",
     docs: {
-      description: "Require every Rust Tauri command to have an invoke wrapper in src/lib/api.ts",
+      description:
+        "Require every Rust Tauri command to have an invoke/call wrapper in src/lib/api.ts or src/<feature>/api.ts",
       recommended: false,
     },
     schema: [],
     messages: {
       missingWrapper:
-        'Rust Tauri command "{{name}}" is missing an invoke wrapper in src/lib/api.ts.',
+        'Rust Tauri command "{{name}}" is missing a call() wrapper in src/lib/api.ts or src/<feature>/api.ts.',
       noCommandsFound: "No Rust Tauri commands were discovered under src-tauri/src.",
     },
   },

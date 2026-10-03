@@ -132,6 +132,8 @@ jobs:
       # Fresh download, not the cache: every file is SHA-256 pinned by the script.
       - name: Prepare pinned DuckDB extensions (sqlite + postgres scanners)
         run: bash scripts/prepare-duckdb-artifacts.sh "${{ matrix.duckdb }}"
+      # The app bundles only the compressed archives (tauri.conf.json resources) and
+      # unpacks them on first use, so no ad-hoc-signed Mach-O reaches notarization.
       - name: Check bundled DuckDB resources
         run: |
           case "${{ matrix.duckdb }}" in
@@ -140,7 +142,7 @@ jobs:
           esac
           for d in $dirs; do
             for ext in sqlite_scanner postgres_scanner; do
-              test -s "src-tauri/resources/duckdb/$d/$ext.duckdb_extension" || { echo "::error::missing $d/$ext"; exit 1; }
+              test -s "src-tauri/resources/duckdb/$d/$ext.duckdb_extension.gz" || { echo "::error::missing $d/$ext.duckdb_extension.gz"; exit 1; }
             done
           done
 
@@ -190,6 +192,14 @@ jobs:
         env:
           ARTIFACTS: ${{ steps.tauri.outputs.artifactPaths }}
         run: node scripts/release/update-manifest.mjs verify --json "$ARTIFACTS"
+      - name: Check the macOS app holds only compressed DuckDB extensions
+        if: matrix.platform == 'macos'
+        run: |
+          app="src-tauri/target/universal-apple-darwin/release/bundle/macos/ixtable.app"
+          if find "$app" -name '*.duckdb_extension' | grep .; then
+            echo "::error::uncompressed DuckDB extensions in the app bundle"; exit 1
+          fi
+          test "$(find "$app" -name '*.duckdb_extension.gz' | wc -l)" -eq 4 || { echo "::error::expected 4 extension archives"; exit 1; }
       - name: Verify macOS signature, notarization, and Gatekeeper
         if: matrix.platform == 'macos' && steps.signing.outputs.signed == 'true'
         run: |

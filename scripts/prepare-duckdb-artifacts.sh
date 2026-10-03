@@ -3,6 +3,11 @@ set -euo pipefail
 
 # duckdb-rs 1.10505.0 embeds DuckDB 1.5.5. Extensions are ABI-specific, so
 # these versions must move together. Runtime installation/autoload is disabled.
+#
+# Each platform dir gets the official compressed `<ext>.duckdb_extension.gz`
+# (the only file the app bundles; the app unpacks it into the per-user state
+# dir on first use, see src-tauri/src/data/extensions.rs) and an uncompressed
+# copy that dev builds and tests load directly.
 VERSION=1.5.5
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 DEST="$ROOT/src-tauri/resources/duckdb"
@@ -16,6 +21,9 @@ fetch() {
   if command -v shasum >/dev/null 2>&1; then sha=(shasum -a 256); else sha=(sha256sum); fi
   printf '%s  %s\n' "$expected" "$tmp" | "${sha[@]}" -c -
   mkdir -p "$DEST/$target"
+  # mktemp files are 0600; installed resources must be readable by every user.
+  cp "$tmp" "$DEST/$target/${extension}.duckdb_extension.gz"
+  chmod 644 "$DEST/$target/${extension}.duckdb_extension.gz"
   gzip -dc "$tmp" > "$DEST/$target/${extension}.duckdb_extension"
   printf '%s\n' "$VERSION" > "$DEST/$target/VERSION"
 }

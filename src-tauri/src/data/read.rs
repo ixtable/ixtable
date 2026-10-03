@@ -3,7 +3,8 @@
 //! over the embedded SQLite file or an attached PostgreSQL database. Writes
 //! never enter this connection.
 use super::logical::LogicalType;
-use super::support::{logical_from_duckdb, postgres_extension_path, redact};
+use super::extensions::postgres_extension_path;
+use super::support::{logical_from_duckdb, redact};
 use super::{
     ddl::{self, TableDef},
     duck_value, q, read_only_guard, DataValue, DbObject, QueryResult, TableSchema,
@@ -356,11 +357,12 @@ impl ReadRuntime {
     /// A reader over `<workspace>/data.db` using the bundled extension for this platform (or `IXTABLE_DUCKDB_SQLITE_EXTENSION`).
     #[cfg(test)]
     pub(crate) fn for_test(workspace: &Path) -> Result<Self, String> {
+        // Unverified dev copy first: hashing it per reader would slow every test.
+        let dev = super::extensions::resource_dirs()[0].join("sqlite_scanner.duckdb_extension");
         let ext = std::env::var_os("IXTABLE_DUCKDB_SQLITE_EXTENSION")
             .map(PathBuf::from)
-            .unwrap_or_else(|| {
-                super::support::resource_candidates("sqlite_scanner.duckdb_extension")[0].clone()
-            });
+            .or_else(|| dev.is_file().then(|| dev.clone()))
+            .unwrap_or_else(|| super::extensions::sqlite_extension_path().unwrap_or(dev));
         Self::new(workspace, &ext)
     }
 }

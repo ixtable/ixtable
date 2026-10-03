@@ -6,6 +6,9 @@
 pub mod ddl;
 #[cfg(test)]
 mod ddl_tests;
+pub mod extensions;
+#[cfg(test)]
+mod extensions_tests;
 pub mod gate;
 pub mod logical;
 #[cfg(test)]
@@ -28,8 +31,9 @@ pub use ddl::{
 pub use logical::{
     LogicalType, LOGICAL_TYPE_NAMES, MAX_DECIMAL_PRECISION, SQLITE_MAX_DECIMAL_PRECISION,
 };
+pub use extensions::{postgres_extension_path, sqlite_extension_path};
 pub use read::{ReadRuntime, ReadTarget};
-pub use support::{logical_from_duckdb, postgres_extension_path, redact};
+pub use support::{logical_from_duckdb, redact};
 
 use base64::{engine::general_purpose::STANDARD, Engine};
 use serde::{Deserialize, Serialize};

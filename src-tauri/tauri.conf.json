@@ -53,7 +53,7 @@
   "bundle": {
     "active": true,
     "targets": "all",
-    "resources": ["resources/duckdb/**/*"],
+    "resources": ["resources/duckdb/*/*.duckdb_extension.gz"],
     "fileAssociations": [
       {
         "ext": ["ixt"],

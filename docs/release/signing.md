@@ -45,14 +45,17 @@ the hardened runtime (`bundle.macOS.hardenedRuntime`) and the entitlements in
 universal (`--target universal-apple-darwin`). CI then runs `codesign
 --verify --deep --strict`, `spctl --assess`, `stapler validate`, and `lipo`.
 
-**Known blocker:** the DuckDB extensions in `resources/duckdb/macos-*` are
-Mach-O files with only ad-hoc (linker) signatures. Notarization rejects a
-bundle that contains them. Re-signing them would break both the SHA-256 pin
-in `data/support.rs` and DuckDB's own extension signature. The proposed fix
-belongs to the DuckDB read-path owner: ship the extensions compressed (not as
-Mach-O) and unpack them, with the hash checked, into the app data directory
-on first use. `disable-library-validation` in the entitlements already lets
-the hardened runtime load them.
+The DuckDB extensions are not in the bundle as Mach-O files. Upstream ships
+them with only ad-hoc (linker) signatures, which notarization rejects, and
+re-signing them would break both their SHA-256 pins and DuckDB's own extension
+signature. The bundle holds the official `.duckdb_extension.gz` archives
+instead (`bundle.resources` in `tauri.conf.json`). The app checks each archive
+against its pinned hash, unpacks it into the per-user state directory on first
+use, and checks the pinned hash of the result before `LOAD` (see
+[the DuckDB read path record](../decisions/duckdb-read-path.md)).
+`disable-library-validation` in the entitlements lets the hardened runtime
+load the unpacked files. The release workflow fails if an uncompressed
+`*.duckdb_extension` ends up in `ixtable.app`.
 
 ## Windows (Azure Trusted Signing)
 

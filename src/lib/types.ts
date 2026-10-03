@@ -19,6 +19,13 @@ export interface SessionState {
   activeMode: string;
   attachmentCount: number;
   autosaveEligible: boolean;
+  // RFC 3339 time of the last successful save in this session.
+  lastSavedAt?: string | null;
+  // Failure of the most recent save or autosave; cleared by the next successful save.
+  lastError?: { code: string; message: string } | null;
+  /** Opened from a runtime-only bundle: only Runtime mode, definition read-only. */
+  runtimeOnly?: boolean;
+  bundleVersion?: string | null;
 }
 
 export interface ReleaseInfo {
@@ -59,7 +66,17 @@ export interface RecentFile {
 }
 
 export type DataValue = {
-  type: "null" | "integer" | "real" | "text" | "blob" | "boolean" | "date" | "timestamp";
+  type:
+    | "null"
+    | "integer"
+    | "real"
+    | "text"
+    | "blob"
+    | "boolean"
+    | "date"
+    | "timestamp"
+    | "decimal"
+    | "time";
   value?: string | number | boolean;
 };
 export type NamedValue = { column: string; value: DataValue };
@@ -71,9 +88,13 @@ export type DbColumn = {
   defaultValue: string | null;
   primaryKeyPosition: number;
   generated: boolean;
+  /** Logical type (`text`, `integer`, `decimal(10,2)`, …); see src/schema/logical.ts. */
+  logicalType?: string;
+  unique?: boolean;
 };
 export type DbForeignKey = {
   id: number;
+  name?: string | null;
   fromColumns: string[];
   targetTable: string;
   targetColumns: string[];
@@ -85,6 +106,17 @@ export type TableSchema = {
   columns: DbColumn[];
   foreignKeys: DbForeignKey[];
   withoutRowid: boolean;
+  objectType?: string;
+  primaryKey?: string[];
+  uniques?: Array<{ name?: string | null; columns: string[] }>;
+  checks?: Array<{ name?: string | null; expression: string }>;
+  indexes?: Array<{
+    name: string;
+    table: string;
+    columns: string[];
+    unique: boolean;
+    sql?: string | null;
+  }>;
 };
 export type DbPage = {
   columns: DbColumn[];
@@ -110,14 +142,18 @@ export type FilterOperator =
 export type Filter = { column: string; operator: FilterOperator; value?: DataValue | null };
 export type CreateColumnSpec = {
   name: string;
+  /** Legacy SQLite affinity; `logicalType` wins when both are set. */
   declaredType: string;
+  logicalType?: string | null;
   nullable: boolean;
   primaryKeyPosition: number;
   unique: boolean;
   defaultExpression: string | null;
   generatedExpression: string | null;
+  check?: string | null;
 };
 export type CreateForeignKeySpec = {
+  name?: string | null;
   columns: string[];
   targetTable: string;
   targetColumns: string[];
@@ -130,9 +166,20 @@ export type CreateTableSpec = {
   foreignKeys: CreateForeignKeySpec[];
   checks: string[];
   withoutRowid: boolean;
+  /** Multi-column unique constraints. */
+  uniques?: string[][];
+  indexes?: Array<{ name: string; columns: string[]; unique: boolean }>;
 };
 export type AlterTableOperation =
   | { operation: "rename_table"; newName: string }
   | { operation: "rename_column"; column: string; newName: string }
   | { operation: "add_column"; column: CreateColumnSpec }
-  | { operation: "drop_column"; column: string };
+  | { operation: "drop_column"; column: string }
+  | { operation: "alter_column"; column: string; definition: CreateColumnSpec }
+  | { operation: "set_primary_key"; columns: string[] }
+  | { operation: "add_foreign_key"; foreignKey: CreateForeignKeySpec }
+  | { operation: "drop_foreign_key"; columns: string[] }
+  | { operation: "add_unique"; columns: string[]; name?: string | null }
+  | { operation: "drop_unique"; columns: string[] }
+  | { operation: "add_check"; expression: string; name?: string | null }
+  | { operation: "drop_check"; expression: string };

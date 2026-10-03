@@ -1,61 +1,80 @@
-import Editor from "@monaco-editor/react";
-import {
-  Code2,
-  Columns3,
-  GitBranch,
-  Plus,
-  Rows3,
-  Save,
-  Search,
-  Table2,
-  Trash2,
-} from "lucide-react";
-import { useEffect, useState } from "react";
-import { asTauriError, executeReadQuery, inspectTable, readTablePage } from "../lib/api";
+import { Columns3, GitBranch, Plus, Rows3, Search, Table2, Trash2 } from "lucide-react";
+import { useEffect, useMemo, useState } from "react";
+import { asTauriError, inspectTable, readTablePage } from "../lib/api";
 import { useDocumentConfig } from "../lib/config-store";
 import { deleteRecord, insertRecord, updateRecord } from "../lib/records";
-import type {
-  AlterTableOperation,
-  CreateTableSpec,
-  DataValue,
-  DbPage,
-  QueryResult,
-  Sort,
-  TableSchema,
-} from "../lib/types";
-import { newId } from "../lib/utils";
+import type { CreateTableSpec, DbPage, NamedValue, Sort, TableSchema } from "../lib/types";
+import { applyTableChanges, previewTableChanges, storeCapabilities } from "../schema/api";
+import { ImpactDialog } from "../schema/ImpactDialog";
+import { logicalOf, valueFromText } from "../schema/logical";
+import type { ChangePlan, StoreCapabilities } from "../schema/types";
 import { useShell } from "../shell/context";
-import { alterDatabaseTable, createDatabaseTable } from "./api";
+import { createDatabaseTable } from "./api";
 import { CreateTableForm } from "./CreateTableForm";
 import { showValue } from "./format";
-import { RelationshipBrowser } from "./RelationshipBrowser";
-import { ResultGrid } from "./ResultGrid";
+import {
+  type DrawnRelationship,
+  type NodePositions,
+  RelationshipBrowser,
+} from "./RelationshipBrowser";
 import { TableSchemaDesigner } from "./TableSchemaDesigner";
 
 const PAGE_SIZE = 100;
 
 export function DatabaseWorkbench() {
   const { objects, selection: active, select: onSelect, reloadMetadata, markDirty } = useShell();
-  const { config, update } = useDocumentConfig();
-  const queries = config.savedQueries;
+  const { config, update, reload: reloadConfig } = useDocumentConfig();
+  const [capabilities, setCapabilities] = useState<StoreCapabilities | null>(null);
+  const [relating, setRelating] = useState<{
+    drawn: DrawnRelationship;
+    plan: ChangePlan;
+    error: string;
+  } | null>(null);
+  const positions = useMemo(
+    () =>
+      ((config.navigationState as Record<string, unknown> | null)?.relationshipLayout ??
+        {}) as NodePositions,
+    [config.navigationState],
+  );
+  const arrange = (next: NodePositions) =>
+    update(
+      (draft) => ({
+        ...draft,
+        navigationState: {
+          ...((draft.navigationState ?? {}) as Record<string, unknown>),
+          relationshipLayout: next,
+        },
+      }),
+      "Arrange relationship diagram",
+    ).catch((e) => setError(asTauriError(e).message));
+  const relationOp = (r: DrawnRelationship) => [
+    {
+      operation: "add_foreign_key" as const,
+      foreignKey: {
+        columns: [r.childColumn],
+        targetTable: r.parentTable,
+        targetColumns: [r.parentColumn],
+        onUpdate: "NO ACTION",
+        onDelete: "NO ACTION",
+      },
+    },
+  ];
+  const relate = (drawn: DrawnRelationship) =>
+    previewTableChanges(drawn.childTable, relationOp(drawn))
+      .then((plan) => setRelating({ drawn, plan, error: "" }))
+      .catch((e) => setError(asTauriError(e).message));
   const [schemas, setSchemas] = useState<TableSchema[]>([]),
     [page, setPage] = useState<DbPage | null>(null),
-    [loading, setLoading] = useState(false),
+    [, setLoading] = useState(false),
     [error, setError] = useState(""),
     [offset, setOffset] = useState(0),
     [revision, setRevision] = useState(0);
   const selected = active?.kind === "table" || active?.kind === "view" ? active.id : "";
   const readOnly = active?.kind === "view";
-  const sqlMode = active?.kind === "query" || active?.kind === "new-query";
   const creating = active?.kind === "new-table";
   const [sorts, setSorts] = useState<Sort[]>([]),
     [filter, setFilter] = useState(""),
-    [sql, setSql] = useState("SELECT 1 AS example"),
-    [queryName, setQueryName] = useState("Untitled Query"),
-    [queryId, setQueryId] = useState<string | null>(null),
-    [result, setResult] = useState<QueryResult | null>(null),
-    [designingSelected, setDesigningSelected] = useState(false),
-    [altering, setAltering] = useState(false);
+    [designingSelected, setDesigningSelected] = useState(false);
   const [draft, setDraft] = useState<Record<number, string>>({}),
     [draftError, setDraftError] = useState("");
   const refresh = () => setRevision((x) => x + 1);
@@ -63,28 +82,12 @@ export function DatabaseWorkbench() {
     Promise.all(objects.filter((x) => x.objectType === "table").map((x) => inspectTable(x.name)))
       .then(setSchemas)
       .catch((e) => setError(asTauriError(e).message));
+    storeCapabilities()
+      .then(setCapabilities)
+      .catch(() => setCapabilities(null));
   }, [objects]);
   useEffect(() => {
-    if (active?.kind === "query") {
-      const query = queries.find((q) => q.id === active.id);
-      if (query && query.id !== queryId) {
-        setQueryId(query.id);
-        setQueryName(query.name);
-        setSql(query.sql);
-        setResult(null);
-        setError("");
-      }
-    } else if (active?.kind === "new-query") {
-      setQueryId(null);
-      setQueryName("Untitled Query");
-      setSql("SELECT 1 AS example");
-      setResult(null);
-      setError("");
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [active?.kind, active?.id, queries]);
-  useEffect(() => {
-    if (!selected || sqlMode) {
+    if (!selected) {
       setPage(null);
       return;
     }
@@ -104,106 +107,49 @@ export function DatabaseWorkbench() {
       .catch((e) => setError(asTauriError(e).message))
       .finally(() => setLoading(false));
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selected, offset, sorts, filter, revision, sqlMode]);
+  }, [selected, offset, sorts, filter, revision]);
+  /** After DDL: entities may have changed in the backend config, and metadata is stale. */
+  const afterSchemaChange = async (table: string | null) => {
+    markDirty();
+    await reloadConfig("Schema change");
+    await reloadMetadata();
+    onSelect(table ? { kind: "table", id: table } : null);
+    setDesigningSelected(false);
+    setOffset(0);
+    refresh();
+  };
   const createTable = async (spec: CreateTableSpec) => {
     await createDatabaseTable(spec);
-    markDirty();
-    await reloadMetadata();
-    onSelect({ kind: "table", id: spec.name });
-    setOffset(0);
+    await afterSchemaChange(spec.name);
   };
-  const finishAlter = async (operation: AlterTableOperation) => {
-    setAltering(true);
-    setError("");
-    try {
-      await alterDatabaseTable(selected, operation);
-      const nextName = operation.operation === "rename_table" ? operation.newName : selected;
-      markDirty();
-      await reloadMetadata();
-      onSelect({ kind: "table", id: nextName });
-      setDesigningSelected(false);
-      refresh();
-    } catch (e) {
-      setError(asTauriError(e).message);
-    } finally {
-      setAltering(false);
-    }
-  };
-  const runSql = async () => {
-    setLoading(true);
-    setError("");
-    try {
-      setResult(await executeReadQuery(sql));
-    } catch (e) {
-      setError(asTauriError(e).message);
-    } finally {
-      setLoading(false);
-    }
-  };
-  const saveQuery = async () => {
-    setLoading(true);
-    setError("");
-    try {
-      await executeReadQuery(sql);
-      const id = queryId ?? newId();
-      await update((draft) => {
-        const existing = draft.savedQueries.find((q) => q.id === id);
-        const query = { filterState: null, ...existing, id, name: queryName, sql };
-        return {
-          ...draft,
-          savedQueries: existing
-            ? draft.savedQueries.map((q) => (q.id === id ? query : q))
-            : [...draft.savedQueries, query],
-        };
-      }, `Save query ${queryName}`);
-      setQueryId(id);
-      onSelect({ kind: "query", id });
-    } catch (e) {
-      setError(asTauriError(e).message);
-    } finally {
-      setLoading(false);
-    }
-  };
-  const deleteQuery = async () => {
-    if (!queryId || !window.confirm(`Delete ${queryName}?`)) return;
-    setLoading(true);
-    setError("");
-    try {
-      await update(
-        (draft) => ({
-          ...draft,
-          savedQueries: draft.savedQueries.filter((q) => q.id !== queryId),
-        }),
-        `Delete query ${queryName}`,
-      );
-      onSelect(null);
-    } catch (e) {
-      setError(asTauriError(e).message);
-    } finally {
-      setLoading(false);
-    }
-  };
+  /** The row as read, sent back as `expected` so optimistic entities detect concurrent edits. */
+  const original = (row: number): NamedValue[] =>
+    page
+      ? page.columns
+          .map((c, j) => ({ column: c.name, value: page.rows[row][j] }))
+          .filter((_, j) => !page.columns[j].generated && logicalOf(page.columns[j]) !== "blob")
+      : [];
   const commit = async (row: number, column: number, text: string) => {
     if (!page) return;
     const meta = page.columns[column];
-    let value: DataValue = { type: "text", value: text };
-    if (text === "NULL") value = { type: "null" };
-    else if (/INT/i.test(meta.declaredType) && /^-?\d+$/.test(text))
-      value = { type: "integer", value: Number(text) };
-    else if (/REAL|FLOA|DOUB|NUM/i.test(meta.declaredType) && Number.isFinite(Number(text)))
-      value = { type: "real", value: Number(text) };
     try {
-      await updateRecord(selected, [{ column: meta.name, value }], page.identities[row]);
+      const value = valueFromText(text, meta.name, logicalOf(meta));
+      await updateRecord(selected, [{ column: meta.name, value }], page.identities[row], {
+        expected: original(row),
+      });
+      setError("");
       markDirty();
       refresh();
     } catch (e) {
-      setError(asTauriError(e).message);
+      const failure = asTauriError(e);
+      setError(failure.message);
+      if (failure.code === "CONFLICT") refresh();
     }
   };
   const remove = async (row: number) => {
     if (!page || !window.confirm("Delete this row?")) return;
     try {
-      await deleteRecord(selected, page.identities[row]);
+      await deleteRecord(selected, page.identities[row], { expected: original(row) });
       markDirty();
       if (page.rows.length === 1 && offset) setOffset(Math.max(0, offset - PAGE_SIZE));
       else refresh();
@@ -219,19 +165,10 @@ export function DatabaseWorkbench() {
         .filter(([, text]) => text !== "")
         .map(([index, text]) => {
           const column = page.columns[Number(index)];
-          let value: DataValue = { type: "text", value: text };
-          if (text === "NULL") value = { type: "null" };
-          else if (/INT/i.test(column.declaredType)) {
-            if (!/^-?\d+$/.test(text)) throw new Error(`${column.name} requires an integer`);
-            const integer = Number(text);
-            if (!Number.isSafeInteger(integer))
-              throw new Error(`${column.name} is outside the safe integer range`);
-            value = { type: "integer", value: integer };
-          } else if (/REAL|FLOA|DOUB|NUM/i.test(column.declaredType)) {
-            if (!Number.isFinite(Number(text))) throw new Error(`${column.name} requires a number`);
-            value = { type: "real", value: Number(text) };
-          }
-          return { column: column.name, value };
+          return {
+            column: column.name,
+            value: valueFromText(text, column.name, logicalOf(column)),
+          };
         });
       await insertRecord(selected, values);
       setDraft({});
@@ -242,7 +179,7 @@ export function DatabaseWorkbench() {
     }
   };
   const selectedSchema = schemas.find((schema) => schema.name === selected);
-  const inspectorVisible = creating || sqlMode || !!selected;
+  const inspectorVisible = creating || !!selected;
   return (
     <section className={`workbench ${inspectorVisible ? "" : "relationship-only"}`}>
       <div className="pane relationship-pane">
@@ -265,7 +202,25 @@ export function DatabaseWorkbench() {
             onSelect({ kind: "table", id: name });
             setOffset(0);
           }}
+          positions={positions}
+          onArrange={arrange}
+          onRelate={relate}
         />
+        {relating && (
+          <ImpactDialog
+            title={`Relate ${relating.drawn.childTable}.${relating.drawn.childColumn} to ${relating.drawn.parentTable}.${relating.drawn.parentColumn}?`}
+            plan={relating.plan}
+            confirmLabel="Create relationship"
+            error={relating.error}
+            onCancel={() => setRelating(null)}
+            onConfirm={() =>
+              applyTableChanges(relating.drawn.childTable, relationOp(relating.drawn))
+                .then(() => afterSchemaChange(relating.drawn.childTable))
+                .then(() => setRelating(null))
+                .catch((e) => setRelating({ ...relating, error: asTauriError(e).message }))
+            }
+          />
+        )}
       </div>
       {inspectorVisible && (
         <>
@@ -275,56 +230,24 @@ export function DatabaseWorkbench() {
           <div className="pane data-pane">
             {designingSelected && selectedSchema ? (
               <TableSchemaDesigner
+                key={JSON.stringify(selectedSchema)}
                 schema={selectedSchema}
-                loading={altering}
-                error={error}
-                onApply={finishAlter}
+                tables={schemas}
+                capabilities={capabilities}
+                onChanged={(name) => afterSchemaChange(name)}
+                onDropped={() => afterSchemaChange(null)}
                 onCancel={() => setDesigningSelected(false)}
               />
             ) : creating ? (
-              <CreateTableForm onCreate={createTable} onCancel={() => onSelect(null)} />
-            ) : sqlMode ? (
-              <div className="sql-workspace">
-                <div className="pane-title">
-                  <div>
-                    <Code2 />
-                    <input
-                      aria-label="Query name"
-                      value={queryName}
-                      onChange={(e) => setQueryName(e.target.value)}
-                    />
-                    <b>Read-only SQL</b>
-                    <button className="save" disabled={loading} onClick={runSql}>
-                      Run
-                    </button>
-                    <button disabled={loading} onClick={saveQuery}>
-                      <Save />
-                      Save query
-                    </button>
-                    {queryId && (
-                      <button aria-label="Delete query" disabled={loading} onClick={deleteQuery}>
-                        <Trash2 />
-                        Delete
-                      </button>
-                    )}
-                  </div>
-                </div>
-                <div className="monaco-shell">
-                  <Editor
-                    height="170px"
-                    language="sql"
-                    value={sql}
-                    onChange={(value) => setSql(value ?? "")}
-                    options={{ minimap: { enabled: false }, fontSize: 12, automaticLayout: true }}
-                  />
-                </div>
-                {error && (
-                  <div className="error" role="alert">
-                    {error}
-                  </div>
-                )}
-                {result && <ResultGrid result={result} />}
-              </div>
+              <CreateTableForm
+                tables={schemas}
+                maxPrecision={
+                  capabilities?.logicalTypes.find((t) => t.logicalType.startsWith("decimal"))
+                    ?.maxPrecision
+                }
+                onCreate={createTable}
+                onCancel={() => onSelect(null)}
+              />
             ) : !selected ? (
               <div className="empty-recent select-table">
                 <Table2 />
@@ -394,7 +317,7 @@ export function DatabaseWorkbench() {
                               {c.name}{" "}
                               {sorts[0]?.column === c.name ? (sorts[0].descending ? "↓" : "↑") : ""}
                             </button>
-                            <small>{c.declaredType}</small>
+                            <small>{logicalOf(c)}</small>
                           </th>
                         ))}
                         {!readOnly && <th />}
@@ -413,6 +336,7 @@ export function DatabaseWorkbench() {
                                 <span>{showValue(v)}</span>
                               ) : (
                                 <input
+                                  key={`${revision}:${showValue(v)}`}
                                   defaultValue={showValue(v)}
                                   aria-label={`${page.columns[j].name}, row ${offset + i + 1}`}
                                   onKeyDown={(e) => {

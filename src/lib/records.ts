@@ -8,6 +8,17 @@ export interface RecordWrite {
   table: string;
   values: NamedValue[];
   identity: DataValue[] | null;
+  /** Workflow context supplied by the caller (automation uses it for trigger semantics). */
+  meta?: RecordWriteMeta;
+}
+
+export interface RecordWriteMeta {
+  /** Trigger nesting depth of the workflow issuing this write (recursion guard). */
+  triggerDepth?: number;
+  /** Previous values of the updated row, when the caller knows them (`old` in trigger scopes). */
+  old?: Record<string, unknown>;
+  /** Original values the edit started from; optimistic entities reject the write with CONFLICT if they changed. */
+  expected?: NamedValue[];
 }
 
 export interface RecordHook {
@@ -36,19 +47,54 @@ async function write<T>(record: RecordWrite, run: () => Promise<T>): Promise<T> 
 }
 
 /** Inserts a row and resolves with the new row's identity values. */
-export const insertRecord = (table: string, values: NamedValue[]) =>
-  write({ operation: "insert", table, values, identity: null }, () =>
+export const insertRecord = (table: string, values: NamedValue[], meta?: RecordWriteMeta) =>
+  write({ operation: "insert", table, values, identity: null, ...(meta && { meta }) }, () =>
     call<DataValue[]>("insert_row", { table, values }),
   );
 
 /** Updates one row by identity and resolves with the affected row count. */
-export const updateRecord = (table: string, values: NamedValue[], identity: DataValue[]) =>
-  write({ operation: "update", table, values, identity }, () =>
-    call<number>("update_row", { table, values, identity }),
+export const updateRecord = (
+  table: string,
+  values: NamedValue[],
+  identity: DataValue[],
+  meta?: RecordWriteMeta,
+) =>
+  write({ operation: "update", table, values, identity, ...(meta && { meta }) }, () =>
+    call<number>("update_row", { table, values, identity, expected: meta?.expected ?? null }),
   );
 
 /** Deletes one row by identity and resolves with the affected row count. */
-export const deleteRecord = (table: string, identity: DataValue[]) =>
-  write({ operation: "delete", table, values: [], identity }, () =>
-    call<number>("delete_row", { table, identity }),
+export const deleteRecord = (table: string, identity: DataValue[], meta?: RecordWriteMeta) =>
+  write({ operation: "delete", table, values: [], identity, ...(meta && { meta }) }, () =>
+    call<number>("delete_row", { table, identity, expected: meta?.expected ?? null }),
   );
+
+interface BatchOutcome {
+  changed: number;
+  identity?: DataValue[] | null;
+}
+
+/**
+ * Applies several writes as one RecordStore transaction (`execute_write_batch`):
+ * all succeed or none do. Before hooks run for every write first (any throw aborts
+ * the batch); after hooks run once it commits, each with its own result (identity
+ * for inserts, affected count otherwise).
+ */
+export async function writeRecordBatch(writes: RecordWrite[]): Promise<unknown[]> {
+  const active = [...hooks];
+  for (const record of writes) for (const hook of active) await hook.before?.(record);
+  const ops = writes.map(({ operation, table, values, identity, meta }) =>
+    operation === "insert"
+      ? { op: "insert", table, values }
+      : operation === "update"
+        ? { op: "update", table, values, identity, expected: meta?.expected ?? null }
+        : { op: "delete", table, identity, expected: meta?.expected ?? null },
+  );
+  const outcomes = await call<BatchOutcome[]>("execute_write_batch", { ops });
+  const results = writes.map((record, i) =>
+    record.operation === "insert" ? (outcomes[i]?.identity ?? []) : (outcomes[i]?.changed ?? 0),
+  );
+  for (const [i, record] of writes.entries())
+    for (const hook of active) await hook.after?.(record, results[i]);
+  return results;
+}

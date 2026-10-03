@@ -54,10 +54,19 @@ it("passes identity and values for updates and stops calling unregistered hooks"
   const identity = [{ type: "integer" as const, value: 3 }];
   const values = [{ column: "score", value: { type: "real" as const, value: 2.5 } }];
   await updateRecord("people", values, identity);
-  expect(call).toHaveBeenCalledWith("update_row", { table: "people", values, identity });
+  expect(call).toHaveBeenCalledWith("update_row", {
+    table: "people",
+    values,
+    identity,
+    expected: null,
+  });
   expect(after).toHaveBeenCalledWith({ operation: "update", table: "people", values, identity }, 1);
   unregister();
   await deleteRecord("people", identity);
   expect(after).toHaveBeenCalledTimes(1);
-  expect(call).toHaveBeenLastCalledWith("delete_row", { table: "people", identity });
+  expect(call).toHaveBeenLastCalledWith("delete_row", {
+    table: "people",
+    identity,
+    expected: null,
+  });
 });

@@ -1,203 +1,402 @@
-import { Plus } from "lucide-react";
-import { useState } from "react";
-import type { AlterTableOperation, CreateColumnSpec, DbColumn, TableSchema } from "../lib/types";
+import { Plus, Trash2 } from "lucide-react";
+import { useEffect, useMemo, useState } from "react";
+import { asTauriError } from "../lib/api";
+import type { AlterTableOperation, TableSchema } from "../lib/types";
+import {
+  applyTableChanges,
+  createIndex,
+  dropDatabaseTable,
+  dropIndex,
+  previewTableChanges,
+  tableDropImpact,
+} from "../schema/api";
+import { ColumnFields } from "../schema/ColumnFields";
+import { type ColumnDraft, draftFromColumn, emptyColumn, specFromDraft } from "../schema/columns";
+import {
+  CheckEditor,
+  ColumnPicker,
+  ForeignKeyEditor,
+  IndexEditor,
+  UniqueEditor,
+} from "../schema/ConstraintEditors";
+import { ImpactDialog } from "../schema/ImpactDialog";
+import { modeLabel } from "../schema/logical";
+import type { ChangePlan, StoreCapabilities, TableImpact } from "../schema/types";
+import "../schema/schema.css";
 
+const same = (a: string[], b: string[]) => a.length === b.length && a.every((x, i) => x === b[i]);
+
+/**
+ * Table designer: changes are staged, previewed by the record store (in place vs table rebuild),
+ * and applied in one transaction. Destructive changes and rebuilds go through an impact preview.
+ */
 export function TableSchemaDesigner({
   schema,
-  loading,
-  error,
-  onApply,
+  tables,
+  capabilities,
+  onChanged,
+  onDropped,
   onCancel,
 }: {
   schema: TableSchema;
-  loading: boolean;
-  error: string;
-  onApply: (operation: AlterTableOperation) => Promise<void>;
+  tables: TableSchema[];
+  capabilities: StoreCapabilities | null;
+  onChanged: (tableName: string) => Promise<void> | void;
+  onDropped: () => Promise<void> | void;
   onCancel: () => void;
 }) {
+  const initialDrafts = useMemo(
+    () => Object.fromEntries(schema.columns.map((c) => [c.name, draftFromColumn(c, schema)])),
+    [schema],
+  );
+  const [drafts, setDrafts] = useState<Record<string, ColumnDraft>>(initialDrafts);
   const [tableName, setTableName] = useState(schema.name);
-  const [renameColumn, setRenameColumn] = useState(schema.columns[0]?.name ?? "");
-  const [columnName, setColumnName] = useState("");
-  const [newColumn, setNewColumn] = useState<CreateColumnSpec>({
-    name: "",
-    declaredType: "TEXT",
-    nullable: true,
-    primaryKeyPosition: 0,
-    unique: false,
-    defaultExpression: null,
-    generatedExpression: null,
-  });
-  const applyDrop = (column: DbColumn) => {
-    const related = schema.foreignKeys.filter((key) => key.fromColumns.includes(column.name));
-    const detail = related.length
-      ? ` It also removes ${related.length} relationship${related.length === 1 ? "" : "s"}.`
-      : "";
-    if (
-      window.confirm(
-        `Drop column “${column.name}”? This destructive change permanently deletes its data.${detail}`,
-      )
-    )
-      void onApply({ operation: "drop_column", column: column.name });
+  const [newColumn, setNewColumn] = useState<ColumnDraft>(emptyColumn());
+  const [primaryKey, setPrimaryKey] = useState<string[]>(
+    schema.primaryKey ?? schema.columns.filter((c) => c.primaryKeyPosition).map((c) => c.name),
+  );
+  const [pending, setPending] = useState<AlterTableOperation[]>([]);
+  const [plan, setPlan] = useState<ChangePlan | null>(null);
+  const [planError, setPlanError] = useState("");
+  const [error, setError] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [dialog, setDialog] = useState<
+    { kind: "apply"; plan: ChangePlan } | { kind: "drop"; impact: TableImpact } | null
+  >(null);
+  const maxPrecision =
+    capabilities?.logicalTypes.find((t) => t.logicalType.startsWith("decimal"))?.maxPrecision ?? 38;
+  const columns = schema.columns.map((c) => c.name);
+
+  useEffect(() => {
+    if (!pending.length) {
+      setPlan(null);
+      setPlanError("");
+      return;
+    }
+    let live = true;
+    previewTableChanges(schema.name, pending)
+      .then((next) => {
+        if (!live) return;
+        setPlan(next);
+        setPlanError("");
+      })
+      .catch((e) => {
+        if (!live) return;
+        setPlan(null);
+        setPlanError(asTauriError(e).message);
+      });
+    return () => {
+      live = false;
+    };
+  }, [pending, schema.name]);
+
+  const stage = (...ops: AlterTableOperation[]) => setPending((p) => [...p, ...ops]);
+  const run = async (task: () => Promise<void>) => {
+    setBusy(true);
+    setError("");
+    try {
+      await task();
+    } catch (e) {
+      setError(asTauriError(e).message);
+    } finally {
+      setBusy(false);
+    }
   };
+  const stageColumn = (name: string) => {
+    const before = initialDrafts[name];
+    const after = drafts[name];
+    const ops: AlterTableOperation[] = [];
+    const target = after.name.trim() || name;
+    if (target !== name) ops.push({ operation: "rename_column", column: name, newName: target });
+    const changed =
+      after.logicalType !== before.logicalType ||
+      after.required !== before.required ||
+      after.defaultExpression !== before.defaultExpression ||
+      after.unique !== before.unique ||
+      after.check.trim() !== "";
+    if (changed)
+      ops.push({
+        operation: "alter_column",
+        column: target,
+        definition: specFromDraft({ ...after, name: target }),
+      });
+    if (ops.length) stage(...ops);
+  };
+  const finalName = () =>
+    [...pending]
+      .reverse()
+      .find(
+        (op): op is Extract<AlterTableOperation, { operation: "rename_table" }> =>
+          op.operation === "rename_table",
+      )?.newName ?? schema.name;
+  const apply = () =>
+    run(async () => {
+      const fresh = await previewTableChanges(schema.name, pending);
+      if (fresh.destructive || fresh.rebuild) setDialog({ kind: "apply", plan: fresh });
+      else {
+        await applyTableChanges(schema.name, pending);
+        await onChanged(finalName());
+      }
+    });
+  const confirmApply = () =>
+    run(async () => {
+      await applyTableChanges(schema.name, pending);
+      setDialog(null);
+      await onChanged(finalName());
+    });
+
   return (
-    <div className="table-designer overflow-auto p-6">
+    <div className="table-designer schema-designer">
       <div className="flex items-center justify-between gap-3">
         <div>
           <h2>Design {schema.name}</h2>
           <p className="mt-1 text-slate-600">
-            Edit columns, constraints, and relationships using typed record-store operations.
+            {capabilities?.store === "postgres" ? "PostgreSQL" : "SQLite"} record store. Changes are
+            staged, previewed, and applied together in one transaction.
           </p>
         </div>
-        <button onClick={onCancel}>Close</button>
+        <div className="flex gap-2">
+          <button
+            className="text-red-700"
+            disabled={busy}
+            onClick={() =>
+              run(async () =>
+                setDialog({ kind: "drop", impact: await tableDropImpact(schema.name) }),
+              )
+            }
+          >
+            <Trash2 aria-hidden="true" />
+            Drop table
+          </button>
+          <button onClick={onCancel}>Close</button>
+        </div>
       </div>
-      {error && (
+      {error && !dialog && (
         <div className="error" role="alert">
           {error}
         </div>
       )}
-      <section className="mt-5 border-t border-slate-200 pt-3">
+      <section aria-label="Table">
         <h3>Table</h3>
         <div className="flex flex-wrap items-center gap-3">
           <label className="grid gap-1">
             Table name
             <input value={tableName} onChange={(e) => setTableName(e.target.value)} />
           </label>
-          <span className="rounded-full bg-green-100 px-2 py-1 text-xs font-bold whitespace-nowrap text-green-800">
-            In-place schema change
-          </span>
           <button
-            disabled={loading || !tableName.trim() || tableName === schema.name}
-            onClick={() => void onApply({ operation: "rename_table", newName: tableName })}
+            disabled={!tableName.trim() || tableName === schema.name}
+            onClick={() => stage({ operation: "rename_table", newName: tableName.trim() })}
           >
             Rename table
           </button>
         </div>
       </section>
-      <section className="mt-5 border-t border-slate-200 pt-3">
-        <h3>Columns and constraints</h3>
+      <section aria-label="Columns">
+        <h3>Columns</h3>
         {schema.columns.map((column) => (
-          <div className="flex items-center gap-3 border-b border-slate-100 py-2" key={column.name}>
-            <div className="grid min-w-44">
-              <b>{column.name}</b>
-              <small className="text-slate-600">
-                {column.declaredType || "untyped"}
-                {column.primaryKeyPosition ? ` · primary key ${column.primaryKeyPosition}` : ""}
-                {!column.nullable ? " · required" : ""}
-                {column.generated ? " · generated" : ""}
-              </small>
-            </div>
-            <input
-              aria-label={`New name for ${column.name}`}
-              defaultValue={column.name}
-              onChange={(e) => {
-                setRenameColumn(column.name);
-                setColumnName(e.target.value);
-              }}
+          <div
+            className="flex flex-wrap items-center gap-2 border-b border-slate-100"
+            key={column.name}
+          >
+            <b className="min-w-28">{column.name}</b>
+            <ColumnFields
+              draft={drafts[column.name]}
+              label={`Column ${column.name}`}
+              maxPrecision={maxPrecision}
+              onChange={(next) => setDrafts((d) => ({ ...d, [column.name]: next }))}
             />
-            <button
-              aria-label={`Rename column ${column.name}`}
-              disabled={
-                loading || renameColumn !== column.name || !columnName || columnName === column.name
-              }
-              onClick={() =>
-                void onApply({
-                  operation: "rename_column",
-                  column: column.name,
-                  newName: columnName,
-                })
-              }
-            >
-              Rename
-            </button>
-            <span className="rounded-full bg-green-100 px-2 py-1 text-xs font-bold whitespace-nowrap text-green-800">
-              Direct · destructive
-            </span>
+            <button onClick={() => stageColumn(column.name)}>Stage changes to {column.name}</button>
             <button
               className="text-red-700"
               aria-label={`Drop ${column.name}`}
-              disabled={loading}
-              onClick={() => applyDrop(column)}
+              onClick={() => stage({ operation: "drop_column", column: column.name })}
             >
               Drop
             </button>
           </div>
         ))}
-        <div className="mt-4 flex flex-wrap items-center gap-3 bg-slate-50 p-3">
-          <input
-            aria-label="New column name"
-            placeholder="Column name"
-            value={newColumn.name}
-            onChange={(e) => setNewColumn((old) => ({ ...old, name: e.target.value }))}
+        <div className="flex flex-wrap items-center gap-2 bg-slate-50 p-3">
+          <ColumnFields
+            draft={newColumn}
+            label="New column"
+            maxPrecision={maxPrecision}
+            onChange={setNewColumn}
           />
-          <select
-            aria-label="New column type"
-            value={newColumn.declaredType}
-            onChange={(e) => setNewColumn((old) => ({ ...old, declaredType: e.target.value }))}
-          >
-            <option>INTEGER</option>
-            <option>REAL</option>
-            <option>TEXT</option>
-            <option>BLOB</option>
-            <option>NUMERIC</option>
-          </select>
-          <label className="flex items-center gap-1">
-            <input
-              type="checkbox"
-              checked={newColumn.nullable}
-              onChange={(e) => setNewColumn((old) => ({ ...old, nullable: e.target.checked }))}
-            />
-            Nullable
-          </label>
-          <input
-            aria-label="Default expression"
-            placeholder="Default expression"
-            value={newColumn.defaultExpression ?? ""}
-            onChange={(e) =>
-              setNewColumn((old) => ({ ...old, defaultExpression: e.target.value || null }))
-            }
-          />
-          <span className="rounded-full bg-green-100 px-2 py-1 text-xs font-bold whitespace-nowrap text-green-800">
-            In-place schema change
-          </span>
           <button
-            disabled={loading || !newColumn.name.trim()}
-            onClick={() => void onApply({ operation: "add_column", column: newColumn })}
+            disabled={!newColumn.name.trim()}
+            onClick={() => {
+              stage({ operation: "add_column", column: specFromDraft(newColumn) });
+              setNewColumn(emptyColumn());
+            }}
           >
-            <Plus />
+            <Plus aria-hidden="true" />
             Add column
           </button>
         </div>
-        <p className="mt-3 border-l-3 border-amber-500 bg-amber-50 p-3 text-slate-600">
-          <b>Safe rebuild required:</b> changing existing primary-key, unique, nullability, default,
-          generated, or check constraints requires recreating the table while preserving compatible
-          data.
-        </p>
       </section>
-      <section className="mt-5 border-t border-slate-200 pt-3">
+      <section aria-label="Primary key">
+        <h3>Primary key</h3>
+        <ColumnPicker
+          label="Primary key columns"
+          columns={columns}
+          selected={primaryKey}
+          onChange={setPrimaryKey}
+        />
+        <button
+          disabled={same(primaryKey, schema.primaryKey ?? [])}
+          onClick={() => stage({ operation: "set_primary_key", columns: primaryKey })}
+        >
+          Set primary key
+        </button>
+      </section>
+      <section aria-label="Relationships">
         <h3>Relationships</h3>
-        {schema.foreignKeys.length ? (
-          schema.foreignKeys.map((key) => (
-            <div className="flex flex-wrap items-center gap-3 py-2" key={key.id}>
-              <b>{key.fromColumns.join(", ")}</b>
-              <span>
-                → {key.targetTable} ({key.targetColumns.join(", ")})
-              </span>
-              <small>
-                Update {key.onUpdate} · Delete {key.onDelete}
-              </small>
-              <span className="rounded-full bg-amber-100 px-2 py-1 text-xs font-bold whitespace-nowrap text-amber-800">
-                Safe rebuild required to change
-              </span>
-            </div>
-          ))
-        ) : (
-          <p>No foreign-key relationships.</p>
-        )}
-        <p className="mt-3 border-l-3 border-amber-500 bg-amber-50 p-3 text-slate-600">
-          Relationship additions, removals, and action changes are previewed as table-rebuild
-          migrations. They are not in-place schema changes.
-        </p>
+        {schema.foreignKeys.map((key) => (
+          <div className="flex flex-wrap items-center gap-3" key={key.id}>
+            <span>
+              ({key.fromColumns.join(", ")}) → {key.targetTable} ({key.targetColumns.join(", ")}) ·
+              update {key.onUpdate} · delete {key.onDelete}
+            </span>
+            <button
+              onClick={() => stage({ operation: "drop_foreign_key", columns: key.fromColumns })}
+            >
+              Remove relationship ({key.fromColumns.join(", ")})
+            </button>
+          </div>
+        ))}
+        <ForeignKeyEditor
+          columns={columns}
+          tables={tables}
+          onAdd={(foreignKey) => stage({ operation: "add_foreign_key", foreignKey })}
+        />
       </section>
+      <section aria-label="Constraints">
+        <h3>Unique and check constraints</h3>
+        {(schema.uniques ?? []).map((u) => (
+          <div key={u.columns.join()}>
+            Unique ({u.columns.join(", ")}){" "}
+            <button onClick={() => stage({ operation: "drop_unique", columns: u.columns })}>
+              Remove unique ({u.columns.join(", ")})
+            </button>
+          </div>
+        ))}
+        {(schema.checks ?? []).map((c) => (
+          <div key={c.expression}>
+            Check ({c.expression}){" "}
+            <button
+              onClick={() => stage({ operation: "drop_check", expression: c.name ?? c.expression })}
+            >
+              Remove check ({c.expression})
+            </button>
+          </div>
+        ))}
+        <UniqueEditor
+          columns={columns}
+          onAdd={(cols) => stage({ operation: "add_unique", columns: cols })}
+        />
+        <CheckEditor onAdd={(expression) => stage({ operation: "add_check", expression })} />
+      </section>
+      <section aria-label="Indexes">
+        <h3>Indexes</h3>
+        <p className="text-slate-600">Index changes apply immediately and always run in place.</p>
+        {(schema.indexes ?? []).map((index) => (
+          <div key={index.name} className="flex items-center gap-2">
+            {index.unique ? "Unique index" : "Index"} {index.name} ({index.columns.join(", ")})
+            <button
+              disabled={busy}
+              onClick={() =>
+                run(async () => {
+                  await dropIndex(index.name);
+                  await onChanged(schema.name);
+                })
+              }
+            >
+              Drop index {index.name}
+            </button>
+          </div>
+        ))}
+        <IndexEditor
+          table={schema.name}
+          columns={columns}
+          onAdd={(index) =>
+            run(async () => {
+              await createIndex({ ...index, table: schema.name });
+              await onChanged(schema.name);
+            })
+          }
+        />
+      </section>
+      <section aria-label="Pending changes" className="pending-changes">
+        <h3>Pending changes</h3>
+        {!pending.length && <p className="text-slate-600">No staged changes.</p>}
+        <ol>
+          {pending.map((op, i) => {
+            const planned = plan?.operations[i];
+            return (
+              <li key={i}>
+                <span>{planned?.summary ?? op.operation.replaceAll("_", " ")}</span>
+                <span className={`mode-badge ${planned?.mode ?? "pending"}`}>
+                  {planned ? modeLabel(planned.mode) : "Checking…"}
+                </span>
+                {planned?.destructive && (
+                  <span className="mode-badge destructive">Destructive</span>
+                )}
+                <button
+                  aria-label={`Remove pending change ${i + 1}`}
+                  onClick={() => setPending((p) => p.filter((_, j) => j !== i))}
+                >
+                  <Trash2 aria-hidden="true" />
+                </button>
+              </li>
+            );
+          })}
+        </ol>
+        {planError && (
+          <div className="error" role="alert">
+            {planError}
+          </div>
+        )}
+        <div className="settings-actions">
+          <button disabled={!pending.length} onClick={() => setPending([])}>
+            Discard changes
+          </button>
+          <button
+            className="save"
+            disabled={busy || !pending.length || !!planError}
+            onClick={apply}
+          >
+            Apply changes
+          </button>
+        </div>
+      </section>
+      {dialog?.kind === "apply" && (
+        <ImpactDialog
+          title={`Apply ${dialog.plan.operations.length} change${dialog.plan.operations.length === 1 ? "" : "s"} to ${schema.name}?`}
+          plan={dialog.plan}
+          confirmLabel="Apply changes"
+          busy={busy}
+          error={error}
+          onConfirm={confirmApply}
+          onCancel={() => setDialog(null)}
+        />
+      )}
+      {dialog?.kind === "drop" && (
+        <ImpactDialog
+          title={`Drop table ${schema.name}?`}
+          impact={dialog.impact}
+          confirmLabel="Drop table"
+          busy={busy}
+          error={error}
+          onConfirm={() =>
+            run(async () => {
+              await dropDatabaseTable(schema.name);
+              setDialog(null);
+              await onDropped();
+            })
+          }
+          onCancel={() => setDialog(null)}
+        />
+      )}
     </div>
   );
 }

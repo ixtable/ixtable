@@ -1,7 +1,6 @@
-import { screen, waitFor } from "@testing-library/react";
+import { screen, waitFor, within } from "@testing-library/react";
 import { invoke } from "@tauri-apps/api/core";
 import { expect, it } from "vitest";
-import { vi } from "vitest";
 import { createTable, insertRow, readPage, renderNewDocument, value } from "./helpers";
 
 it("renders a typed table and persists sorted CRUD mutations", async () => {
@@ -55,7 +54,7 @@ it("reports invalid typed input without partially inserting a row", async () => 
   expect((await readPage("items")).total).toBe(0);
 });
 
-it("designs a selected table with typed alterations and destructive confirmation", async () => {
+it("designs a selected table with staged alterations and an impact preview for drops", async () => {
   const user = await renderNewDocument();
   await createTable("inventory", [
     { name: "id", declaredType: "INTEGER", nullable: false, primaryKeyPosition: 1 },
@@ -67,7 +66,18 @@ it("designs a selected table with typed alterations and destructive confirmation
   await user.clear(tableName);
   await user.type(tableName, "products");
   await user.click(screen.getByRole("button", { name: "Rename table" }));
-  // Await the designer closing so metadata and selection have both settled.
+  const labelName = screen.getByRole("textbox", { name: "Column label name" });
+  await user.clear(labelName);
+  await user.type(labelName, "title");
+  await user.click(screen.getByRole("button", { name: "Stage changes to label" }));
+  await user.type(screen.getByRole("textbox", { name: "New column name" }), "price");
+  await user.selectOptions(screen.getByRole("combobox", { name: "New column type" }), "real");
+  await user.click(screen.getByRole("button", { name: "Add column" }));
+  const pending = screen.getByRole("region", { name: "Pending changes" });
+  await waitFor(() => expect(within(pending).getAllByText("Changes in place")).toHaveLength(3), {
+    timeout: 20_000,
+  });
+  await user.click(within(pending).getByRole("button", { name: "Apply changes" }));
   await waitFor(() =>
     expect(screen.queryByRole("heading", { name: "Design inventory" })).toBeNull(),
   );
@@ -75,24 +85,6 @@ it("designs a selected table with typed alterations and destructive confirmation
     "aria-pressed",
     "true",
   );
-
-  await user.click(screen.getByRole("button", { name: "Design table" }));
-  const labelName = await screen.findByRole(
-    "textbox",
-    { name: "New name for label" },
-    { timeout: 20_000 },
-  );
-  await user.clear(labelName);
-  await user.type(labelName, "title");
-  await user.click(screen.getByRole("button", { name: "Rename column label" }));
-
-  await user.click(await screen.findByRole("button", { name: "Design table" }));
-  await user.type(
-    await screen.findByRole("textbox", { name: "New column name" }, { timeout: 20_000 }),
-    "price",
-  );
-  await user.selectOptions(screen.getByRole("combobox", { name: "New column type" }), "REAL");
-  await user.click(screen.getByRole("button", { name: "Add column" }));
   expect((await readPage("products")).columns.map((column) => column.name)).toEqual([
     "id",
     "title",
@@ -100,15 +92,20 @@ it("designs a selected table with typed alterations and destructive confirmation
   ]);
 
   await user.click(await screen.findByRole("button", { name: "Design table" }));
-  const confirm = vi.spyOn(window, "confirm").mockReturnValue(false);
   await user.click(await screen.findByRole("button", { name: "Drop price" }, { timeout: 20_000 }));
-  expect(confirm).toHaveBeenCalledWith(expect.stringContaining("permanently deletes its data"));
+  await user.click(screen.getByRole("button", { name: "Apply changes" }));
+  const dialog = await screen.findByRole("dialog", {}, { timeout: 20_000 });
+  expect(within(dialog).getByText("Destructive")).toBeInTheDocument();
+  await user.click(within(dialog).getByRole("button", { name: "Cancel" }));
   expect((await readPage("products")).columns).toHaveLength(3);
-  confirm.mockReturnValue(true);
-  await user.click(screen.getByRole("button", { name: "Drop price" }));
-  expect((await readPage("products")).columns.map((column) => column.name)).toEqual([
-    "id",
-    "title",
-  ]);
-  confirm.mockRestore();
+  await user.click(screen.getByRole("button", { name: "Apply changes" }));
+  const again = await screen.findByRole("dialog", {}, { timeout: 20_000 });
+  await user.click(within(again).getByRole("checkbox"));
+  await user.click(within(again).getByRole("button", { name: "Apply changes" }));
+  await waitFor(async () =>
+    expect((await readPage("products")).columns.map((column) => column.name)).toEqual([
+      "id",
+      "title",
+    ]),
+  );
 });

@@ -137,20 +137,75 @@ pub fn installations_root() -> PathBuf {
     bundle::state_dir().join("installations")
 }
 
+/// Windows device names (any case, with or without an extension) cannot be
+/// directory names on Windows; ids are checked on every platform so a bundle
+/// installs the same way everywhere.
+fn is_windows_reserved(name: &str) -> bool {
+    let stem = name.split('.').next().unwrap_or(name).to_ascii_uppercase();
+    let stem = stem.trim_end_matches([' ', '.']);
+    matches!(stem, "CON" | "PRN" | "AUX" | "NUL")
+        || ((stem.starts_with("COM") || stem.starts_with("LPT"))
+            && stem.len() == 4
+            && matches!(stem.as_bytes()[3], b'1'..=b'9'))
+}
+
 fn installation_dir(root: &Path, bundle_id: &str) -> Result<PathBuf, AppError> {
     let safe = !bundle_id.is_empty()
         && bundle_id.len() <= 64
         && bundle_id
             .chars()
-            .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_');
+            .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
+        && !bundle_id.ends_with(['.', ' '])
+        && !is_windows_reserved(bundle_id);
     if !safe {
         return Err(AppError::new("BUNDLE_SIGNATURE", "Invalid bundle id"));
     }
     Ok(root.join(bundle_id))
 }
 
+/// The installation record. `Ok(None)` only when `bundle.json` does not
+/// exist (a fresh install); an unreadable or unparsable record is
+/// INSTALLATION_CORRUPT so the signer pin (TOFU) can never fail open.
+pub fn load_installed(dir: &Path) -> Result<Option<InstalledBundle>, AppError> {
+    let path = dir.join(BUNDLE_JSON);
+    let corrupt = |e: String| {
+        AppError::new(
+            "INSTALLATION_CORRUPT",
+            format!(
+                "The installation record {} is damaged ({e}). Nothing was installed; move the folder {} aside to reinstall.",
+                path.display(),
+                dir.display()
+            ),
+        )
+    };
+    match fs::read(&path) {
+        Ok(bytes) => serde_json::from_slice(&bytes)
+            .map(Some)
+            .map_err(|e| corrupt(e.to_string())),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
+        Err(e) => Err(corrupt(e.to_string())),
+    }
+}
+
+/// [`load_installed`] for callers that only need a present, valid record.
 pub fn read_installed(dir: &Path) -> Option<InstalledBundle> {
-    serde_json::from_slice(&fs::read(dir.join(BUNDLE_JSON)).ok()?).ok()
+    load_installed(dir).ok().flatten()
+}
+
+/// Moves an existing directory aside to `<dir>.corrupt-<timestamp>` (never deletes it).
+fn move_aside(dir: &Path) -> Result<(), AppError> {
+    let name = dir.file_name().and_then(|n| n.to_str()).unwrap_or("installation");
+    let aside = dir.with_file_name(format!(
+        "{name}.corrupt-{}-{}",
+        Utc::now().format("%Y%m%dT%H%M%S"),
+        &Uuid::new_v4().simple().to_string()[..8]
+    ));
+    fs::rename(dir, &aside).map_err(io_err)?;
+    crate::logging::warn(
+        "bundle",
+        &format!("moved incomplete installation aside to {}", aside.display()),
+    );
+    Ok(())
 }
 
 fn write_installed(dir: &Path, info: &InstalledBundle) -> Result<(), AppError> {
@@ -179,7 +234,7 @@ pub fn check_signer(
     signed: &SignedBundle,
 ) -> Result<Option<InstalledBundle>, AppError> {
     let dir = installation_dir(root, &signed.header.bundle_id)?;
-    let installed = read_installed(&dir);
+    let installed = load_installed(&dir)?;
     if let Some(pin) = &installed {
         if pin.signer_public_key != signed.header.signer_public_key {
             return Err(AppError::new(
@@ -259,6 +314,29 @@ pub fn restore_previous(dir: &Path) -> std::io::Result<()> {
     fs::copy(previous.join("data.db"), dir.join("data.db"))?;
     fs::copy(previous.join(BUNDLE_JSON), dir.join(BUNDLE_JSON))?;
     Ok(())
+}
+
+/// Moves the retired `active/` and `data.db` back after a failed activation.
+fn restore_retired(dir: &Path, retired: &Path) -> Result<(), String> {
+    let back = |name: &str| -> std::io::Result<()> {
+        let from = retired.join(name);
+        if !from.exists() {
+            return Ok(());
+        }
+        let to = dir.join(name);
+        if to.is_dir() {
+            fs::remove_dir_all(&to)?;
+        } else if to.exists() {
+            fs::remove_file(&to)?;
+        }
+        fs::rename(from, to)
+    };
+    back("active").map_err(|e| e.to_string())?;
+    back("data.db").map_err(|e| e.to_string())?;
+    // bundle.json is only rewritten after both renames; restore the checkpointed copy.
+    fs::copy(dir.join("previous").join(BUNDLE_JSON), dir.join(BUNDLE_JSON))
+        .map(|_| ())
+        .map_err(|e| e.to_string())
 }
 
 /// Validates staged state: migrations on the staged records, then health checks.
@@ -344,8 +422,8 @@ fn install_fresh(
         prepare(&staging, &doc.config).map_err(|e| AppError::new("INSTALL_FAILED", e))?;
         write_installed(&staging, &info_for(signed, None))?;
         if dir.exists() {
-            // A directory without bundle.json is an interrupted install.
-            fs::remove_dir_all(dir).map_err(io_err)?;
+            // A directory without bundle.json: keep it for recovery, never delete it.
+            move_aside(dir)?;
         }
         fs::rename(&staging, dir).map_err(io_err)
     })();
@@ -381,20 +459,31 @@ fn update_existing(
         )?;
         prepare(&staging, config).map_err(&failed)?;
         let retired = dir.join(format!(".retired-{}", Uuid::new_v4()));
-        let activate = (|| {
+        let activate = (|| -> std::io::Result<()> {
             fs::create_dir_all(&retired)?;
             fs::rename(dir.join("active"), retired.join("active"))?;
             fs::rename(staging.join("active"), dir.join("active"))?;
             fs::rename(dir.join("data.db"), retired.join("data.db"))?;
-            fs::rename(staging.join("data.db"), dir.join("data.db"))
+            fs::rename(staging.join("data.db"), dir.join("data.db"))?;
+            #[cfg(test)]
+            if tests::FAIL_ACTIVATION.with(|f| f.get()) {
+                return Err(std::io::Error::other("injected activation failure"));
+            }
+            Ok(())
         })()
         .map_err(|e| e.to_string())
         .and_then(|_| write_installed(dir, &info_for(signed, installed)).map_err(|e| e.message));
-        let _ = fs::remove_dir_all(&retired);
         if let Err(e) = activate {
-            restore_previous(dir).map_err(|r| failed(format!("{e}; restore also failed: {r}")))?;
+            // Put the retired copy back first (it is the exact pre-update state);
+            // fall back to the recovery checkpoint only if that fails.
+            let restored = restore_retired(dir, &retired).or_else(|r| {
+                restore_previous(dir).map_err(|p| format!("{r}; checkpoint restore: {p}"))
+            });
+            restored.map_err(|r| failed(format!("{e}; restore also failed: {r}")))?;
+            let _ = fs::remove_dir_all(&retired);
             return Err(failed(format!("Activation failed: {e}")));
         }
+        let _ = fs::remove_dir_all(&retired);
         Ok(())
     })();
     let _ = fs::remove_dir_all(&staging);

@@ -75,7 +75,12 @@ export function DatasourceTab() {
     try {
       const id = draft.id || newId();
       let passwordRef = draft.passwordRef ?? null;
-      if (password) passwordRef = await setDatasourcePassword(id, password);
+      if (password)
+        passwordRef = await setDatasourcePassword(id, password, {
+          ...draft,
+          id,
+          port: draft.port || 5432,
+        });
       const next: DatasourceConfig = {
         ...draft,
         port: draft.port || 5432,
@@ -216,7 +221,7 @@ export function DatasourceTab() {
         </div>
       )}
       <div className="settings-actions">
-        <button type="button" disabled={busy} onClick={test}>
+        <button type="button" disabled={busy || blocked} onClick={test}>
           Test connection
         </button>
         {postgres && config.datasource.passwordRef && (

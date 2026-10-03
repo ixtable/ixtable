@@ -21,23 +21,10 @@ pub fn logical_from_duckdb(data_type: &str) -> LogicalType {
     }
 }
 
-/// Removes `password=...` from libpq error text before it is surfaced.
+/// Removes credentials (`password=...`, quoted values with spaces or escapes,
+/// URL user info) from libpq error text before it is surfaced.
 pub fn redact(message: &str) -> String {
-    let mut out = String::with_capacity(message.len());
-    let mut rest = message;
-    while let Some(i) = rest.to_ascii_lowercase().find("password=") {
-        out.push_str(&rest[..i + 9]);
-        out.push_str("***");
-        let tail = &rest[i + 9..];
-        let end = if let Some(stripped) = tail.strip_prefix('\'') {
-            stripped.find('\'').map(|j| j + 2).unwrap_or(tail.len())
-        } else {
-            tail.find(char::is_whitespace).unwrap_or(tail.len())
-        };
-        rest = &tail[end..];
-    }
-    out.push_str(rest);
-    out
+    crate::logging::redact(message)
 }
 
 #[cfg(all(target_os = "macos", target_arch = "aarch64"))]
@@ -174,9 +161,16 @@ mod tests {
     fn credentials_are_redacted_from_connection_errors() {
         assert_eq!(
             redact("failed: host=db password='se cret' user=x"),
-            "failed: host=db password=*** user=x"
+            "failed: host=db password='***' user=x"
         );
         assert_eq!(redact("password=abc dbname=x"), "password=*** dbname=x");
+        assert_eq!(
+            redact(r"password='it\'s secret' dbname=x"),
+            "password='***' dbname=x"
+        );
+        assert_eq!(redact(r#"pwd="x y" dbname=x"#), r#"pwd="***" dbname=x"#);
+        let url = redact("connect to postgresql://app:p@ss%20word@db:5432/x failed");
+        assert!(!url.contains("p@ss"), "{url}");
     }
     #[test]
     fn duckdb_types_map_to_logical_types() {

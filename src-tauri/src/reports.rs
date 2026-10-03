@@ -307,16 +307,31 @@ pub fn read_report_assets(
     window_label: String,
     ids: Vec<String>,
 ) -> Result<Vec<ReportAsset>, AppError> {
-    let all = crate::manager()?.attachments(&window_label)?;
-    Ok(all
-        .into_iter()
-        .filter(|a| ids.contains(&a.id))
-        .map(|a| ReportAsset {
-            id: a.id,
-            media_type: a.media_type,
-            data_base64: base64::engine::general_purpose::STANDARD.encode(&a.contents),
+    let m = crate::manager()?;
+    let list = m.asset_list(&window_label)?;
+    collect_report_assets(list, &ids, |id| {
+        std::fs::read(m.asset_path(&window_label, id)?).map_err(|e| AppError::new("IO_ERROR", e))
+    })
+}
+
+/// Reads only the requested assets (each once), never the whole asset set.
+fn collect_report_assets(
+    list: Vec<crate::archive::Attachment>,
+    ids: &[String],
+    mut read: impl FnMut(&str) -> Result<Vec<u8>, AppError>,
+) -> Result<Vec<ReportAsset>, AppError> {
+    let mut seen = std::collections::HashSet::new();
+    list.into_iter()
+        .filter(|a| ids.contains(&a.id) && seen.insert(a.id.clone()))
+        .map(|a| {
+            let bytes = read(&a.id)?;
+            Ok(ReportAsset {
+                data_base64: base64::engine::general_purpose::STANDARD.encode(bytes),
+                id: a.id,
+                media_type: a.media_type,
+            })
         })
-        .collect())
+        .collect()
 }
 
 #[cfg(test)]
@@ -324,6 +339,30 @@ mod tests {
     use super::*;
     use crate::archive::SavedQuery;
     use serde_json::json;
+
+    #[test]
+    fn report_assets_read_only_the_requested_ids() {
+        let asset = |id: &str| crate::archive::Attachment {
+            id: id.into(),
+            display_name: id.into(),
+            media_type: "image/png".into(),
+            checksum: String::new(),
+            size: 0,
+            created_at: String::new(),
+            updated_at: String::new(),
+            contents: vec![],
+        };
+        let list = vec![asset("a"), asset("big"), asset("c")];
+        let mut reads = vec![];
+        let out = collect_report_assets(list, &["c".into(), "a".into(), "c".into()], |id| {
+            reads.push(id.to_string());
+            Ok(id.as_bytes().to_vec())
+        })
+        .unwrap();
+        assert_eq!(reads, ["a", "c"]);
+        assert_eq!(out.len(), 2);
+        assert_eq!(out[1].data_base64, "Yw==");
+    }
 
     fn component(id: &str, kind: &str, x: f64, y: f64, w: f64, h: f64) -> Component {
         Component {

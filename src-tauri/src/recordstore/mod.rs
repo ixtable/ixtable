@@ -91,8 +91,8 @@ pub fn for_config(
     db_path: &Path,
 ) -> Result<Box<dyn RecordStore>, StoreError> {
     if datasource.is_postgres() {
-        let password = secrets::datasource_password(datasource)
-            .map_err(|e| StoreError::new("CONNECTION", e))?;
+        secrets::ensure_transport(datasource)?;
+        let password = secrets::datasource_credential(datasource)?;
         Ok(Box::new(crate::postgres::PostgresRecordStore::connect(
             datasource,
             password.as_deref(),
@@ -136,6 +136,7 @@ pub fn read_target(datasource: &DatasourceConfig) -> Result<ReadTarget, String> 
     if !datasource.is_postgres() {
         return Ok(ReadTarget::Sqlite);
     }
+    secrets::ensure_transport(datasource).map_err(|e| e.message)?;
     let password = secrets::datasource_password(datasource)?;
     Ok(ReadTarget::Postgres {
         conninfo: crate::postgres::conninfo(datasource, password.as_deref()),

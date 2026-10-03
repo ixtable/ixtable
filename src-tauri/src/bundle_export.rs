@@ -84,6 +84,8 @@ pub fn export_runtime_bundle(
     if state.path.is_some() {
         m.save(&window_label, None)?;
     }
+    let state_root = state_dir();
+    let data = snapshot_data(&m.database_path(&window_label)?, &state_root.join("tmp"))?;
     let doc = ArchiveDocument {
         metadata: ArchiveMetadata {
             document_id: state.document_id.clone(),
@@ -91,11 +93,10 @@ pub fn export_runtime_bundle(
             updated_at: Utc::now().to_rfc3339(),
             application_version: APP_VERSION.into(),
         },
-        data: fs::read(m.database_path(&window_label)?).map_err(io_err)?,
+        data,
         config: config.clone(),
         attachments: m.attachments(&window_label)?,
     };
-    let state_root = state_dir();
     let archive = archive_bytes(&doc, &state_root.join("tmp"))?;
     let key = signing_key(&state_root)?;
     let meta = BundleMeta {
@@ -123,9 +124,54 @@ pub fn export_runtime_bundle(
     })
 }
 
+/// A consistent copy of the live records (`VACUUM INTO` a private temp file,
+/// always removed), so bootstrap data never captures a half-written database.
+pub(crate) fn snapshot_data(db: &std::path::Path, scratch: &std::path::Path) -> Result<Vec<u8>, AppError> {
+    struct Remove(PathBuf);
+    impl Drop for Remove {
+        fn drop(&mut self) {
+            let _ = fs::remove_file(&self.0);
+        }
+    }
+    fs::create_dir_all(scratch).map_err(io_err)?;
+    let tmp = Remove(scratch.join(format!(".bundle-data-{}.db", uuid::Uuid::new_v4())));
+    crate::manager::vacuum_into(db, &tmp.0)?;
+    fs::read(&tmp.0).map_err(io_err)
+}
+
 /// Public signing-key fingerprint for display (generates the key if missing).
 #[tauri::command]
 pub fn bundle_signer_fingerprint() -> Result<String, AppError> {
     let key = signing_key(&state_dir())?;
     Ok(fingerprint(&B64.encode(key.verifying_key().as_bytes())))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn snapshot_data_is_consistent_while_a_transaction_is_open_and_leaves_no_temp() {
+        let dir = std::env::temp_dir().join(format!("ixtable-snap-{}", uuid::Uuid::new_v4()));
+        fs::create_dir_all(&dir).unwrap();
+        let db = dir.join("data.db");
+        let conn = rusqlite::Connection::open(&db).unwrap();
+        conn.execute_batch(
+            "PRAGMA journal_mode=WAL; CREATE TABLE t(x); INSERT INTO t VALUES (1);",
+        )
+        .unwrap();
+        // Uncommitted work plus committed WAL frames not yet in the main file.
+        conn.execute_batch("BEGIN; INSERT INTO t VALUES (2);").unwrap();
+        let scratch = dir.join("tmp");
+        let bytes = snapshot_data(&db, &scratch).unwrap();
+        conn.execute_batch("COMMIT").unwrap();
+        let copy = dir.join("copy.db");
+        fs::write(&copy, &bytes).unwrap();
+        let n: i64 = rusqlite::Connection::open(&copy)
+            .unwrap()
+            .query_row("SELECT count(*) FROM t", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(n, 1, "committed rows only, including those still in the WAL");
+        assert_eq!(fs::read_dir(&scratch).unwrap().count(), 0);
+        let _ = fs::remove_dir_all(dir);
+    }
 }

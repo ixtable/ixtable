@@ -254,3 +254,96 @@ fn unsafe_bundle_id_is_rejected() {
     assert!(installation_dir(Path::new("/tmp"), "").is_err());
     assert!(installation_dir(Path::new("/tmp"), "0b7c-uuid_1").is_ok());
 }
+
+thread_local! {
+    pub(super) static FAIL_ACTIVATION: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+#[test]
+fn windows_reserved_bundle_ids_are_rejected() {
+    for id in ["CON", "con", "Prn", "aux", "NUL", "COM1", "com9", "LPT1", "lpt9"] {
+        assert!(installation_dir(Path::new("/tmp"), id).is_err(), "{id}");
+    }
+    for id in ["CON.txt", "nul.", "abc.", "abc "] {
+        assert!(installation_dir(Path::new("/tmp"), id).is_err(), "{id}");
+        assert!(is_windows_reserved(id) || id.ends_with(['.', ' ']), "{id}");
+    }
+    assert!(is_windows_reserved("lpt3.log"));
+    for id in ["CONSOLE", "COM0", "COM10", "LPT", "aux_data", "nullable"] {
+        assert!(installation_dir(Path::new("/tmp"), id).is_ok(), "{id}");
+    }
+}
+
+#[test]
+fn corrupt_installation_record_fails_closed_and_keeps_files() {
+    let f = Fixture::new();
+    f.apply("1.0.0", false).unwrap();
+    f.insert("Precious");
+    fs::write(f.dir().join(BUNDLE_JSON), b"{ not json").unwrap();
+    // Even a bundle from a different signer must not be treated as a fresh install.
+    let other = SigningKey::generate(&mut OsRng);
+    let (signed, archive) = f.bundle_with("1.1.0", &other);
+    let err = apply_bundle(&f.root, &signed, &archive, false).unwrap_err();
+    assert_eq!(err.code, "INSTALLATION_CORRUPT");
+    assert_eq!(
+        check_signer(&f.root, &signed).unwrap_err().code,
+        "INSTALLATION_CORRUPT"
+    );
+    assert_eq!(f.names(), ["Ada", "Grace", "Precious"]);
+    // An unreadable record (here: a directory) is corrupt too, not "not installed".
+    fs::remove_file(f.dir().join(BUNDLE_JSON)).unwrap();
+    fs::create_dir(f.dir().join(BUNDLE_JSON)).unwrap();
+    assert_eq!(
+        f.apply("1.0.0", false).unwrap_err().code,
+        "INSTALLATION_CORRUPT"
+    );
+    assert_eq!(f.names(), ["Ada", "Grace", "Precious"]);
+}
+
+#[test]
+fn installation_without_record_is_moved_aside_not_deleted() {
+    let f = Fixture::new();
+    f.apply("1.0.0", false).unwrap();
+    f.insert("Precious");
+    fs::remove_file(f.dir().join(BUNDLE_JSON)).unwrap();
+    assert_eq!(f.apply("1.0.0", false).unwrap().1, Action::Install);
+    assert_eq!(f.names(), ["Ada", "Grace"]);
+    let id = &f.doc.metadata.document_id;
+    let aside: Vec<PathBuf> = fs::read_dir(&f.root)
+        .unwrap()
+        .map(|e| e.unwrap().path())
+        .filter(|p| {
+            p.file_name()
+                .unwrap()
+                .to_string_lossy()
+                .starts_with(&format!("{id}.corrupt-"))
+        })
+        .collect();
+    assert_eq!(aside.len(), 1);
+    let kept: i64 = Connection::open(aside[0].join("data.db"))
+        .unwrap()
+        .query_row("SELECT count(*) FROM Customers", [], |r| r.get(0))
+        .unwrap();
+    assert_eq!(kept, 3);
+}
+
+#[test]
+fn failed_activation_restores_the_retired_version() {
+    let f = Fixture::new();
+    f.apply("1.0.0", false).unwrap();
+    f.insert("Kept");
+    FAIL_ACTIVATION.with(|x| x.set(true));
+    let err = f.apply("1.1.0", false).unwrap_err();
+    FAIL_ACTIVATION.with(|x| x.set(false));
+    assert_eq!(err.code, "UPDATE_FAILED");
+    assert!(err.message.contains("Activation failed"), "{}", err.message);
+    assert_eq!(f.installed_version(), "1.0.0");
+    assert_eq!(f.names(), ["Ada", "Grace", "Kept"]);
+    assert!(f.dir().join("active").join(ARCHIVE).is_file());
+    assert!(fs::read_dir(f.dir()).unwrap().all(|e| {
+        let name = e.unwrap().file_name().to_string_lossy().into_owned();
+        !name.starts_with(".retired") && !name.starts_with(".staging")
+    }));
+    // The restored installation still updates normally.
+    assert_eq!(f.apply("1.1.0", false).unwrap().1, Action::Update);
+}

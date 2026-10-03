@@ -39,7 +39,11 @@ covers every byte before it.
 | Payload integrity | SHA-256 | `sha2` |
 
 The Argon2id parameters are the OWASP baseline. They are stored in the header,
-so a later build can raise them without breaking older bundles.
+so a later build can raise them without breaking older bundles. The header is
+untrusted until the password checks out, so the Runtime refuses parameters
+above 256 MiB, 4 passes, or 4 lanes with `BUNDLE_INCOMPATIBLE`. It also refuses
+bundle files larger than 600 MB (`BUNDLE_TOO_LARGE`) before reading them,
+because verification happens in memory.
 
 ### Keys and trust
 
@@ -70,6 +74,12 @@ health checks to the copy, then swaps it in. The previous version is kept in
 `previous/`, and any failure restores it. An older version installs only when
 the user confirms a downgrade.
 
+A `bundle.json` that exists but cannot be read or parsed fails with
+`INSTALLATION_CORRUPT`. It is never treated as "not installed", because that
+would drop the pinned signer. An installation folder with no `bundle.json` at
+all is moved aside to `<bundleId>.corrupt-<timestamp>` before a fresh install,
+never deleted.
+
 ## Threat model limits
 
 The release tab shows the first limit next to the password option, in the
@@ -78,6 +88,11 @@ words of PRD §4.1.
 - A password protects the bundle at rest and against casual opening. Anyone
   with the password can open it, read every record it shows, and extract the
   archive.
+- The password protects the distributed `.ixtr` file only. Once installed,
+  `installations/<bundleId>/active/app.ixt` and `data.db` are plaintext at
+  rest, protected only by the user account's file permissions. During
+  install, the decrypted archive touches disk only as a `0600` scratch file
+  that is deleted as soon as it has been read.
 - Trust on first use does not protect the first install. A recipient must get
   the first bundle, or the signer fingerprint, from the developer over a
   channel they trust.

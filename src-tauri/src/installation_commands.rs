@@ -8,15 +8,37 @@ use crate::manager::{AppError, DocumentManager, SessionState};
 use std::{fs, path::Path};
 use uuid::Uuid;
 
+/// Largest bundle the Runtime will read (cloud limit 500 MB plus headroom);
+/// bundles are verified in memory, so the size is checked before reading.
+pub const MAX_BUNDLE_BYTES: u64 = 600 * 1024 * 1024;
+
+fn check_bundle_size(len: u64) -> Result<(), AppError> {
+    if len > MAX_BUNDLE_BYTES {
+        return Err(AppError::new(
+            "BUNDLE_TOO_LARGE",
+            format!(
+                "This bundle is {} MB; the Runtime opens bundles up to {} MB.",
+                len / (1024 * 1024),
+                MAX_BUNDLE_BYTES / (1024 * 1024)
+            ),
+        ));
+    }
+    Ok(())
+}
+
 /// Copies the chosen file into a private temporary location, then verifies it there.
 fn receive(root: &Path, path: &str) -> Result<SignedBundle, AppError> {
+    let missing = |e: std::io::Error| AppError::new("MISSING_FILE", format!("{path}: {e}"));
+    check_bundle_size(fs::metadata(path).map_err(missing)?.len())?;
     let incoming = root.join(".incoming");
     fs::create_dir_all(&incoming).map_err(io_err)?;
-    let tmp = incoming.join(format!("{}.ixtr", Uuid::new_v4()));
-    fs::copy(path, &tmp).map_err(|e| AppError::new("MISSING_FILE", format!("{path}: {e}")))?;
-    let bytes = fs::read(&tmp).map_err(io_err);
-    let _ = fs::remove_file(&tmp);
-    bundle::verify(&bytes?)
+    let tmp = bundle::ScratchFile(incoming.join(format!("{}.ixtr", Uuid::new_v4())));
+    fs::copy(path, &tmp.0).map_err(missing)?;
+    // The source may have grown between the check and the copy.
+    check_bundle_size(fs::metadata(&tmp.0).map_err(io_err)?.len())?;
+    let bytes = fs::read(&tmp.0).map_err(io_err)?;
+    drop(tmp);
+    bundle::verify(&bytes)
 }
 
 /// Verifies signature, signer pin, and Runtime compatibility, then decrypts.
@@ -200,4 +222,33 @@ pub fn reset_runtime_installation_data(
     let result = installation::reset_data(&rt.dir);
     let state = open_session(m, &window_label, &rt.dir)?;
     result.map(|_| state)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn oversized_bundles_are_rejected_before_reading() {
+        let root = std::env::temp_dir().join(format!("ixtable-recv-{}", Uuid::new_v4()));
+        fs::create_dir_all(&root).unwrap();
+        let big = root.join("big.ixtr");
+        // Sparse: no disk space or memory is used.
+        fs::File::create(&big)
+            .unwrap()
+            .set_len(MAX_BUNDLE_BYTES + 1)
+            .unwrap();
+        let err = receive(&root, big.to_str().unwrap()).unwrap_err();
+        assert_eq!(err.code, "BUNDLE_TOO_LARGE");
+        assert!(err.message.contains("600 MB"), "{}", err.message);
+        // Never copied into the incoming area.
+        assert!(!root.join(".incoming").exists());
+        let small = root.join("small.ixtr");
+        fs::write(&small, b"not a bundle").unwrap();
+        assert_eq!(
+            receive(&root, small.to_str().unwrap()).unwrap_err().code,
+            "BUNDLE_SIGNATURE"
+        );
+        assert_eq!(fs::read_dir(root.join(".incoming")).unwrap().count(), 0);
+        fs::remove_dir_all(root).unwrap();
+    }
 }

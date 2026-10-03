@@ -22,17 +22,56 @@ it("requires an explicit override for non-TLS PostgreSQL and warns about shared 
   const warning = screen.getByRole("alert");
   expect(warning).toHaveTextContent("Severe security warning");
   const save = screen.getByRole("button", { name: "Save datasource" });
+  const test = screen.getByRole("button", { name: "Test connection" });
   expect(save).toBeDisabled();
+  expect(test).toBeDisabled();
   await user.click(
     within(warning).getByRole("checkbox", { name: /accept connecting without TLS/ }),
   );
   expect(save).toBeEnabled();
+  expect(test).toBeEnabled();
   await user.selectOptions(screen.getByRole("combobox", { name: "Credential mode" }), "perUser");
   expect(screen.queryByRole("note")).toBeNull();
   await user.click(screen.getByText("SQLite store capabilities"));
   expect(screen.getByRole("table", { name: "Schema change modes" })).toHaveTextContent(
     "Requires table rebuild",
   );
+});
+
+it("never releases a stored password to a different server or over unconfirmed plaintext", async () => {
+  await renderNewDocument();
+  const good = {
+    kind: "postgres",
+    id: `ds-${Date.now()}`,
+    host: "db.internal.example",
+    port: 5432,
+    database: "app",
+    user: "app",
+    sslmode: "require",
+  };
+  const passwordRef = await invoke<string>("set_datasource_password", {
+    windowLabel: "main",
+    datasourceId: good.id,
+    password: "victim-secret",
+    datasource: good,
+  });
+  const attempt = (datasource: Record<string, unknown>) =>
+    invoke("test_datasource_connection", {
+      windowLabel: "main",
+      datasource: { ...datasource, passwordRef },
+      password: null,
+    }).then(
+      () => "connected",
+      (e: unknown) => String((e as Error).message ?? e),
+    );
+  await expect(attempt({ ...good, host: "evil.example" })).resolves.toMatch(
+    /CREDENTIAL_TARGET_MISMATCH.*Re-enter the password/,
+  );
+  await expect(attempt({ ...good, user: "postgres" })).resolves.toMatch(
+    /CREDENTIAL_TARGET_MISMATCH/,
+  );
+  await expect(attempt({ ...good, sslmode: "disable" })).resolves.toMatch(/INSECURE_TRANSPORT/);
+  await invoke("clear_datasource_password", { windowLabel: "main", passwordRef });
 });
 
 it("sets a concurrency policy per table and flags tables without one", async () => {
@@ -114,9 +153,7 @@ it.skipIf(!postgresUrl)(
     await user.selectOptions(screen.getByRole("combobox", { name: "TLS (sslmode)" }), "disable");
     await user.click(screen.getByRole("checkbox", { name: /accept connecting without TLS/ }));
     await user.click(screen.getByRole("button", { name: "Test connection" }));
-    expect(await screen.findByRole("status", {}, LONG)).toHaveTextContent(
-      "WITHOUT TLS",
-    );
+    expect(await screen.findByRole("status", {}, LONG)).toHaveTextContent("WITHOUT TLS");
     await user.click(screen.getByRole("button", { name: "Save datasource" }));
     expect(
       await screen.findByText(/Reads now use the PostgreSQL store/, {}, LONG),

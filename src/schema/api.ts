@@ -33,8 +33,12 @@ export const testDatasourceConnection = (datasource: DatasourceConfig, password?
     datasource,
     password: password || null,
   });
-export const setDatasourcePassword = (datasourceId: string, password: string) =>
-  call<string>("set_datasource_password", { datasourceId, password });
+/** Stores a password bound to `datasource`'s server, database, and user. */
+export const setDatasourcePassword = (
+  datasourceId: string,
+  password: string,
+  datasource: DatasourceConfig,
+) => call<string>("set_datasource_password", { datasourceId, password, datasource });
 export const clearDatasourcePassword = (passwordRef: string) =>
   call<void>("clear_datasource_password", { passwordRef });
 export const connectDatasource = () => call<DatasourceStatus>("connect_datasource");

@@ -106,3 +106,39 @@ fn signing_key_is_persistent_and_private() {
     }
     fs::remove_dir_all(dir).unwrap();
 }
+
+#[test]
+fn kdf_parameters_from_the_header_are_capped() {
+    let base = EncryptionParams {
+        kdf: "argon2id".into(),
+        memory_kib: KDF_MEMORY_KIB,
+        iterations: KDF_ITERATIONS,
+        parallelism: KDF_PARALLELISM,
+        salt: B64.encode([7u8; 16]),
+        cipher: "xchacha20poly1305".into(),
+        nonce: B64.encode([0u8; 24]),
+    };
+    assert!(derive_key("pw", &base).is_ok());
+    for params in [
+        EncryptionParams { memory_kib: 256 * 1024 + 1, ..base.clone() },
+        EncryptionParams { memory_kib: 1 << 20, ..base.clone() },
+        EncryptionParams { iterations: 5, ..base.clone() },
+        EncryptionParams { parallelism: 5, ..base.clone() },
+    ] {
+        assert_eq!(derive_key("pw", &params).unwrap_err().code, "BUNDLE_INCOMPATIBLE");
+    }
+}
+
+#[test]
+fn decrypted_archive_scratch_files_never_persist() {
+    let scratch = std::env::temp_dir().join(format!("ixtable-scratch-{}", Uuid::new_v4()));
+    assert!(read_archive_bytes(b"not an archive", &scratch).is_err());
+    let doc = archive::create_document("Scratch").unwrap();
+    let bytes = archive_bytes(&doc, &scratch).unwrap();
+    assert_eq!(
+        read_archive_bytes(&bytes, &scratch).unwrap().metadata.document_id,
+        doc.metadata.document_id
+    );
+    assert_eq!(fs::read_dir(&scratch).unwrap().count(), 0);
+    fs::remove_dir_all(scratch).unwrap();
+}

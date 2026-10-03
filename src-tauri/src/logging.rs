@@ -106,13 +106,8 @@ pub fn init(dir: PathBuf) {
     let _ = DIR.set(dir);
 }
 pub fn log_dir() -> PathBuf {
-    DIR.get_or_init(|| {
-        std::env::var_os("IXTABLE_STATE_DIR")
-            .map(PathBuf::from)
-            .unwrap_or_else(|| std::env::temp_dir().join("ixtable"))
-            .join("logs")
-    })
-    .clone()
+    DIR.get_or_init(|| crate::paths::state_dir().join("logs"))
+        .clone()
 }
 fn global() -> Logger {
     Logger::new(log_dir().join(LOG_FILE), MAX_LOG_BYTES)
@@ -144,21 +139,19 @@ fn redact_urls(text: &str) -> String {
     while let Some(i) = rest.find("://") {
         let (head, tail) = rest.split_at(i + 3);
         out.push_str(head);
+        // Passwords may contain `@ / ? #`: take the whole token and split
+        // user info at its LAST `@` (over-masking beats leaking).
         let end = tail
-            .find(|c: char| c.is_whitespace() || matches!(c, '/' | '"' | '\'' | '?' | '#'))
+            .find(|c: char| c.is_whitespace() || matches!(c, '"' | '\'' | '<' | '>'))
             .unwrap_or(tail.len());
         let authority = &tail[..end];
-        match authority.rfind('@') {
-            Some(at) => {
-                let user_info = &authority[..at];
-                match user_info.find(':') {
-                    Some(colon) => {
-                        out.push_str(&user_info[..colon]);
-                        out.push(':');
-                        out.push_str(MASK);
-                    }
-                    None => out.push_str(user_info),
-                }
+        match authority
+            .rfind('@')
+            .and_then(|at| authority[..at].find(':').map(|colon| (at, colon)))
+        {
+            Some((at, colon)) => {
+                out.push_str(&authority[..=colon]);
+                out.push_str(MASK);
                 out.push_str(&authority[at..]);
             }
             None => out.push_str(authority),
@@ -194,19 +187,25 @@ fn redact_keys(text: &str) -> String {
                 continue;
             }
             j += 1;
-            while j < bytes.len() && matches!(bytes[j], b' ' | b'"' | b'\'') {
+            while j < bytes.len() && bytes[j] == b' ' {
                 j += 1;
             }
-            let value_end = (j..bytes.len())
-                .find(|&k| {
-                    bytes[k].is_ascii_whitespace()
-                        || matches!(bytes[k], b'"' | b'\'' | b';' | b'&' | b',' | b'}')
-                })
-                .unwrap_or(bytes.len());
-            if value_end == j {
+            let (value_start, value_end) = if j < bytes.len() && matches!(bytes[j], b'"' | b'\'')
+            {
+                (j + 1, closing_quote(bytes, j))
+            } else {
+                let end = (j..bytes.len())
+                    .find(|&k| {
+                        bytes[k].is_ascii_whitespace()
+                            || matches!(bytes[k], b'"' | b'\'' | b';' | b'&' | b',' | b'}')
+                    })
+                    .unwrap_or(bytes.len());
+                (j, end)
+            };
+            if value_end == value_start {
                 continue;
             }
-            out.push_str(&text[i..j]);
+            out.push_str(&text[i..value_start]);
             out.push_str(MASK);
             i = value_end;
             continue 'scan;
@@ -216,6 +215,21 @@ fn redact_keys(text: &str) -> String {
         i += ch.len_utf8();
     }
     out
+}
+/// Index of the quote closing the value opened at `open` (or the end of the
+/// text): honors backslash escapes (`'it\\'s'`) and doubled quotes (`'it''s'`).
+fn closing_quote(bytes: &[u8], open: usize) -> usize {
+    let quote = bytes[open];
+    let mut k = open + 1;
+    while k < bytes.len() {
+        match bytes[k] {
+            b'\\' => k += 2,
+            b if b == quote && bytes.get(k + 1) == Some(&quote) => k += 2,
+            b if b == quote => return k,
+            _ => k += 1,
+        }
+    }
+    bytes.len()
 }
 fn is_word(b: u8) -> bool {
     b.is_ascii_alphanumeric() || b == b'_'
@@ -270,6 +284,36 @@ mod tests {
         assert_eq!(redact("https://example.com/a"), "https://example.com/a");
         assert_eq!(redact("passwords are fine"), "passwords are fine");
         assert_eq!(redact("über token=x ✓"), "über token=*** ✓");
+    }
+
+    #[test]
+    fn redacts_quoted_values_with_spaces_and_escapes() {
+        for (input, expected) in [
+            ("password='ab cd' user=x", "password='***' user=x"),
+            (r"password='it\'s' user=x", "password='***' user=x"),
+            ("password='it''s secret' user=x", "password='***' user=x"),
+            (r#"pwd="x y" db=z"#, r#"pwd="***" db=z"#),
+            (r#"{"password": "a \"b\" c", "n": 1}"#, r#"{"password": "***", "n": 1}"#),
+            ("password='unterminated secret", "password='***"),
+            ("password='' user=x", "password='' user=x"),
+        ] {
+            assert_eq!(redact(input), expected, "{input}");
+        }
+        for (input, expected) in [
+            ("postgres://admin:p@ss%20w@rd@db.local/app", "postgres://admin:***@db.local/app"),
+            ("postgres://u:pa/ss?#x@db.local/app", "postgres://u:***@db.local/app"),
+            ("'postgres://u:p@ss@h/db'", "'postgres://u:***@h/db'"),
+        ] {
+            assert_eq!(redact(input), expected, "{input}");
+        }
+        assert_eq!(
+            redact("postgres://admin:p@ss@db.local:5432/app x"),
+            "postgres://admin:***@db.local:5432/app x"
+        );
+        assert_eq!(
+            redact("see https://example.com/users/@me"),
+            "see https://example.com/users/@me"
+        );
     }
 
     #[test]

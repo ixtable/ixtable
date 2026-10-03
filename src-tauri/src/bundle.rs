@@ -44,6 +44,9 @@ const KEY_FILE: &str = "runtime-bundle-signing.key";
 const KDF_MEMORY_KIB: u32 = 19 * 1024;
 const KDF_ITERATIONS: u32 = 2;
 const KDF_PARALLELISM: u32 = 1;
+const MAX_KDF_MEMORY_KIB: u32 = 256 * 1024;
+const MAX_KDF_ITERATIONS: u32 = 4;
+const MAX_KDF_PARALLELISM: u32 = 4;
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
@@ -158,12 +161,9 @@ pub fn check_runtime_compat(header: &BundleHeader, app_version: &str) -> Result<
     Ok(())
 }
 
-/// Local state directory shared with the document manager (`<IXTABLE_STATE_DIR>/data`).
+/// Local state directory shared with the document manager (`<state>/data`, see `paths`).
 pub fn state_dir() -> PathBuf {
-    std::env::var_os("IXTABLE_STATE_DIR")
-        .map(PathBuf::from)
-        .unwrap_or_else(|| std::env::temp_dir().join("ixtable"))
-        .join("data")
+    crate::paths::state_dir().join("data")
 }
 
 /// Loads the local developer signing key, generating it (0600) on first use.
@@ -171,13 +171,14 @@ pub fn signing_key(state: &Path) -> Result<SigningKey, AppError> {
     let dir = state.join("keys");
     let path = dir.join(KEY_FILE);
     if let Ok(bytes) = fs::read(&path) {
+        crate::paths::check_private_file(&path).map_err(|e| AppError::new("SIGNING_KEY", e))?;
         let seed: [u8; 32] = bytes
             .as_slice()
             .try_into()
             .map_err(|_| AppError::new("SIGNING_KEY", format!("{} is corrupt", path.display())))?;
         return Ok(SigningKey::from_bytes(&seed));
     }
-    fs::create_dir_all(&dir).map_err(io_err)?;
+    crate::paths::ensure_private_dir(&dir).map_err(io_err)?;
     let key = SigningKey::generate(&mut OsRng);
     let mut options = fs::OpenOptions::new();
     options.write(true).create_new(true);
@@ -203,8 +204,19 @@ fn derive_key(password: &str, params: &EncryptionParams) -> Result<[u8; 32], App
     if params.kdf != "argon2id" || params.cipher != "xchacha20poly1305" {
         return Err(sig_err("Unsupported bundle encryption"));
     }
-    if params.memory_kib > 1 << 20 || params.iterations > 16 || params.parallelism > 16 {
-        return Err(sig_err("Bundle key-derivation parameters are out of range"));
+    // The header is attacker-controlled until the password is checked: cap the
+    // work it can request (256 MiB, 4 passes, 4 lanes) so a crafted bundle cannot OOM.
+    if params.memory_kib > MAX_KDF_MEMORY_KIB
+        || params.iterations > MAX_KDF_ITERATIONS
+        || params.parallelism > MAX_KDF_PARALLELISM
+    {
+        return Err(AppError::new(
+            "BUNDLE_INCOMPATIBLE",
+            format!(
+                "Bundle key-derivation parameters exceed this Runtime's limits (memory {} KiB, {} passes, {} lanes)",
+                params.memory_kib, params.iterations, params.parallelism
+            ),
+        ));
     }
     let salt = B64.decode(&params.salt).map_err(sig_err)?;
     let argon = Argon2::new(
@@ -402,14 +414,40 @@ impl SignedBundle {
     }
 }
 
+/// A private (0600) scratch file that is removed when dropped, including on
+/// early returns and panics.
+pub(crate) struct ScratchFile(pub PathBuf);
+impl ScratchFile {
+    pub(crate) fn create(path: PathBuf, bytes: &[u8]) -> Result<Self, AppError> {
+        use std::io::Write;
+        let guard = Self(path);
+        let mut options = fs::OpenOptions::new();
+        options.write(true).create_new(true);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::OpenOptionsExt;
+            options.mode(0o600);
+        }
+        let mut file = options.open(&guard.0).map_err(io_err)?;
+        file.write_all(bytes).map_err(io_err)?;
+        Ok(guard)
+    }
+}
+impl Drop for ScratchFile {
+    fn drop(&mut self) {
+        let _ = fs::remove_file(&self.0);
+    }
+}
+
 /// Validates archive bytes by reading them back with the normal archive reader.
+/// Decrypted bytes only touch disk as a 0600 scratch file that is always deleted
+/// (the archive reader is SQLite-based and needs a path). Note the installed
+/// `active/app.ixt` is plaintext at rest by design: a bundle password protects
+/// the distributed file, not the installation (docs/decisions/runtime-bundles.md).
 pub fn read_archive_bytes(bytes: &[u8], scratch: &Path) -> Result<ArchiveDocument, AppError> {
     fs::create_dir_all(scratch).map_err(io_err)?;
-    let tmp = scratch.join(format!(".bundle-{}.ixt", Uuid::new_v4()));
-    fs::write(&tmp, bytes).map_err(io_err)?;
-    let doc = archive::read_archive(&tmp);
-    let _ = fs::remove_file(&tmp);
-    Ok(doc?)
+    let tmp = ScratchFile::create(scratch.join(format!(".bundle-{}.ixt", Uuid::new_v4())), bytes)?;
+    Ok(archive::read_archive(&tmp.0)?)
 }
 
 /// Writes `doc` as a validated archive and returns its bytes.

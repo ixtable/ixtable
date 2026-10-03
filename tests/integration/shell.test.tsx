@@ -85,8 +85,8 @@ it("switches between every registered mode and persists the active mode", async 
     expect(screen.getByRole("button", { name: mode })).toHaveAttribute("aria-pressed", "true");
   }
   expect((await readConfig()).activeMode).toBe("design");
-  await user.click(screen.getByRole("button", { name: "Preview app" }));
-  expect(await screen.findByRole("heading", { name: "Untitled", level: 1 })).toBeInTheDocument();
+  await user.click(screen.getByRole("button", { name: "Preview" }));
+  expect(await screen.findByRole("region", { name: "Main form preview" })).toBeInTheDocument();
 });
 
 it("edits config YAML, reports YAML errors, and undoes an applied YAML change", async () => {

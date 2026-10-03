@@ -1,287 +1,190 @@
-import { Columns3, ListFilter, Rows3, Shapes, Trash2 } from "lucide-react";
-import { useEffect, useMemo, useState } from "react";
-import { inspectTable, readTablePage } from "../lib/api";
-import { useDocumentConfig } from "../lib/config-store";
-import type { DataValue, DbColumn, DbObject, DbPage } from "../lib/types";
+import { useState } from "react";
+import type { Placement } from "../grid/types";
+import type { DbObject } from "../lib/types";
+import { ControlProperties } from "./ControlProperties";
+import { DesignCanvas } from "./DesignCanvas";
+import { DesignPreview } from "./DesignPreview";
+import "./design.css";
+import { FormList } from "./FormList";
+import { FormProperties } from "./FormProperties";
+import { LayoutSettings } from "./LayoutSettings";
+import { NavigationEditor } from "./NavigationEditor";
+import { addControl, setLayout, targetContainer } from "./operations";
 import {
-  type ControlKind,
-  type DesignControl,
-  type DesignSchema,
-  layoutStyle,
-  newControl,
-  placementStyle,
+  CONTROL_KINDS,
+  controlKindLabel,
+  type FormMode,
+  formTable,
+  isContainerKind,
 } from "./schema";
+import { useColumns } from "./useColumns";
+import { useDesignEditor } from "./useDesignEditor";
 
-type Props = { preview: boolean; objects: DbObject[] };
-const valueText = (value?: DataValue) => (value?.type === "null" ? "" : String(value?.value ?? ""));
+type View = "form" | "navigation" | "preview";
 
-export function DesignStudio({ preview, objects }: Props) {
-  const { config, update } = useDocumentConfig();
+/** Form designer: form list, palette, editable grid canvas, properties, navigation, and preview. */
+export function DesignStudio({ objects }: { objects: DbObject[] }) {
+  const { design, editForm } = useDesignEditor();
+  const [formId, setFormId] = useState<string | undefined>(design.forms[0]?.id);
   const [selected, setSelected] = useState<string>();
-  const [columns, setColumns] = useState<DbColumn[]>([]);
-  const [rows, setRows] = useState<DbPage>();
-  const design = config.design;
-  const form = design?.forms[0];
-  const control = form?.controls.find((item) => item.id === selected);
+  const [activeTabs, setActiveTabs] = useState<Record<string, string>>({});
+  const [view, setView] = useState<View>("form");
+  const [previewMode, setPreviewMode] = useState<FormMode>("list");
+  const form = design.forms.find((f) => f.id === formId) ?? design.forms[0];
+  const columns = useColumns(formTable(form));
+  const control = form?.controls.find((c) => c.id === selected);
 
-  useEffect(() => {
-    if (!form?.table) {
-      setColumns([]);
-      setRows(undefined);
-      return;
-    }
-    void inspectTable(form.table).then((schema) => setColumns(schema.columns));
-    void readTablePage(form.table, { limit: 25 }).then(setRows);
-  }, [form?.table]);
-
-  const saveDesign = (next: DesignSchema) =>
-    update((draft) => ({ ...draft, design: next }), "Edit form").catch(() => undefined);
-  const changeForm = (patch: Partial<NonNullable<typeof form>>) =>
+  const selectForm = (id: string) => {
+    setFormId(id);
+    setSelected(undefined);
+  };
+  const add = (kind: (typeof CONTROL_KINDS)[number]) => {
+    if (!form) return;
+    const parent = targetContainer(form, selected, activeTabs);
+    const { control: created } = addControl(form, kind, parent);
+    setSelected(created.id);
+    editForm(
+      form.id,
+      (f) => ({
+        ...f,
+        controls: [
+          ...f.controls,
+          { ...created, placement: addControl(f, kind, parent).control.placement },
+        ],
+      }),
+      "Add control",
+    );
+  };
+  const place = (id: string, placement: Placement) =>
     form &&
-    design &&
-    saveDesign({ ...design, forms: [{ ...form, ...patch }, ...design.forms.slice(1)] });
-  const changeControl = (patch: Partial<DesignControl>) =>
-    control &&
-    changeForm({
-      controls: form?.controls.map((item) =>
-        item.id === control.id ? { ...item, ...patch } : item,
-      ),
-    });
-  const bound = useMemo(() => form?.controls.filter((item) => item.binding), [form]);
+    editForm(
+      form.id,
+      (f) => ({ ...f, controls: f.controls.map((c) => (c.id === id ? { ...c, placement } : c)) }),
+      "Resize control",
+    );
+  const modes = form?.modes.length ? form.modes : (["list"] as FormMode[]);
+  const mode = modes.includes(previewMode) ? previewMode : modes[0];
 
-  if (!form) return <section className="studio-canvas">Loading design…</section>;
-  if (preview) return <DesignPreview form={form} controls={bound ?? []} rows={rows} />;
   return (
     <section className="form-studio" aria-label="Form builder">
-      <aside className="studio-components">
-        <small>COMPONENTS</small>
-        {(
-          [
-            [Rows3, "Text field", "text"],
-            [ListFilter, "Select", "select"],
-            [Columns3, "Number", "number"],
-            [Shapes, "Section", "section"],
-          ] as const
-        ).map(([Icon, label, kind]) => (
-          <button
-            key={kind}
-            onClick={() => {
-              const item = newControl(kind as ControlKind, form);
-              setSelected(item.id);
-              void changeForm({ controls: [...form.controls, item] });
-            }}
-          >
-            <Icon />
-            {label}
-          </button>
-        ))}
+      <aside className="studio-components fd-left">
+        <FormList selectedId={form?.id} onSelect={selectForm} objects={objects} />
+        <div className="fd-palette" role="group" aria-label="Components">
+          <small>COMPONENTS</small>
+          {CONTROL_KINDS.map((kind) => (
+            <button
+              key={kind}
+              type="button"
+              aria-label={`Add ${controlKindLabel(kind)}`}
+              disabled={!form}
+              onClick={() => add(kind)}
+            >
+              {controlKindLabel(kind)}
+            </button>
+          ))}
+        </div>
       </aside>
       <div className="studio-canvas">
-        <div className="form-card">
-          <small>{form.name.toUpperCase()}</small>
-          <h2>{form.name}</h2>
-          <div style={layoutStyle(form.layout)}>
-            {form.controls.map((item, index) => (
-              <div
-                role="button"
-                tabIndex={0}
-                className={`design-control ${selected === item.id ? "selected" : ""}`}
-                key={item.id}
-                style={placementStyle(item.placement)}
-                onClick={() => setSelected(item.id)}
-                onKeyDown={(event) => {
-                  if (event.key === "Enter") setSelected(item.id);
-                }}
-              >
-                <b>{item.label}</b>
-                <span>
-                  {item.binding ? `${item.binding.table}.${item.binding.column}` : item.kind}
-                </span>
-                <span className="move-controls">
-                  <button
-                    disabled={!index}
-                    onClick={(event) => {
-                      event.stopPropagation();
-                      const controls = [...form.controls];
-                      [controls[index - 1], controls[index]] = [
-                        controls[index],
-                        controls[index - 1],
-                      ];
-                      void changeForm({ controls });
-                    }}
-                  >
-                    ↑
-                  </button>
-                  <button
-                    disabled={index === form.controls.length - 1}
-                    onClick={(event) => {
-                      event.stopPropagation();
-                      const controls = [...form.controls];
-                      [controls[index + 1], controls[index]] = [
-                        controls[index],
-                        controls[index + 1],
-                      ];
-                      void changeForm({ controls });
-                    }}
-                  >
-                    ↓
-                  </button>
-                </span>
-              </div>
-            ))}
-            {!form.controls.length && <p>Add a component to start building this form.</p>}
-          </div>
-        </div>
-      </div>
-      <aside className="studio-properties">
-        <small>PROPERTIES</small>
-        <b>{control ? "Control" : "Form"}</b>
-        {!control && (
-          <>
+        <div className="fd-toolbar" role="toolbar" aria-label="Designer view">
+          {(["form", "navigation", "preview"] as View[]).map((item) => (
+            <button
+              key={item}
+              type="button"
+              aria-pressed={view === item}
+              onClick={() => setView(item)}
+            >
+              {item === "form" ? "Layout" : item === "navigation" ? "Navigation" : "Preview"}
+            </button>
+          ))}
+          {view === "preview" && (
             <label>
-              Form name
-              <input
-                value={form.name}
-                onChange={(e) => void changeForm({ name: e.target.value })}
-              />
-            </label>
-            <label>
-              Data table
-              <select
-                aria-label="Data table"
-                value={form.table ?? ""}
-                onChange={(e) => void changeForm({ table: e.target.value || null })}
-              >
-                <option value="">Unbound</option>
-                {objects
-                  .filter((o) => o.objectType === "table" || o.objectType === "view")
-                  .map((o) => (
-                    <option key={o.name}>{o.name}</option>
-                  ))}
-              </select>
-            </label>
-          </>
-        )}
-        {control && (
-          <>
-            <label>
-              Label
-              <input
-                value={control.label}
-                onChange={(e) => void changeControl({ label: e.target.value })}
-              />
-            </label>
-            <label>
-              Column
-              <select
-                aria-label="Bound column"
-                value={control.binding?.column ?? ""}
-                onChange={(e) =>
-                  void changeControl({
-                    binding:
-                      e.target.value && form.table
-                        ? { table: form.table, column: e.target.value }
-                        : null,
-                  })
-                }
-              >
-                <option value="">Unbound</option>
-                {columns.map((c) => (
-                  <option key={c.name}>{c.name}</option>
+              Preview mode
+              <select value={mode} onChange={(e) => setPreviewMode(e.target.value as FormMode)}>
+                {modes.map((m) => (
+                  <option key={m} value={m}>
+                    {m}
+                  </option>
                 ))}
               </select>
             </label>
-            <label>
-              Column span
-              <input
-                type="number"
-                min="1"
-                max={form.layout.columns.length}
-                aria-label="Column span"
-                value={control.placement.columnSpan}
-                onChange={(e) =>
-                  void changeControl({
-                    placement: {
-                      ...control.placement,
-                      columnSpan: Number(e.target.value) || 1,
-                    },
-                  })
+          )}
+        </div>
+        {view === "navigation" && <NavigationEditor objects={objects} />}
+        {view === "preview" && form && (
+          <DesignPreview key={`${form.id}:${mode}`} form={form} mode={mode} />
+        )}
+        {view === "form" &&
+          (form ? (
+            <div className="form-card fd-card-wide">
+              <small>
+                {form.source?.kind === "query"
+                  ? "READ-ONLY FORM"
+                  : (formTable(form) ?? "UNBOUND").toUpperCase()}
+              </small>
+              <h2>{form.name}</h2>
+              <p className="fd-hint">
+                Enter selects a control, Alt+Arrow resizes, Alt+Shift+Arrow moves.
+              </p>
+              <DesignCanvas
+                form={form}
+                selectedId={selected}
+                onSelect={setSelected}
+                activeTabs={activeTabs}
+                onActiveTab={(tabsId, tabId) => setActiveTabs((t) => ({ ...t, [tabsId]: tabId }))}
+                onPlacement={place}
+              />
+              {!form.controls.length && <p>Add a component to start building this form.</p>}
+            </div>
+          ) : (
+            <p className="fd-hint">Create a form or generate one from a table.</p>
+          ))}
+      </div>
+      <aside className="studio-properties" aria-label="Properties">
+        <small>PROPERTIES</small>
+        {form && (
+          <>
+            <b>{control ? "Control" : "Form"}</b>
+            {control && (
+              <button type="button" className="fd-link" onClick={() => setSelected(undefined)}>
+                Back to form properties
+              </button>
+            )}
+            {control ? (
+              <ControlProperties
+                key={control.id}
+                form={form}
+                control={control}
+                columns={columns}
+                objects={objects}
+                onDeleted={() => setSelected(undefined)}
+              />
+            ) : (
+              <FormProperties
+                form={form}
+                objects={objects}
+                columns={columns}
+                layoutSettings={
+                  <LayoutSettings
+                    layout={form.layout}
+                    onChange={(layout) =>
+                      editForm(form.id, (f) => setLayout(f, null, layout), "Edit grid")
+                    }
+                  />
                 }
               />
-            </label>
-            <label>
-              <input
-                type="checkbox"
-                checked={control.validation.required}
-                onChange={(e) =>
-                  void changeControl({
-                    validation: { ...control.validation, required: e.target.checked },
-                  })
+            )}
+            {control && isContainerKind(control.kind) && control.layout && (
+              <LayoutSettings
+                title="Container grid"
+                layout={control.layout}
+                onChange={(layout) =>
+                  editForm(form.id, (f) => setLayout(f, control.id, layout), "Edit grid")
                 }
-              />{" "}
-              Required
-            </label>
-            <button
-              onClick={() => {
-                void changeForm({
-                  controls: form.controls.filter((item) => item.id !== control.id),
-                });
-                setSelected(undefined);
-              }}
-            >
-              <Trash2 />
-              Delete control
-            </button>
+              />
+            )}
           </>
         )}
       </aside>
-    </section>
-  );
-}
-
-function DesignPreview({
-  form,
-  controls,
-  rows,
-}: {
-  form: NonNullable<DesignSchema["forms"][number]>;
-  controls: DesignControl[];
-  rows?: DbPage;
-}) {
-  return (
-    <section className="app-preview" aria-label={`${form.name} preview`}>
-      <div className="preview-app-head">
-        <div>
-          <small>LIVE APP</small>
-          <h2>{form.name}</h2>
-        </div>
-      </div>
-      <div className="preview-records">
-        <div
-          className="preview-record-head"
-          style={{ gridTemplateColumns: `repeat(${Math.max(controls.length, 1)}, 1fr)` }}
-        >
-          {controls.map((item) => (
-            <span key={item.id}>{item.label}</span>
-          ))}
-        </div>
-        {rows?.rows.map((row, index) => (
-          <div
-            className="preview-record"
-            style={{ gridTemplateColumns: `repeat(${Math.max(controls.length, 1)}, 1fr)` }}
-            key={index}
-          >
-            {controls.map((item) => (
-              <span key={item.id}>
-                {valueText(
-                  row[rows.columns.findIndex((column) => column.name === item.binding?.column)],
-                )}
-              </span>
-            ))}
-          </div>
-        ))}
-        {!rows?.rows.length && <p>No live records to display.</p>}
-      </div>
     </section>
   );
 }

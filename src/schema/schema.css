@@ -170,3 +170,90 @@
   gap: 4px;
   font-size: 12px;
 }
+
+/* Studio density: the designers inherit the 16px browser default otherwise. */
+.schema-designer {
+  font-size: 13px;
+  color: #25272a;
+}
+.schema-designer h2 {
+  margin: 0;
+  font-size: 17px;
+  font-weight: 650;
+}
+.schema-designer h3 {
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  color: #3d4a40;
+}
+.schema-designer input:not([type="checkbox"]),
+.schema-designer select,
+.schema-designer textarea {
+  font: inherit;
+  padding: 5px 8px;
+  border: 1px solid #ccd4cb;
+  border-radius: 5px;
+  background: #fff;
+}
+.schema-designer button {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  border: 1px solid #ccd4cb;
+  border-radius: 5px;
+  background: #fff;
+  padding: 5px 10px;
+  font-size: 12px;
+  font-weight: 600;
+  color: #2f4a36;
+  white-space: nowrap;
+}
+.schema-designer button:hover:not(:disabled) {
+  background: #f1f4f0;
+}
+.schema-designer button:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+.schema-designer button.text-red-700 {
+  color: #b91c1c;
+  border-color: #f3c4c4;
+}
+.schema-designer button.save {
+  background: #29352c;
+  border-color: #29352c;
+  color: #fff;
+}
+/* One card per column so key and delete controls read as part of their column. */
+.schema-designer section[aria-label="Columns"] > div {
+  border: 1px solid #e2e8e0;
+  border-radius: 6px;
+  padding: 8px 10px;
+  margin-bottom: 8px;
+  background: #fbfcfa;
+}
+.schema-designer legend {
+  padding: 0 4px;
+  font-size: 11px;
+  font-weight: 700;
+  color: #5b665d;
+}
+.schema-designer ul {
+  margin: 4px 0 8px;
+  padding: 0;
+  list-style: none;
+}
+/* Text inputs read as editable fields on the grey settings page, like the selects next to them. */
+.settings-form input:not([type="checkbox"]),
+.migration-editor input:not([type="checkbox"]),
+.migration-editor textarea {
+  background: #fff;
+}
+.settings-panel table td > button {
+  border: 1px solid #d3d7d1;
+  border-radius: 5px;
+  background: #fff;
+  padding: 3px 8px;
+  font-size: 12px;
+}

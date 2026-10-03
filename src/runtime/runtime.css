@@ -322,3 +322,21 @@
 .rt-back {
   margin-bottom: 10px;
 }
+/* Disabled runtime buttons (e.g. an action whose enabled-when is false) must look inactive. */
+.rt-actions button:disabled,
+.rt-pager button:disabled,
+.rt-related button:disabled,
+.rt-button:disabled,
+.rt-roles button:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+.rt-roles button {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.rt-roles button svg {
+  width: 14px;
+  height: 14px;
+}

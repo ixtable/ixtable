@@ -2404,3 +2404,80 @@ button {
   margin-left: auto;
   white-space: nowrap;
 }
+
+/* Data grid toolbar and pager: icon buttons sit inline with their labels. */
+.pane-title button {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  border: 1px solid #dde0dc;
+  border-radius: 5px;
+  background: #fff;
+  padding: 3px 8px;
+  font-size: 11px;
+  color: #33503b;
+  white-space: nowrap;
+}
+.pane-title button svg {
+  width: 12px;
+  height: 12px;
+}
+.grid-footer > div {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  word-spacing: normal;
+}
+.grid-footer > div button {
+  min-width: 22px;
+  height: 20px;
+  justify-content: center;
+  font-size: 14px;
+  line-height: 1;
+  border-radius: 4px;
+}
+.grid-footer > div button:disabled {
+  color: #b9beb8;
+  cursor: default;
+}
+
+/*
+ * Studio base size. Without it every control without its own font-size
+ * inherits the 16px browser default and looks oversized next to the 11–13px
+ * Studio chrome (form builder tabs, generate buttons, settings forms).
+ */
+.document-app {
+  font-size: 13px;
+}
+.ribbon-big {
+  white-space: nowrap;
+}
+/* Fieldsets default to min-width: min-content and push property panels past their edge. */
+fieldset {
+  min-width: 0;
+}
+.report-panel .grid2 > *,
+.studio-properties label {
+  min-width: 0;
+}
+.report-panel input:not([type="checkbox"]),
+.report-panel select,
+.studio-properties input:not([type="checkbox"]),
+.studio-properties select,
+.studio-properties textarea {
+  max-width: 100%;
+  min-width: 0;
+}
+.report-panel .grid2 input,
+.report-panel .grid2 select {
+  width: 100%;
+}
+/* Start screen: the empty state stacks; template versions never truncate. */
+.start-section > .empty-recent {
+  display: grid;
+  justify-content: center;
+}
+.template-list .template-version {
+  flex: none;
+  overflow: visible;
+}

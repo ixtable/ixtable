@@ -183,3 +183,20 @@
   outline: 2px solid #52775b;
   outline-offset: 2px;
 }
+/* Recovery rows live in a .recent-list, whose full-width button rule must not stretch them. */
+.recovery-list .recovery-item button {
+  width: auto;
+  flex: none;
+  padding: 5px 10px;
+}
+.recovery-item > span {
+  min-width: 0;
+}
+.recovery-item b {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.recovery-section {
+  margin-bottom: 28px;
+}

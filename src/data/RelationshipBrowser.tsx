@@ -16,6 +16,7 @@ import { Table2 } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import "@xyflow/react/dist/style.css";
 import type { DbObject, TableSchema } from "../lib/types";
+import { defaultLayout } from "./layout";
 
 type SchemaNodeData = { schema: TableSchema; count: number | null; selected: boolean };
 export type NodePositions = Record<string, { x: number; y: number }>;
@@ -80,23 +81,19 @@ export function RelationshipBrowser({
   onRelate?: (relationship: DrawnRelationship) => void;
 }) {
   const nodeTypes = useMemo(() => ({ table: SchemaNode }), []);
-  const computed = useMemo<Node<SchemaNodeData>[]>(
-    () =>
-      schemas.map((schema, index) => ({
-        id: schema.name,
-        type: "table",
-        position: positions[schema.name] ?? {
-          x: 30 + (index % 3) * 300,
-          y: 25 + Math.floor(index / 3) * 190,
-        },
-        data: {
-          schema,
-          count: objects.find((object) => object.name === schema.name)?.rowCount ?? null,
-          selected: schema.name === selected,
-        },
-      })),
-    [objects, schemas, selected, positions],
-  );
+  const computed = useMemo<Node<SchemaNodeData>[]>(() => {
+    const layout = defaultLayout(schemas);
+    return schemas.map((schema, index) => ({
+      id: schema.name,
+      type: "table",
+      position: positions[schema.name] ?? layout[index],
+      data: {
+        schema,
+        count: objects.find((object) => object.name === schema.name)?.rowCount ?? null,
+        selected: schema.name === selected,
+      },
+    }));
+  }, [objects, schemas, selected, positions]);
   const [nodes, setNodes] = useState(computed);
   useEffect(() => setNodes(computed), [computed]);
   const edges = useMemo<Edge[]>(

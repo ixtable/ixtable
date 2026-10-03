@@ -133,3 +133,10 @@
   display: grid;
   gap: 8px;
 }
+/* The bar sits in the dark sidebar: give its white buttons dark text instead of the inherited light colour. */
+.runtime-bar-action {
+  color: #2d3a30;
+}
+.runtime-bar-action.danger {
+  color: #a3302a;
+}

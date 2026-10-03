@@ -1,6 +1,7 @@
 import { useEffect, useId, useState } from "react";
 import type { DesignControl } from "../design/schema";
 import { useDocumentConfig } from "../lib/config-store";
+import { readAssetDataUrl } from "./api";
 import { type Choice, queryChoices, relationshipChoices, relationshipLabel } from "./data";
 import { formatted } from "./formState";
 import { sameValue } from "./values";
@@ -271,5 +272,41 @@ export function ComputedValue({
         {error ? "—" : formatted(value, control.format)}
       </output>
     </div>
+  );
+}
+
+/** Image control: the asset rendered as an image, with the control label as alt text. */
+export function ImageView({ control }: { control: DesignControl }) {
+  const assetId = control.assetId ?? "";
+  const [state, setState] = useState<{ id: string; url?: string; error?: string }>({ id: "" });
+  useEffect(() => {
+    if (!assetId) return;
+    let live = true;
+    readAssetDataUrl(assetId)
+      .then((url) => live && setState({ id: assetId, url }))
+      .catch(
+        (reason) =>
+          live &&
+          setState({
+            id: assetId,
+            error: reason instanceof Error ? reason.message : String(reason),
+          }),
+      );
+    return () => {
+      live = false;
+    };
+  }, [assetId]);
+  const current = state.id === assetId ? state : { id: assetId };
+  return (
+    <figure className="rt-image">
+      {current.url ? (
+        <img src={current.url} alt={control.label} />
+      ) : (
+        <div className="rt-image-box" role="img" aria-label={control.label} title={current.error}>
+          {!assetId ? "No image" : current.error ? "Image unavailable" : "Loading image…"}
+        </div>
+      )}
+      <figcaption>{control.label}</figcaption>
+    </figure>
   );
 }

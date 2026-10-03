@@ -26,6 +26,8 @@ import { fromDataValue, namedValues, type RecordValues, sameValue } from "./valu
 export type Link = { column: string; value: unknown };
 export type OpenTarget = { formId: string; mode: FormMode; recordId?: unknown };
 
+type Notice = { text: string; tone: "info" | "error" };
+
 type Props = {
   form: DesignForm;
   mode: Exclude<FormMode, "list">;
@@ -65,11 +67,19 @@ export function RecordView({
   const [identity, setIdentity] = useState<DataValue[] | null>(null);
   const [formState, setFormState] = useState<Record<string, unknown>>({});
   const [errors, setErrors] = useState<FormErrors>({ fields: {}, form: [] });
-  const [status, setStatus] = useState<{ text: string; tone: "info" | "error" } | null>(null);
-  const [loading, setLoading] = useState(mode !== "create");
+  // Load and save problems; reset whenever the record (re)loads.
+  const [status, setStatus] = useState<Notice | null>(null);
+  // Result of the last button action; independent of record loads (a refresh keeps it).
+  const [notice, setNotice] = useState<Notice | null>(null);
   const [busy, setBusy] = useState(false);
+  const [running, setRunning] = useState(false);
   // Bumped when an action changed the shown record, so detail mode reloads it.
   const [reload, setReload] = useState(0);
+  // The record is loading until the load for exactly this form/mode/record has finished,
+  // so a just-switched view never shows (or runs actions on) the previous view's values.
+  const loadKey = JSON.stringify([form.id, mode, table, recordId ?? null, reload]);
+  const [loadedKey, setLoadedKey] = useState<string | null>(null);
+  const loading = loadedKey !== loadKey;
   const [dialog, confirm] = useConfirm();
   const heading = useRef<HTMLHeadingElement>(null);
 
@@ -86,11 +96,11 @@ export function RecordView({
   useEffect(() => {
     inputs.current = { app, link, recordId, form };
   });
-  const recordKey = JSON.stringify(recordId ?? null);
 
   useEffect(() => {
     let live = true;
     const { app, link, recordId, form } = inputs.current;
+    const done = () => live && setLoadedKey(loadKey);
     setStatus(null);
     setErrors({ fields: {}, form: [] });
     if (table)
@@ -103,19 +113,18 @@ export function RecordView({
       setRecord(initial);
       setOriginal({});
       setIdentity(null);
-      setLoading(false);
+      done();
       return () => {
         live = false;
       };
     }
     if (!table) {
       setRecord((recordId as RecordValues) ?? {});
-      setLoading(false);
+      done();
       return () => {
         live = false;
       };
     }
-    setLoading(true);
     loadRecord(table, recordId)
       .then((loaded) => {
         if (!live) return;
@@ -125,11 +134,13 @@ export function RecordView({
         if (!loaded) setStatus({ text: "This record no longer exists.", tone: "error" });
       })
       .catch((reason) => live && setStatus({ text: message(reason), tone: "error" }))
-      .finally(() => live && setLoading(false));
+      .finally(done);
     return () => {
       live = false;
     };
-  }, [form.id, mode, table, recordKey, reload]);
+    // loadKey covers form, mode, table, record, and reload.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [loadKey]);
 
   useEffect(() => {
     if (!loading) heading.current?.focus();
@@ -192,6 +203,7 @@ export function RecordView({
       return;
     }
     if (!table || !schema) return;
+    setNotice(null);
     setBusy(true);
     try {
       const values = valuesToWrite();
@@ -250,7 +262,9 @@ export function RecordView({
   };
 
   const runButton = async (control: DesignControl) => {
-    if (!control.actionId) return;
+    if (!control.actionId || !ready) return;
+    setNotice(null);
+    setRunning(true);
     const result = await runAction(control.actionId, {
       config,
       record: { ...record },
@@ -263,14 +277,18 @@ export function RecordView({
           : runtime.setAppState(key, value),
       confirm,
       notify: (text, tone = "info") => {
-        setStatus({ text, tone });
+        setNotice({ text, tone });
         runtime.notify(text, tone);
       },
       authorize: (kind, id, op) => can(config, roleId, kind, id, op as "read"),
       refresh: () => (mode === "detail" ? setReload((n) => n + 1) : onMode(mode, recordId)),
-    }).catch((reason) => ({ ok: false, error: message(reason) }));
-    if (!result.ok && result.error) setStatus({ text: result.error, tone: "error" });
+    })
+      .catch((reason) => ({ ok: false, error: message(reason) }))
+      .finally(() => setRunning(false));
+    if (!result.ok && result.error) setNotice({ text: result.error, tone: "error" });
   };
+  // Actions run only on a fully loaded record (and one at a time).
+  const ready = !loading && !running && !busy && (mode === "create" || !table || identity !== null);
 
   const ctx: BodyContext = {
     form,
@@ -287,7 +305,7 @@ export function RecordView({
       runButton(control).catch(() => undefined);
     },
     canRunButton: (control) =>
-      !control.actionId || can(config, roleId, "action", control.actionId, "execute"),
+      !control.actionId || (ready && can(config, roleId, "action", control.actionId, "execute")),
   };
   const title =
     mode === "create" ? `New ${form.name}` : mode === "edit" ? `Edit ${form.name}` : form.name;
@@ -313,7 +331,14 @@ export function RecordView({
         </Tag>
         <div className="rt-actions">
           {mode === "detail" && allowed("update") && form.modes.includes("edit") && (
-            <button type="button" onClick={() => onMode("edit", recordId)} disabled={!identity}>
+            <button
+              type="button"
+              onClick={() => {
+                setNotice(null);
+                onMode("edit", recordId);
+              }}
+              disabled={!identity}
+            >
               Edit
             </button>
           )}
@@ -333,13 +358,17 @@ export function RecordView({
           )}
         </div>
       </div>
-      {status && (
-        <p
-          className={status.tone === "error" ? "rt-error" : "rt-status"}
-          role={status.tone === "error" ? "alert" : "status"}
-        >
-          {status.text}
-        </p>
+      {[status, notice].map(
+        (item, index) =>
+          item && (
+            <p
+              key={index}
+              className={item.tone === "error" ? "rt-error" : "rt-status"}
+              role={item.tone === "error" ? "alert" : "status"}
+            >
+              {item.text}
+            </p>
+          ),
       )}
       {errors.form.length > 0 && (
         <ul className="rt-form-errors" aria-label="Form errors">

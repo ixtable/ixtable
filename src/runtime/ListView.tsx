@@ -13,6 +13,7 @@ import {
   tableSchema,
 } from "./data";
 import { cellText } from "./formState";
+import { useLookupLabels } from "./lookups";
 import { useRuntimeNavigation } from "./navigation";
 import { can } from "./rbac";
 import { isDesignedForm, resolveForm } from "./registry";
@@ -95,6 +96,9 @@ export function ListView({ form, onOpen, onCreate }: Props) {
       ? form.controls.flatMap((c) => (c.binding?.column ? [c.binding.column] : []))
       : (page?.columns ?? []);
   const label = (column: string) => controlFor(column)?.label ?? humanize(column);
+  const lookup = useLookupLabels(table, columns, controlFor, page?.rows);
+  const cell = (record: Record<string, unknown>, column: string) =>
+    lookup(column, record[column]) ?? cellText(record[column], controlFor(column));
   const subject = isDesignedForm(config, detail)
     ? { kind: "form", id: detail.id }
     : { kind: "table", id: table ?? "" };
@@ -198,7 +202,7 @@ export function ListView({ form, onOpen, onCreate }: Props) {
               key={index}
               tabIndex={0}
               className="rt-row"
-              aria-label={`Open ${String(record[columns[0]] ?? `row ${offset + index + 1}`)}`}
+              aria-label={`Open ${record[columns[0]] == null ? `row ${offset + index + 1}` : (lookup(columns[0], record[columns[0]]) ?? String(record[columns[0]]))}`}
               onClick={() => open(index)}
               onKeyDown={(event) => {
                 if (event.key === "Enter" || event.key === " ") {
@@ -208,7 +212,7 @@ export function ListView({ form, onOpen, onCreate }: Props) {
               }}
             >
               {columns.map((column) => (
-                <td key={column}>{cellText(record[column], controlFor(column))}</td>
+                <td key={column}>{cell(record, column)}</td>
               ))}
             </tr>
           ))}

@@ -13,6 +13,8 @@
  *   created record holds its values, not its generated key). Navigation, messages
  *   and state changes are held back until the commit succeeds.
  * A declined `confirm` always ends the action (saving nothing in rollback mode).
+ * A `fail` step always ends the action with its message as the error, even under
+ * onError=continue (saving nothing in rollback mode).
  * Nested runAction steps join the caller's transaction when there is one.
  */
 import { evaluate, evaluateBoolean } from "../expr";
@@ -79,6 +81,8 @@ class Cancelled extends Error {
   }
 }
 class StepFailure extends Error {}
+/** A `fail` step: a business-rule abort whose message is the action's error. */
+class Aborted extends StepFailure {}
 
 /** Writes and UI effects held back until a rollback-mode action commits. */
 interface Transaction {
@@ -135,7 +139,7 @@ async function execute(
   action: ActionDef,
   parent: Frame,
   prefix: string,
-): Promise<{ ok: boolean; error?: string; cancelled?: boolean }> {
+): Promise<{ ok: boolean; error?: string; cancelled?: boolean; aborted?: boolean }> {
   const own: Transaction | null =
     (action.onError ?? "stop") === "rollback" && !parent.tx ? { writes: [], effects: [] } : null;
   const frame: Frame = {
@@ -152,6 +156,7 @@ async function execute(
       ok: false,
       error: message(e) + unsaved,
       ...(e instanceof Cancelled && { cancelled: true }),
+      ...(e instanceof Aborted && { aborted: true }),
     };
   }
   if (!own) return { ok: true };
@@ -189,7 +194,7 @@ async function runSteps(steps: Step[], frame: Frame, prefix: string): Promise<vo
     } catch (e) {
       log.ok = false;
       log.error = message(e);
-      if (e instanceof Cancelled) throw e;
+      if (e instanceof Cancelled || e instanceof Aborted) throw e;
       if (frame.onError !== "continue")
         throw e instanceof StepFailure
           ? e
@@ -354,8 +359,13 @@ async function runStep(step: Step, frame: Frame, path: string): Promise<void> {
       authorize(frame, "action", child.id, "execute");
       const outcome = await execute(child, frame, `${path}.action`);
       if (outcome.cancelled) throw new Cancelled();
+      if (outcome.aborted) throw new Aborted(outcome.error ?? `Action ${child.name} failed`);
       if (!outcome.ok) throw new Error(outcome.error ?? `Action ${child.name} failed`);
       return;
+    }
+    case "fail": {
+      const text = expr(step.message, frame, "Failure message");
+      throw new Aborted(String(text ?? "") || "The action failed");
     }
     default:
       throw new Error(`Unknown step kind ${(step as { kind: string }).kind}`);

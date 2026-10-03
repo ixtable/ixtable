@@ -225,9 +225,7 @@ it("CRM: Runtime CRUD with master/detail, validation, trigger, action, roles, co
       await showList(user, "Deals");
       await user.click(await within(page).findByRole("row", { name: "Open Bat signal" }, LONG));
       const deal = await within(page).findByRole("form", { name: "Deal" }, LONG);
-      const button = await within(deal).findByRole("button", { name: "Mark deal won" }, LONG);
-      await waitFor(() => expect(button).toBeEnabled(), LONG);
-      await user.click(button);
+      await user.click(await within(deal).findByRole("button", { name: "Mark deal won" }, LONG));
       await eventually(async () =>
         expect(await sql("SELECT status FROM deals WHERE title = 'Bat signal'")).toEqual([["won"]]),
       );

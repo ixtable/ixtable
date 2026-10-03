@@ -161,11 +161,7 @@ async function markTaskDone(user: User, row: number) {
 
 async function press(user: User, label: string) {
   const form = await within(runtimePage()).findByRole("form", { name: "Work order" }, LONG);
-  const edit = await within(form).findByRole("button", { name: "Edit" }, LONG);
-  await waitFor(() => expect(edit).toBeEnabled(), LONG);
-  const button = await within(form).findByRole("button", { name: label }, LONG);
-  await waitFor(() => expect(button).toBeEnabled(), LONG);
-  await user.click(button);
+  await user.click(await within(form).findByRole("button", { name: label }, LONG));
   return form;
 }
 

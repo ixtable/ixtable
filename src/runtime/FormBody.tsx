@@ -2,7 +2,7 @@ import { type KeyboardEvent, useState } from "react";
 import type { DesignControl, DesignForm, TabPage } from "../design/schema";
 import { isInputKind } from "../design/schema";
 import { GridCanvas, GridItem } from "../grid";
-import { ComputedValue, Field } from "./controls";
+import { ComputedValue, Field, ImageView } from "./controls";
 import { compute, condition, type FormScope } from "./formState";
 import { RelatedRecords } from "./RelatedList";
 import type { DataValue } from "../lib/types";
@@ -93,14 +93,7 @@ function ControlView({ ctx, control }: { ctx: BodyContext; control: DesignContro
         </button>
       );
     case "image":
-      return (
-        <figure className="rt-image" aria-label={control.label}>
-          <div className="rt-image-box" role="img" aria-label={control.label}>
-            {control.assetId ? `Asset ${control.assetId}` : "No image"}
-          </div>
-          <figcaption>{control.label}</figcaption>
-        </figure>
-      );
+      return <ImageView control={control} />;
     case "relatedList":
       if (ctx.embedded) return null;
       return <RelatedRecords ctx={ctx} control={control} />;

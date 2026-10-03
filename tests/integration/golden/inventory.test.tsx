@@ -141,11 +141,7 @@ async function newTransfer(
 }
 
 async function post(user: User, form: HTMLElement) {
-  const edit = await within(form).findByRole("button", { name: "Edit" }, LONG);
-  await waitFor(() => expect(edit).toBeEnabled(), LONG);
-  const button = await within(form).findByRole("button", { name: "Post transfer" }, LONG);
-  await waitFor(() => expect(button).toBeEnabled(), LONG);
-  await user.click(button);
+  await user.click(await within(form).findByRole("button", { name: "Post transfer" }, LONG));
 }
 
 const movements = () => scalar("SELECT count(*) FROM stock_movements");

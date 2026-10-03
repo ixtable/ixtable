@@ -88,7 +88,10 @@ export function RunMode() {
             </button>
           )}
           {page ? (
-            <PageView key={`${runtime.roleId ?? ""}:${JSON.stringify(page)}`} page={page} />
+            <PageView
+              key={`${runtime.roleId ?? ""}:${runtime.visit}:${JSON.stringify(page)}`}
+              page={page}
+            />
           ) : (
             <p className="rt-muted">This application has no pages yet.</p>
           )}

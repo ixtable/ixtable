@@ -257,6 +257,13 @@
   color: #818791;
   font-size: 12px;
 }
+.rt-image img {
+  display: block;
+  max-width: 100%;
+  max-height: 320px;
+  object-fit: contain;
+  border-radius: 5px;
+}
 .rt-image figcaption {
   font-size: 11px;
   color: #818791;

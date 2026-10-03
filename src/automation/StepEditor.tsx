@@ -369,6 +369,18 @@ function StepFields({
           {when}
         </div>
       );
+    case "fail":
+      return (
+        <div className="ax-row">
+          <ExprInput
+            label="Failure message"
+            required
+            value={step.message}
+            onChange={(v) => set({ message: v })}
+          />
+          {when}
+        </div>
+      );
     case "condition":
       return (
         <>

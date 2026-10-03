@@ -30,6 +30,8 @@ export interface RuntimeNavigation {
   notify: (message: string, tone?: Notice["tone"]) => void;
   /** False when a FormRenderer is used outside Run mode (for example in a dashboard). */
   attached: boolean;
+  /** Bumped on every navigation, so choosing the open page again starts it fresh. */
+  visit?: number;
 }
 
 export const RuntimeContext = createContext<RuntimeNavigation | null>(null);
@@ -46,6 +48,7 @@ const detached: RuntimeNavigation = {
   notice: null,
   notify: () => undefined,
   attached: false,
+  visit: 0,
 };
 
 /** Runtime navigation, role, and app state. Outside Run mode returns a detached developer context. */
@@ -92,14 +95,20 @@ export function useRuntimeState(config: DocumentConfig): RuntimeNavigation {
   const [roleId, setRole] = useState<string | null>(null);
   const [state, setState] = useState<Record<string, unknown>>({});
   const [notice, setNotice] = useState<Notice | null>(null);
+  const [visit, setVisit] = useState(0);
   const navigate = useCallback((page: RuntimePage) => {
     setNotice(null);
+    setVisit((n) => n + 1);
     setHistory((items) => [...items.slice(-49), page]);
   }, []);
-  const back = useCallback(() => setHistory((items) => items.slice(0, -1)), []);
+  const back = useCallback(() => {
+    setVisit((n) => n + 1);
+    setHistory((items) => items.slice(0, -1));
+  }, []);
   const setRoleId = useCallback((next: string | null) => {
     setRole(next);
     setNotice(null);
+    setVisit((n) => n + 1);
     setHistory([]);
   }, []);
   const setAppState = useCallback(
@@ -131,6 +140,7 @@ export function useRuntimeState(config: DocumentConfig): RuntimeNavigation {
     notice,
     notify,
     attached: true,
+    visit,
   };
 }
 

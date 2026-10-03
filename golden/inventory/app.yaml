@@ -512,6 +512,5 @@ actions:
             text: "'Transfer posted.'"
         else:
           - id: refused
-            kind: message
-            tone: error
-            text: "if(record.status <> 'draft', 'This transfer is already posted.', 'Not enough stock at the source location: ' & coalesce(sum(results.source.on_hand), 0) & ' on hand.')"
+            kind: fail
+            message: "if(record.status <> 'draft', 'This transfer is already posted.', 'Not enough stock at the source location: ' & coalesce(sum(results.source.on_hand), 0) & ' on hand.')"

@@ -127,6 +127,7 @@ const STEP_KINDS: &[&str] = &[
     "message",
     "condition",
     "runAction",
+    "fail",
 ];
 
 fn text<'a>(fields: &'a Map<String, Value>, key: &str) -> &'a str {
@@ -289,6 +290,7 @@ fn check_step(config: &DocumentConfig, action: &ActionDef, step: &Step, issues: 
         }
         "confirm" => need(issues, "message", "message expression"),
         "message" => need(issues, "text", "text expression"),
+        "fail" => need(issues, "message", "message expression"),
         "runAction" => {
             let set = config.actions.iter().map(|a| a.id.as_str()).collect();
             missing(issues, "action", text(f, "actionId"), &set);
@@ -467,7 +469,8 @@ mod tests {
                     {"id": "4", "kind": "runAction", "actionId": "ghost"},
                     {"id": "5", "kind": "condition", "then": [{"id": "6", "kind": "confirm", "message": ""}], "else": []},
                     {"id": "7", "kind": "teleport"},
-                    {"id": "8", "kind": "setState", "scope": "global", "key": "k", "value": "1"}
+                    {"id": "8", "kind": "setState", "scope": "global", "key": "k", "value": "1"},
+                    {"id": "9", "kind": "fail", "message": " "}
                 ]
             }, {"id": "a2", "name": "Empty", "steps": []}]),
             json!([
@@ -484,6 +487,7 @@ mod tests {
             "condition step: condition expression is empty",
             "confirm step: message expression is empty",
             "teleport step: unknown step kind",
+            "fail step: message expression is empty",
             "scope must be app or form",
             "action \"Empty\" has no steps",
             "trigger \"T\": no table selected",
@@ -528,7 +532,8 @@ mod tests {
         let c = config(
             json!([{"id": "a", "name": "A", "steps": [
                 {"id": "1", "kind": "createRecord", "table": "audit", "values": {"m": "'x'"}},
-                {"id": "2", "kind": "deleteRecord", "table": "orders", "match": "current"}
+                {"id": "2", "kind": "deleteRecord", "table": "orders", "match": "current"},
+                {"id": "3", "kind": "fail", "message": "'Over the credit limit'", "when": "false"}
             ]}]),
             json!([{"id": "t", "name": "T", "table": "orders", "actionId": "a"}]),
         );

@@ -6,6 +6,7 @@ import { useDocumentConfig } from "../lib/config-store";
 import { deleteRecord } from "../lib/records";
 import type { DataValue, TableSchema } from "../lib/types";
 import { useConfirm } from "./Confirm";
+import { useLookupLabels } from "./lookups";
 import type { BodyContext } from "./FormBody";
 import { FormRenderer } from "./FormRenderer";
 import { recordIdFor, tableSchema } from "./data";
@@ -28,6 +29,24 @@ export function RelatedRecords({ ctx, control }: { ctx: BodyContext; control: De
   const [error, setError] = useState("");
   const [dialog, confirm] = useConfirm();
   const parentValue = related ? ctx.scope.record[related.parentColumn] : null;
+  const childForm: DesignForm | null = !related
+    ? null
+    : related.formId
+      ? resolveForm(config, related.formId)
+      : schema
+        ? tableForms(schema).detail
+        : null;
+  const columns = !related
+    ? []
+    : related.columns.length
+      ? related.columns
+      : (schema?.columns.map((c) => c.name).filter((c) => c !== related.foreignKey) ?? []);
+  const lookup = useLookupLabels(
+    related?.table ?? null,
+    columns,
+    (column) => childForm?.controls.find((c) => c.binding?.column === column),
+    rows?.records,
+  );
   const saved = !!ctx.identity && parentValue != null;
 
   const load = useCallback(async () => {
@@ -68,20 +87,12 @@ export function RelatedRecords({ ctx, control }: { ctx: BodyContext; control: De
         <p className="rt-muted">Save this record to add {label.toLowerCase()}.</p>
       </section>
     );
-  const childForm: DesignForm | null = related.formId
-    ? resolveForm(config, related.formId)
-    : schema
-      ? tableForms(schema).detail
-      : null;
   const subject =
     childForm && isDesignedForm(config, childForm)
       ? { kind: "form", id: childForm.id }
       : { kind: "table", id: related.table };
   const allowed = (op: "create" | "update" | "delete") =>
     can(config, roleId, subject.kind, subject.id, op);
-  const columns = related.columns.length
-    ? related.columns
-    : (schema?.columns.map((c) => c.name).filter((c) => c !== related.foreignKey) ?? []);
   const columnLabel = (column: string) =>
     childForm?.controls.find((c) => c.binding?.column === column)?.label ?? humanize(column);
 
@@ -134,7 +145,9 @@ export function RelatedRecords({ ctx, control }: { ctx: BodyContext; control: De
           {rows?.records.map((record, index) => (
             <tr key={index}>
               {columns.map((column) => (
-                <td key={column}>{displayText(record[column])}</td>
+                <td key={column}>
+                  {lookup(column, record[column]) ?? displayText(record[column])}
+                </td>
               ))}
               <td className="rt-row-actions">
                 {allowed("update") && childForm && schema && (

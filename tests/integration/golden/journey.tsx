@@ -192,18 +192,8 @@ export async function openPage(user: User, label: string) {
   await user.click(within(runtimeNav()).getByRole("button", { name: label }));
 }
 
-/**
- * Opens a navigation entry's list. Choosing the entry that is already open keeps its
- * current record view, so this walks back to the list with the form's Back button.
- */
-export async function showList(user: User, label: string) {
-  await openPage(user, label);
-  for (let i = 0; i < 5; i++) {
-    const back = within(runtimePage()).queryByRole("button", { name: "Back" });
-    if (!back) break;
-    await user.click(back);
-  }
-}
+/** Opens a navigation entry's list; choosing the entry that is already open returns to its list too. */
+export const showList = openPage;
 
 /** Picks a relationship option once the lookup has loaded it. */
 export async function chooseRelated(user: User, form: HTMLElement, label: string, option: string) {

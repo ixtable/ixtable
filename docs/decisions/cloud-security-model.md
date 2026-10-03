@@ -77,26 +77,79 @@ users cannot obtain new bundles or keys.
 ### Credential envelopes
 
 - Studio encrypts the datasource secret with a random 256-bit DEK
-  (XChaCha20-Poly1305, Rust). The `credential-envelope` function wraps the
-  DEK with the KEK: AES-256-GCM, 96-bit random IV, AAD binding the envelope
-  context (`appId|datasourceId[|userId]`), stored as `base64(iv ||
-  ciphertext || tag)` plus `kek_version`. The plaintext DEK is not stored.
+  (XChaCha20-Poly1305, Rust). The owner-only `credential-envelope` function
+  checks the inputs (base64; 24-byte nonce, ciphertext of 17 bytes to
+  64 KiB, aad up to 1 KiB, 32-byte DEK) and wraps the DEK with the KEK:
+  AES-256-GCM, 96-bit random IV, AAD `appId|datasourceId|scope|userId`
+  (`userId` empty for shared), stored as `base64(iv || ciphertext || tag)`
+  plus `kek_version`. A row copied to another target fails to unwrap. The
+  plaintext DEK is not stored or logged.
+- A target (app, datasource, user or shared) has one active envelope
+  (partial unique index). A new upload runs `credential_envelope_put`, which
+  marks the old row `superseded_at`/`superseded_by` and erases its ciphertext,
+  nonce, aad and wrapped DEK in the same transaction; a check constraint
+  keeps retired rows empty. The metadata stays so key grants remain
+  attributable to the credential they delivered.
+- Per-user envelopes (`scope = 'user'`) need the target to be an active
+  member (or the owner). `key-grant` prefers the caller's per-user envelope
+  over the shared one.
+- `credential-delete` (owner) revokes the active envelopes of a datasource
+  (or one scope/user), erases their secrets and revokes their live grants;
+  later grants for it return `NOT_FOUND`.
 - KEKs are function secrets `IXTABLE_KEK_V<n>` (32 random bytes, base64) with
   `IXTABLE_KEK_CURRENT_VERSION` for new wraps. Rotation adds a version and
   re-wraps envelopes in the background; old versions stay until no row uses
   them. The KEK never leaves the function runtime.
-- `key-grant` returns the unwrapped DEK and the envelope over TLS to an
-  authorized installation, records a `key_grants` row and an audit event,
-  and sets `expiresAt = now + 24h`. The Runtime decrypts in memory and
-  renews with a refreshed session. Grants are rate limited per user.
+- Clients can read only envelope metadata, and only the app owner. Every
+  client role gets `42501` selecting `ciphertext`, `nonce`, `aad`,
+  `wrapped_dek` or `*`.
+
+### Key grants
+
+- `key-grant` checks, in order: session, input, rate limit (30 per hour per
+  user and app, `429 RATE_LIMITED`), live app (`NOT_FOUND` when missing or
+  deleted), owner or membership (`NOT_FOUND` without one, `REVOKED` when
+  revoked), the caller's own installation (`NOT_FOUND`, or `REVOKED` when
+  revoked), entitlement (`402 ENTITLEMENT_REQUIRED` with the reason), then the
+  envelope (`NOT_FOUND`).
+- It returns the unwrapped DEK and the envelope over TLS, records a
+  `key_grants` row (`kind` issue or renew, `used_at` = delivery time,
+  `expires_at` = issue + 24 h, `renewed_from`) and audits `key.issue`, or
+  `key.renew` when a live grant already existed for the installation and
+  datasource. Grant ids are single-use: a renewal is a new grant. The
+  Runtime decrypts in memory and renews with a refreshed session.
+- `devices-revoke` lets app admins revoke any installation and a Runtime User
+  revoke their own. It sets `revoked_at`/`revoked_by`, revokes the
+  installation's live grants and audits `credential.revoke`. Installation ids
+  come from the desktop, so a revoked person could register a new one;
+  revoking the membership (`members-update`) is what cuts a person off.
+  `bundle-manifest` must refuse revoked installations too.
 
 ### Desktop sign-in
 
 Email/password runs in the desktop webview. OAuth uses a browser hand-off with
-PKCE (S256): the desktop sends `code_challenge` and `state`, the signed-in
-website approves, and the desktop exchanges `state` + `code_verifier` once,
-within 10 minutes (`desktop_auth_requests`). The refresh token is stored in
-the OS secret store, never in archives or logs.
+PKCE (S256):
+
+1. The desktop opens `<site>/desktop-auth?code_challenge=…&state=…`.
+2. The signed-in website calls `desktop-auth-approve` `{codeChallenge,
+   state}`. This stores a `desktop_auth_requests` row bound to the user,
+   approved now, expiring in 5 minutes (audit `auth.desktop_approve`).
+   Approving the same state and challenge again is idempotent; any other
+   reuse of a state is refused.
+3. The desktop polls `desktop-auth-exchange` `{state, codeVerifier}` (no
+   JWT). It gets `428 PENDING` until approval, then one session. The
+   function checks `base64url(sha256(verifier)) == challenge` in constant
+   time, consumes the row with a conditional update (single use), and mints
+   the session without the user's password: Auth admin `generateLink`
+   (magic link) followed by a server-side `verifyOtp` with the token hash.
+   Errors: `404` with reason `consumed` or `expired`, `403` with reason
+   `verifier_mismatch` (five failures invalidate the request), `429` (120
+   requests per minute per IP hash). Audit `auth.desktop_exchange`.
+
+The refresh token is stored in the OS secret store, never in archives or
+logs. Like any device-authorization flow, a user can be phished into
+approving an attacker's request; the approval page must say which app is
+signing in and to approve only a sign-in they just started.
 
 ### Secrets and logging
 
@@ -125,5 +178,13 @@ the OS secret store, never in archives or logs.
 - `supabase/functions/_shared/crypto_test.ts` (Ed25519 with Node-generated
   keys, AES-GCM wrong key/AAD/tamper rejection, KEK versions, HMAC and PKCE
   vectors) and `billing_test.ts` (Stripe signature tolerance and secrets).
-- Function specs for key grants, revocation, bundles and desktop auth are
-  added by the agents that build those functions.
+- `web/e2e/service-qa/specs/credentials.spec.ts` (owner-only upload,
+  validation, supersede and erase, secrets unreadable for every role),
+  `key-grant.spec.ts` (XChaCha20-Poly1305 round trip with the granted DEK,
+  24-hour expiry, issue/renew, per-user preference, non-member, revoked
+  member, deleted app, entitlement, rate limit), `revocation.spec.ts`
+  (device revocation, self-service limits, credential deletion) and
+  `desktop-auth.spec.ts` (pending, working session, single use, wrong
+  verifier, expiry, approval rules).
+- `supabase/functions/_shared/credentials_test.ts` (AAD binding, input
+  checks, grant expiry, PKCE vectors).

@@ -18,6 +18,7 @@ every risk-retirement spike. This index maps each spike to its record.
 | [Expression language](./expression-language.md) | none. Records the PRD §17.1 language design | accepted |
 | [Cloud architecture](./cloud-architecture.md) | none. ixtable Cloud control plane: schema, RLS, functions, local stack | accepted (foundation) |
 | [Cloud security model](./cloud-security-model.md) | signed personalized bundle and envelope-encryption threat model | accepted, external review pending |
+| [Desktop updates, signing, and CSP](./desktop-updates.md) | none. Signed installers, update channels, webview CSP (PRD Phase 5) | accepted, production keys pending |
 
 The Phase 0 item "signed personalized bundle and envelope-encryption threat
 model" belongs to ixtable Cloud. The desktop work does not build it. The

@@ -15,6 +15,7 @@ import { RecoveryList } from "../persistence";
 import { BundleFileFlow } from "../release";
 import { openRuntimeBundle } from "../release/api";
 import { TemplatePicker } from "./TemplatePicker";
+import { UpdateNotice } from "../updates";
 
 const RECENT_PREVIEW = 5;
 const fileName = (path: string) => path.split(/[\\/]/).pop() || path;
@@ -141,6 +142,7 @@ export function StartScreen({
         )}
         <CloudApps disabled={!!pending} onOpened={onOpened} onNotice={setNotice} />
         <RecoveryList disabled={!!pending} run={run} onError={setError} />
+        <UpdateNotice />
         <TemplatePicker disabled={!!pending} run={run} />
         <section className="start-section" aria-labelledby="recent-documents">
           <div>

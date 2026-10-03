@@ -5,6 +5,7 @@ import { ReleaseTab } from "../release";
 import { RolesTab } from "../runtime";
 import { MigrationsTab } from "../migrations";
 import { DatasourceTab, EntitiesTab } from "../schema";
+import { UpdatesTab } from "../updates";
 import { ProblemsTab } from "./ProblemsTab";
 import { YamlTab } from "./YamlTab";
 
@@ -18,7 +19,8 @@ export type SettingsTabId =
   | "roles"
   | "yaml"
   | "problems"
-  | "logs";
+  | "logs"
+  | "updates";
 
 export interface SettingsTabDefinition {
   id: SettingsTabId;
@@ -38,4 +40,5 @@ export const settingsTabs: readonly SettingsTabDefinition[] = [
   { id: "yaml", label: "YAML", Component: YamlTab },
   { id: "problems", label: "Problems", Component: ProblemsTab },
   { id: "logs", label: "Logs", Component: LogsTab },
+  { id: "updates", label: "Updates", Component: UpdatesTab },
 ];

@@ -26,6 +26,7 @@ pub mod reports;
 pub mod roles;
 pub mod storage;
 pub mod templates;
+pub mod updater;
 pub mod validation;
 
 use archive::{Attachment, DocumentConfig};
@@ -324,6 +325,8 @@ pub fn run() {
         // Registered first: a second launch hands its file arguments to this process and exits, so two processes never share the state dir.
         .plugin(tauri_plugin_single_instance::init(forward_open_args))
         .plugin(tauri_plugin_dialog::init())
+        // Signed updates (updater.rs); config and pubkey in tauri.conf.json `plugins.updater`.
+        .plugin(tauri_plugin_updater::Builder::new().build())
         .setup(|app| {
             use tauri::Manager;
             // Durable state lives in the app's local data dir, resolved before any command runs.
@@ -458,6 +461,13 @@ pub fn run() {
             cloud::runtime_commands::cloud_runtime_info,
             cloud::runtime_commands::cloud_key_grant,
             cloud::runtime_commands::cloud_release_credentials,
+            // updater commands
+            updater::update_settings,
+            updater::set_update_settings,
+            updater::check_for_update,
+            updater::install_update,
+            updater::update_progress,
+            updater::relaunch_app,
         ])
         .build(tauri::generate_context!())
         .expect("error while building ixtable")

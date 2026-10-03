@@ -1,0 +1,517 @@
+# Inventory management golden application (PRD §26.3).
+# Pure definition data: the same DocumentConfig YAML the Settings › YAML tab edits.
+# {{asset:<file>}} placeholders are replaced with the ids of the template's assets
+# when a document is created from the template.
+version: 3
+name: Inventory
+activeMode: run
+settings:
+  template: inventory
+  description: Products, locations, suppliers, stock movements with transactional transfers, low-stock alerts, and a valuation report.
+release:
+  version: 1.0.0
+  notes: Golden inventory template.
+datasource:
+  kind: sqlite
+entities:
+  - { id: inv-entity-suppliers, table: suppliers, concurrency: optimistic }
+  - { id: inv-entity-locations, table: locations, concurrency: optimistic }
+  - { id: inv-entity-products, table: products, concurrency: optimistic }
+  - { id: inv-entity-movements, table: stock_movements, concurrency: lastWriteWins }
+  - { id: inv-entity-thresholds, table: reorder_thresholds, concurrency: optimistic }
+  - { id: inv-entity-transfers, table: transfers, concurrency: optimistic }
+migrations:
+  - id: inv-001-schema
+    name: 001 Create inventory schema
+    order: 1
+    targetStore: sqlite
+    up: |
+      CREATE TABLE suppliers (
+        id INTEGER PRIMARY KEY,
+        name TEXT NOT NULL UNIQUE,
+        email TEXT,
+        phone TEXT,
+        lead_time_days INTEGER NOT NULL DEFAULT 7 CHECK (lead_time_days >= 0)
+      );
+      CREATE TABLE locations (
+        id INTEGER PRIMARY KEY,
+        code TEXT NOT NULL UNIQUE,
+        name TEXT NOT NULL,
+        kind TEXT NOT NULL DEFAULT 'warehouse' CHECK (kind IN ('warehouse', 'store', 'transit'))
+      );
+      CREATE TABLE products (
+        id INTEGER PRIMARY KEY,
+        sku TEXT NOT NULL UNIQUE CHECK (length(sku) >= 3),
+        name TEXT NOT NULL,
+        supplier_id INTEGER REFERENCES suppliers(id) ON DELETE SET NULL,
+        unit_cost REAL NOT NULL DEFAULT 0 CHECK (unit_cost >= 0),
+        unit TEXT NOT NULL DEFAULT 'each',
+        active INTEGER NOT NULL DEFAULT 1 CHECK (active IN (0, 1))
+      );
+      CREATE TABLE stock_movements (
+        id INTEGER PRIMARY KEY,
+        product_id INTEGER NOT NULL REFERENCES products(id) ON DELETE CASCADE,
+        location_id INTEGER NOT NULL REFERENCES locations(id) ON DELETE RESTRICT,
+        quantity INTEGER NOT NULL CHECK (quantity <> 0),
+        kind TEXT NOT NULL CHECK (kind IN ('receipt', 'issue', 'transfer_in', 'transfer_out', 'adjustment')),
+        reference TEXT,
+        moved_on DATE NOT NULL DEFAULT (date('now')),
+        note TEXT
+      );
+      CREATE TABLE reorder_thresholds (
+        product_id INTEGER NOT NULL REFERENCES products(id) ON DELETE CASCADE,
+        location_id INTEGER NOT NULL REFERENCES locations(id) ON DELETE CASCADE,
+        min_quantity INTEGER NOT NULL CHECK (min_quantity >= 0),
+        reorder_quantity INTEGER NOT NULL DEFAULT 0 CHECK (reorder_quantity >= 0),
+        PRIMARY KEY (product_id, location_id)
+      );
+      CREATE TABLE transfers (
+        id INTEGER PRIMARY KEY,
+        product_id INTEGER NOT NULL REFERENCES products(id) ON DELETE CASCADE,
+        from_location_id INTEGER NOT NULL REFERENCES locations(id),
+        to_location_id INTEGER NOT NULL REFERENCES locations(id),
+        quantity INTEGER NOT NULL CHECK (quantity > 0),
+        status TEXT NOT NULL DEFAULT 'draft' CHECK (status IN ('draft', 'posted')),
+        requested_on DATE NOT NULL DEFAULT (date('now')),
+        posted_on DATE,
+        CHECK (status <> 'posted' OR from_location_id <> to_location_id)
+      );
+      CREATE INDEX movements_product_location ON stock_movements(product_id, location_id);
+      CREATE INDEX products_supplier ON products(supplier_id);
+savedQueries:
+  - id: inv-q-on-hand
+    name: Stock on hand
+    sql: |
+      SELECT p.sku, p.name AS product, l.code AS location, sum(m.quantity) AS on_hand
+      FROM stock_movements m
+      JOIN products p ON p.id = m.product_id
+      JOIN locations l ON l.id = m.location_id
+      WHERE ($location IS NULL OR l.code = $location)
+      GROUP BY p.sku, p.name, l.code
+      ORDER BY p.sku, l.code
+    parameters:
+      - { name: location, logicalType: text }
+  - id: inv-q-by-product
+    name: Stock by product
+    sql: |
+      SELECT p.sku, p.name AS product, coalesce(sum(m.quantity), 0) AS on_hand
+      FROM products p LEFT JOIN stock_movements m ON m.product_id = p.id
+      GROUP BY p.sku, p.name
+      ORDER BY p.sku
+  - id: inv-q-by-location
+    name: Stock by location
+    sql: |
+      SELECT l.code AS location, sum(m.quantity) AS units, sum(m.quantity * p.unit_cost) AS value
+      FROM stock_movements m
+      JOIN locations l ON l.id = m.location_id
+      JOIN products p ON p.id = m.product_id
+      WHERE ($location IS NULL OR l.code = $location)
+      GROUP BY l.code
+      ORDER BY l.code
+    parameters:
+      - { name: location, logicalType: text }
+  - id: inv-q-valuation
+    name: Inventory valuation
+    sql: |
+      SELECT coalesce(s.name, 'No supplier') AS supplier, p.sku, p.name AS product,
+        coalesce(sum(m.quantity), 0) AS on_hand, p.unit_cost,
+        coalesce(sum(m.quantity), 0) * p.unit_cost AS value
+      FROM products p
+      LEFT JOIN suppliers s ON s.id = p.supplier_id
+      LEFT JOIN stock_movements m ON m.product_id = p.id
+      GROUP BY s.name, p.sku, p.name, p.unit_cost
+      ORDER BY supplier, p.sku
+  - id: inv-q-low-stock
+    name: Low stock
+    sql: |
+      SELECT p.sku, p.name AS product, l.code AS location,
+        coalesce(s.on_hand, 0) AS on_hand, t.min_quantity, t.reorder_quantity
+      FROM reorder_thresholds t
+      JOIN products p ON p.id = t.product_id
+      JOIN locations l ON l.id = t.location_id
+      LEFT JOIN (
+        SELECT product_id, location_id, sum(quantity) AS on_hand
+        FROM stock_movements GROUP BY product_id, location_id
+      ) s ON s.product_id = t.product_id AND s.location_id = t.location_id
+      WHERE coalesce(s.on_hand, 0) < t.min_quantity
+        AND ($location IS NULL OR l.code = $location)
+      ORDER BY p.sku, l.code
+    parameters:
+      - { name: location, logicalType: text }
+  - id: inv-q-on-hand-at
+    name: On hand at location
+    sql: |
+      SELECT coalesce(sum(quantity), 0) AS on_hand
+      FROM stock_movements
+      WHERE product_id = $product_id AND location_id = $location_id
+    parameters:
+      - { name: product_id, logicalType: integer, required: true }
+      - { name: location_id, logicalType: integer, required: true }
+  - id: inv-q-location-codes
+    name: Location codes
+    sql: SELECT code FROM locations ORDER BY code
+design:
+  version: 3
+  startPage: inv-nav-dashboard
+  navigation:
+    - { id: inv-nav-dashboard, label: Stock overview, kind: dashboard, targetId: inv-dash-stock }
+    - { id: inv-nav-products, label: Products, kind: form, targetId: inv-form-products }
+    - { id: inv-nav-movements, label: Stock movements, kind: form, targetId: inv-form-movements }
+    - { id: inv-nav-transfers, label: Transfers, kind: form, targetId: inv-form-transfers }
+    - { id: inv-nav-thresholds, label: Reorder thresholds, kind: form, targetId: inv-form-thresholds }
+    - id: inv-nav-setup
+      label: Setup
+      kind: group
+      children:
+        - { id: inv-nav-locations, label: Locations, kind: form, targetId: inv-form-locations }
+        - { id: inv-nav-suppliers, label: Suppliers, kind: form, targetId: inv-form-suppliers }
+    - id: inv-nav-reports
+      label: Reports
+      kind: group
+      children:
+        - { id: inv-nav-valuation, label: Inventory valuation, kind: report, targetId: inv-report-valuation }
+  forms:
+    - id: inv-form-products
+      name: Products
+      source: { kind: table, table: products }
+      modes: [list]
+      listColumns: [sku, name, unit_cost, active]
+      detailFormId: inv-form-product
+      controls:
+        - { id: sku, kind: text, label: SKU, binding: { column: sku }, placement: { column: 1, row: 1, columnSpan: 3 } }
+        - { id: name, kind: text, label: Name, binding: { column: name }, placement: { column: 4, row: 1, columnSpan: 5 } }
+        - { id: unit_cost, kind: decimal, label: Unit cost, binding: { column: unit_cost }, format: "$#,##0.00", placement: { column: 9, row: 1, columnSpan: 2 } }
+        - { id: active, kind: boolean, label: Active, binding: { column: active }, placement: { column: 11, row: 1, columnSpan: 2 } }
+    - id: inv-form-product
+      name: Product
+      source: { kind: table, table: products }
+      modes: [detail, create, edit]
+      controls:
+        - id: sku
+          kind: text
+          label: SKU
+          binding: { column: sku }
+          validation: { required: true, pattern: "[A-Z0-9-]{3,}", message: "Use at least three capital letters, digits, or dashes." }
+          placement: { column: 1, row: 1, columnSpan: 3 }
+        - { id: name, kind: text, label: Name, binding: { column: name }, validation: { required: true }, placement: { column: 4, row: 1, columnSpan: 6 } }
+        - id: image
+          kind: image
+          label: Product photo
+          assetId: "{{asset:product-placeholder.png}}"
+          placement: { column: 10, row: 1, columnSpan: 3, rowSpan: 2 }
+        - id: supplier
+          kind: relationship
+          label: Supplier
+          binding: { column: supplier_id }
+          relationship: { table: suppliers, valueColumn: id, displayColumn: name }
+          placement: { column: 1, row: 2, columnSpan: 5 }
+        - id: unit_cost
+          kind: decimal
+          label: Unit cost
+          binding: { column: unit_cost }
+          format: "$#,##0.00"
+          validation: { required: true, min: 0, message: Unit cost cannot be negative. }
+          placement: { column: 6, row: 2, columnSpan: 2 }
+        - { id: unit, kind: text, label: Unit, binding: { column: unit }, defaultValue: "'each'", placement: { column: 8, row: 2, columnSpan: 2 } }
+        - { id: active, kind: boolean, label: Active, binding: { column: active }, defaultValue: "1", placement: { column: 1, row: 3, columnSpan: 2 } }
+        - id: movements
+          kind: relatedList
+          label: Movements
+          related: { table: stock_movements, foreignKey: product_id, parentColumn: id, columns: [moved_on, kind, quantity, reference], formId: inv-form-movement }
+          placement: { column: 1, row: 4, columnSpan: 12 }
+        - id: thresholds
+          kind: relatedList
+          label: Reorder thresholds
+          related: { table: reorder_thresholds, foreignKey: product_id, parentColumn: id, columns: [location_id, min_quantity, reorder_quantity], formId: inv-form-threshold }
+          placement: { column: 1, row: 5, columnSpan: 12 }
+    - id: inv-form-movements
+      name: Stock movements
+      source: { kind: table, table: stock_movements }
+      modes: [list]
+      listColumns: [moved_on, kind, quantity, reference]
+      detailFormId: inv-form-movement
+    - id: inv-form-movement
+      name: Movement
+      source: { kind: table, table: stock_movements }
+      modes: [detail, create, edit]
+      controls:
+        - id: product
+          kind: relationship
+          label: Product
+          binding: { column: product_id }
+          validation: { required: true }
+          relationship: { table: products, valueColumn: id, displayColumn: name }
+          placement: { column: 1, row: 1, columnSpan: 6 }
+        - id: location
+          kind: relationship
+          label: Location
+          binding: { column: location_id }
+          validation: { required: true }
+          relationship: { table: locations, valueColumn: id, displayColumn: name }
+          placement: { column: 7, row: 1, columnSpan: 6 }
+        - id: kind
+          kind: select
+          label: Kind
+          binding: { column: kind }
+          validation: { required: true }
+          defaultValue: "'receipt'"
+          options:
+            - { value: receipt, label: Receipt }
+            - { value: issue, label: Issue }
+            - { value: adjustment, label: Adjustment }
+            - { value: transfer_in, label: Transfer in }
+            - { value: transfer_out, label: Transfer out }
+          placement: { column: 1, row: 2, columnSpan: 4 }
+        - id: quantity
+          kind: number
+          label: Quantity
+          binding: { column: quantity }
+          validation: { required: true, expression: "value <> 0 and (record.kind <> 'issue' or value < 0)", message: Use a non-zero quantity; issues are negative. }
+          placement: { column: 5, row: 2, columnSpan: 4 }
+        - { id: moved_on, kind: date, label: Date, binding: { column: moved_on }, defaultValue: today(), placement: { column: 9, row: 2, columnSpan: 4 } }
+        - { id: reference, kind: text, label: Reference, binding: { column: reference }, placement: { column: 1, row: 3, columnSpan: 4 } }
+        - { id: note, kind: text, label: Note, binding: { column: note }, placement: { column: 5, row: 3, columnSpan: 8 } }
+    - id: inv-form-transfers
+      name: Transfers
+      source: { kind: table, table: transfers }
+      modes: [list]
+      listColumns: [id, quantity, status, requested_on]
+      detailFormId: inv-form-transfer
+    - id: inv-form-transfer
+      name: Transfer
+      source: { kind: table, table: transfers }
+      modes: [detail, create, edit]
+      controls:
+        - id: product
+          kind: relationship
+          label: Product
+          binding: { column: product_id }
+          validation: { required: true }
+          relationship: { table: products, valueColumn: id, displayColumn: name }
+          placement: { column: 1, row: 1, columnSpan: 6 }
+        - id: quantity
+          kind: number
+          label: Quantity
+          binding: { column: quantity }
+          validation: { required: true, min: 1 }
+          placement: { column: 7, row: 1, columnSpan: 3 }
+        - { id: status, kind: text, label: Status, binding: { column: status }, readOnly: true, defaultValue: "'draft'", placement: { column: 10, row: 1, columnSpan: 3 } }
+        - id: from
+          kind: relationship
+          label: From location
+          binding: { column: from_location_id }
+          validation: { required: true }
+          relationship: { table: locations, valueColumn: id, displayColumn: name }
+          placement: { column: 1, row: 2, columnSpan: 6 }
+        - id: to
+          kind: relationship
+          label: To location
+          binding: { column: to_location_id }
+          validation: { required: true }
+          relationship: { table: locations, valueColumn: id, displayColumn: name }
+          placement: { column: 7, row: 2, columnSpan: 6 }
+        - { id: requested_on, kind: date, label: Requested on, binding: { column: requested_on }, defaultValue: today(), placement: { column: 1, row: 3, columnSpan: 4 } }
+        - { id: posted_on, kind: date, label: Posted on, binding: { column: posted_on }, readOnly: true, placement: { column: 5, row: 3, columnSpan: 4 } }
+        - id: post
+          kind: button
+          label: Post transfer
+          actionId: inv-action-post-transfer
+          enabledWhen: "record.status = 'draft'"
+          placement: { column: 9, row: 3, columnSpan: 4 }
+    - id: inv-form-thresholds
+      name: Reorder thresholds
+      source: { kind: table, table: reorder_thresholds }
+      modes: [list]
+      listColumns: [product_id, location_id, min_quantity, reorder_quantity]
+      detailFormId: inv-form-threshold
+    - id: inv-form-threshold
+      name: Reorder threshold
+      source: { kind: table, table: reorder_thresholds }
+      modes: [detail, create, edit]
+      controls:
+        - id: product
+          kind: relationship
+          label: Product
+          binding: { column: product_id }
+          validation: { required: true }
+          relationship: { table: products, valueColumn: id, displayColumn: name }
+          placement: { column: 1, row: 1, columnSpan: 6 }
+        - id: location
+          kind: relationship
+          label: Location
+          binding: { column: location_id }
+          validation: { required: true }
+          relationship: { table: locations, valueColumn: id, displayColumn: name }
+          placement: { column: 7, row: 1, columnSpan: 6 }
+        - { id: min_quantity, kind: number, label: Minimum quantity, binding: { column: min_quantity }, validation: { required: true, min: 0 }, placement: { column: 1, row: 2, columnSpan: 6 } }
+        - { id: reorder_quantity, kind: number, label: Reorder quantity, binding: { column: reorder_quantity }, defaultValue: "0", validation: { required: true, min: 0 }, placement: { column: 7, row: 2, columnSpan: 6 } }
+    - id: inv-form-locations
+      name: Locations
+      source: { kind: table, table: locations }
+      modes: [list]
+      listColumns: [code, name, kind]
+      detailFormId: inv-form-location
+    - id: inv-form-location
+      name: Location
+      source: { kind: table, table: locations }
+      modes: [detail, create, edit]
+      controls:
+        - { id: code, kind: text, label: Code, binding: { column: code }, validation: { required: true }, placement: { column: 1, row: 1, columnSpan: 3 } }
+        - { id: name, kind: text, label: Name, binding: { column: name }, validation: { required: true }, placement: { column: 4, row: 1, columnSpan: 6 } }
+        - id: kind
+          kind: select
+          label: Kind
+          binding: { column: kind }
+          defaultValue: "'warehouse'"
+          options:
+            - { value: warehouse, label: Warehouse }
+            - { value: store, label: Store }
+            - { value: transit, label: Transit }
+          placement: { column: 10, row: 1, columnSpan: 3 }
+    - id: inv-form-suppliers
+      name: Suppliers
+      source: { kind: table, table: suppliers }
+      modes: [list]
+      listColumns: [name, email, lead_time_days]
+      detailFormId: inv-form-supplier
+    - id: inv-form-supplier
+      name: Supplier
+      source: { kind: table, table: suppliers }
+      modes: [detail, create, edit]
+      controls:
+        - { id: name, kind: text, label: Name, binding: { column: name }, validation: { required: true }, placement: { column: 1, row: 1, columnSpan: 6 } }
+        - id: email
+          kind: text
+          label: Email
+          binding: { column: email }
+          validation: { required: false, pattern: "[^@\\s]+@[^@\\s]+\\.[^@\\s]+", message: Enter an email address like orders@example.com. }
+          placement: { column: 7, row: 1, columnSpan: 6 }
+        - { id: phone, kind: text, label: Phone, binding: { column: phone }, placement: { column: 1, row: 2, columnSpan: 6 } }
+        - { id: lead_time_days, kind: number, label: Lead time (days), binding: { column: lead_time_days }, defaultValue: "7", validation: { required: true, min: 0 }, placement: { column: 7, row: 2, columnSpan: 6 } }
+        - id: products
+          kind: relatedList
+          label: Products
+          related: { table: products, foreignKey: supplier_id, parentColumn: id, columns: [sku, name, unit_cost] }
+          placement: { column: 1, row: 3, columnSpan: 12 }
+reports:
+  - id: inv-report-valuation
+    name: Inventory valuation
+    datasetQueryId: inv-q-valuation
+    page:
+      size: A4
+      orientation: portrait
+      margins: { top: 36, right: 36, bottom: 36, left: 36 }
+    bands:
+      reportHeader:
+        height: 40
+        components:
+          - { id: logo, kind: image, x: 0, y: 0, w: 32, h: 32, assetId: "{{asset:product-placeholder.png}}" }
+          - { id: title, kind: staticText, x: 40, y: 4, w: 483, h: 24, text: Inventory valuation, style: { fontSize: 16, bold: true } }
+      pageHeader:
+        height: 18
+        components:
+          - { id: h-sku, kind: staticText, x: 0, y: 0, w: 80, h: 14, text: SKU, style: { bold: true } }
+          - { id: h-product, kind: staticText, x: 80, y: 0, w: 200, h: 14, text: Product, style: { bold: true } }
+          - { id: h-on-hand, kind: staticText, x: 280, y: 0, w: 70, h: 14, text: On hand, style: { bold: true, align: right } }
+          - { id: h-cost, kind: staticText, x: 350, y: 0, w: 80, h: 14, text: Unit cost, style: { bold: true, align: right } }
+          - { id: h-value, kind: staticText, x: 430, y: 0, w: 93, h: 14, text: Value, style: { bold: true, align: right } }
+      groups:
+        - id: by-supplier
+          groupBy: record.supplier
+          header:
+            height: 22
+            keepTogether: true
+            components:
+              - { id: g-supplier, kind: field, x: 0, y: 4, w: 523, h: 16, expression: record.supplier, style: { fontSize: 12, bold: true } }
+          footer:
+            height: 20
+            components:
+              - { id: g-subtotal, kind: calculated, x: 280, y: 2, w: 243, h: 14, expression: "'Subtotal ' & format(sum(rows.value), '#,##0.00')", style: { align: right } }
+      detail:
+        height: 16
+        components:
+          - { id: d-sku, kind: field, x: 0, y: 0, w: 80, h: 14, expression: record.sku }
+          - { id: d-product, kind: field, x: 80, y: 0, w: 200, h: 14, expression: record.product }
+          - { id: d-on-hand, kind: field, x: 280, y: 0, w: 70, h: 14, expression: record.on_hand, format: "#,##0", style: { align: right } }
+          - { id: d-cost, kind: field, x: 350, y: 0, w: 80, h: 14, expression: record.unit_cost, format: "#,##0.00", style: { align: right } }
+          - { id: d-value, kind: field, x: 430, y: 0, w: 93, h: 14, expression: record.value, format: "#,##0.00", style: { align: right } }
+      pageFooter:
+        height: 18
+        components:
+          - { id: page, kind: calculated, x: 0, y: 2, w: 523, h: 14, expression: "'Page ' & page & ' of ' & pages", style: { align: center } }
+      reportFooter:
+        height: 24
+        components:
+          - { id: total, kind: calculated, x: 0, y: 4, w: 523, h: 16, expression: "'Total inventory value: ' & format(sum(rows.value), '#,##0.00')", style: { bold: true, align: right } }
+dashboards:
+  - id: inv-dash-stock
+    name: Stock overview
+    filters:
+      - { id: inv-filter-location, name: Location, param: location, logicalType: text, control: select, optionsQueryId: inv-q-location-codes }
+    components:
+      - { id: location-filter, kind: filter, title: Location, filterId: inv-filter-location, placement: { column: 1, row: 1, columnSpan: 4 } }
+      - { id: low-stock-count, kind: kpi, title: Low-stock items, queryId: inv-q-low-stock, expression: count(rows.sku), format: "#,##0", placement: { column: 1, row: 2, columnSpan: 4 } }
+      - { id: stock-value, kind: kpi, title: Inventory value, queryId: inv-q-by-location, expression: sum(rows.value), format: "$#,##0.00", placement: { column: 5, row: 2, columnSpan: 4 } }
+      - { id: units, kind: kpi, title: Units on hand, queryId: inv-q-by-location, expression: sum(rows.units), format: "#,##0", placement: { column: 9, row: 2, columnSpan: 4 } }
+      - id: low-stock-table
+        kind: table
+        title: Below reorder threshold
+        queryId: inv-q-low-stock
+        columns: [sku, product, location, on_hand, min_quantity, reorder_quantity]
+        pageSize: 10
+        placement: { column: 1, row: 3, columnSpan: 7, rowSpan: 2 }
+      - { id: by-location, kind: chart, title: Units by location, queryId: inv-q-by-location, chartType: bar, x: location, y: [units], placement: { column: 8, row: 3, columnSpan: 5, rowSpan: 2 } }
+actions:
+  - id: inv-action-post-transfer
+    name: Post transfer
+    description: Moves stock between locations as one transaction (transfer in, transfer out, posted status).
+    onError: rollback
+    steps:
+      - id: source-stock
+        kind: runQuery
+        queryId: inv-q-on-hand-at
+        params:
+          product_id: record.product_id
+          location_id: record.from_location_id
+        storeAs: source
+      - id: check
+        kind: condition
+        when: "record.status = 'draft' and coalesce(sum(results.source.on_hand), 0) >= record.quantity"
+        then:
+          - id: transfer-in
+            kind: createRecord
+            table: stock_movements
+            values:
+              product_id: record.product_id
+              location_id: record.to_location_id
+              quantity: record.quantity
+              kind: "'transfer_in'"
+              reference: "'TR-' & record.id"
+              moved_on: today()
+          - id: transfer-out
+            kind: createRecord
+            table: stock_movements
+            values:
+              product_id: record.product_id
+              location_id: record.from_location_id
+              quantity: -record.quantity
+              kind: "'transfer_out'"
+              reference: "'TR-' & record.id"
+              moved_on: today()
+          - id: mark-posted
+            kind: updateRecord
+            table: transfers
+            match:
+              id: record.id
+              status: "'draft'"
+            values:
+              status: "'posted'"
+              posted_on: today()
+          - id: posted
+            kind: message
+            text: "'Transfer posted.'"
+        else:
+          - id: refused
+            kind: message
+            tone: error
+            text: "if(record.status <> 'draft', 'This transfer is already posted.', 'Not enough stock at the source location: ' & coalesce(sum(results.source.on_hand), 0) & ' on hand.')"

@@ -1,0 +1,576 @@
+# Work-order management golden application, version 2 (PRD §26.4).
+# Pure definition data: the same DocumentConfig YAML the Settings › YAML tab edits.
+# Migration fixture: version 1 (../app.yaml) plus migration 002, which adds
+# work_orders.due_on, and the definitions that use it. Applying this YAML to a
+# version 1 document and running pending migrations upgrades it in place.
+version: 3
+name: Work orders
+activeMode: run
+settings:
+  template: work-orders
+  description: Assets, work orders with tasks, status transitions, progress and audit triggers, a printable work-order sheet, and an operations dashboard.
+release:
+  version: 2.0.0
+  notes: Golden work-order template, version 2. Adds due dates and an overdue count.
+datasource:
+  kind: sqlite
+entities:
+  - { id: wo-entity-statuses, table: statuses, concurrency: optimistic }
+  - { id: wo-entity-priorities, table: priorities, concurrency: optimistic }
+  - { id: wo-entity-assignees, table: assignees, concurrency: optimistic }
+  - { id: wo-entity-assets, table: assets, concurrency: optimistic }
+  - { id: wo-entity-work-orders, table: work_orders, concurrency: optimistic }
+  - { id: wo-entity-tasks, table: tasks, concurrency: optimistic }
+  - { id: wo-entity-log, table: work_order_log, concurrency: lastWriteWins }
+migrations:
+  - id: wo-001-schema
+    name: 001 Create work-order schema
+    order: 1
+    targetStore: sqlite
+    up: |
+      CREATE TABLE statuses (
+        code TEXT PRIMARY KEY,
+        name TEXT NOT NULL UNIQUE,
+        position INTEGER NOT NULL UNIQUE,
+        is_final INTEGER NOT NULL DEFAULT 0 CHECK (is_final IN (0, 1))
+      );
+      CREATE TABLE priorities (
+        code TEXT PRIMARY KEY,
+        name TEXT NOT NULL UNIQUE,
+        rank INTEGER NOT NULL UNIQUE
+      );
+      CREATE TABLE assignees (
+        id INTEGER PRIMARY KEY,
+        name TEXT NOT NULL,
+        email TEXT UNIQUE,
+        team TEXT,
+        active INTEGER NOT NULL DEFAULT 1 CHECK (active IN (0, 1))
+      );
+      CREATE TABLE assets (
+        id INTEGER PRIMARY KEY,
+        tag TEXT NOT NULL UNIQUE,
+        name TEXT NOT NULL,
+        location TEXT,
+        category TEXT,
+        installed_on DATE
+      );
+      CREATE TABLE work_orders (
+        id INTEGER PRIMARY KEY,
+        number TEXT NOT NULL UNIQUE,
+        asset_id INTEGER NOT NULL REFERENCES assets(id) ON DELETE RESTRICT,
+        title TEXT NOT NULL,
+        description TEXT,
+        status_code TEXT NOT NULL DEFAULT 'open' REFERENCES statuses(code),
+        priority_code TEXT NOT NULL DEFAULT 'normal' REFERENCES priorities(code),
+        assignee_id INTEGER REFERENCES assignees(id) ON DELETE SET NULL,
+        opened_on DATE NOT NULL DEFAULT (date('now')),
+        started_on DATE,
+        completed_on DATE,
+        progress INTEGER NOT NULL DEFAULT 0 CHECK (progress BETWEEN 0 AND 100)
+      );
+      CREATE TABLE tasks (
+        id INTEGER PRIMARY KEY,
+        work_order_id INTEGER NOT NULL REFERENCES work_orders(id) ON DELETE CASCADE,
+        position INTEGER NOT NULL DEFAULT 1,
+        description TEXT NOT NULL,
+        done INTEGER NOT NULL DEFAULT 0 CHECK (done IN (0, 1)),
+        hours REAL NOT NULL DEFAULT 0 CHECK (hours >= 0),
+        UNIQUE (work_order_id, position)
+      );
+      CREATE TABLE work_order_log (
+        id INTEGER PRIMARY KEY,
+        work_order_id INTEGER NOT NULL REFERENCES work_orders(id) ON DELETE CASCADE,
+        logged_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        event TEXT NOT NULL,
+        message TEXT NOT NULL
+      );
+      CREATE INDEX work_orders_status ON work_orders(status_code, priority_code);
+      CREATE INDEX work_orders_asset ON work_orders(asset_id);
+      CREATE INDEX work_order_log_order ON work_order_log(work_order_id);
+  - id: wo-002-due-dates
+    name: 002 Add work-order due dates
+    order: 2
+    targetStore: sqlite
+    dependsOn: [wo-001-schema]
+    up: |
+      ALTER TABLE work_orders ADD COLUMN due_on DATE;
+      CREATE INDEX work_orders_due ON work_orders(due_on);
+savedQueries:
+  - id: wo-q-open-orders
+    name: Open work orders
+    sql: |
+      SELECT w.number, w.title, a.tag AS asset, p.name AS priority, s.name AS status,
+        coalesce(u.name, 'Unassigned') AS assignee, w.progress, w.due_on
+      FROM work_orders w
+      JOIN assets a ON a.id = w.asset_id
+      JOIN priorities p ON p.code = w.priority_code
+      JOIN statuses s ON s.code = w.status_code
+      LEFT JOIN assignees u ON u.id = w.assignee_id
+      WHERE s.is_final = 0 AND ($priority IS NULL OR p.name = $priority)
+      ORDER BY p.rank DESC, w.number
+    parameters:
+      - { name: priority, logicalType: text }
+  - id: wo-q-by-status
+    name: Work orders by status
+    sql: |
+      SELECT s.name AS status, count(w.id) AS work_orders
+      FROM statuses s
+      LEFT JOIN work_orders w ON w.status_code = s.code
+        AND ($priority IS NULL OR w.priority_code IN (SELECT code FROM priorities WHERE name = $priority))
+      GROUP BY s.code, s.name, s.position
+      ORDER BY s.position
+    parameters:
+      - { name: priority, logicalType: text }
+  - id: wo-q-priority-names
+    name: Priority names
+    sql: SELECT name FROM priorities ORDER BY rank DESC
+  - id: wo-q-task-progress
+    name: Task progress
+    sql: |
+      SELECT CAST(round(100.0 * sum(done) / count(*)) AS INTEGER) AS pct
+      FROM tasks WHERE work_order_id = $work_order_id
+    parameters:
+      - { name: work_order_id, logicalType: integer, required: true }
+  - id: wo-q-open-tasks
+    name: Open tasks
+    sql: SELECT count(*) AS open_tasks FROM tasks WHERE work_order_id = $work_order_id AND done = 0
+    parameters:
+      - { name: work_order_id, logicalType: integer, required: true }
+  - id: wo-q-sheet
+    name: Work order sheet
+    sql: |
+      SELECT w.number, w.title, a.tag AS asset_tag, a.name AS asset, s.name AS status,
+        p.name AS priority, coalesce(u.name, 'Unassigned') AS assignee, w.opened_on, w.due_on,
+        t.position, coalesce(t.description, '(no tasks)') AS task,
+        CASE WHEN t.id IS NULL THEN '' WHEN t.done = 1 THEN 'Done' ELSE 'Open' END AS task_status,
+        coalesce(t.hours, 0) AS hours
+      FROM work_orders w
+      JOIN assets a ON a.id = w.asset_id
+      JOIN statuses s ON s.code = w.status_code
+      JOIN priorities p ON p.code = w.priority_code
+      LEFT JOIN assignees u ON u.id = w.assignee_id
+      LEFT JOIN tasks t ON t.work_order_id = w.id
+      WHERE ($number IS NULL OR w.number = $number)
+      ORDER BY w.number, t.position
+    parameters:
+      - { name: number, logicalType: text }
+design:
+  version: 3
+  startPage: wo-nav-dashboard
+  navigation:
+    - { id: wo-nav-dashboard, label: Operations, kind: dashboard, targetId: wo-dash-operations }
+    - id: wo-nav-maintenance
+      label: Maintenance
+      kind: group
+      children:
+        - { id: wo-nav-orders, label: Work orders, kind: form, targetId: wo-form-orders }
+        - { id: wo-nav-assets, label: Assets, kind: form, targetId: wo-form-assets }
+    - id: wo-nav-reports
+      label: Reports
+      kind: group
+      children:
+        - { id: wo-nav-sheet, label: Work order sheet, kind: report, targetId: wo-report-sheet }
+    - id: wo-nav-setup
+      label: Setup
+      kind: group
+      children:
+        - { id: wo-nav-assignees, label: Assignees, kind: form, targetId: wo-form-assignees }
+        - id: wo-nav-reference
+          label: Reference data
+          kind: group
+          children:
+            - { id: wo-nav-statuses, label: Statuses, kind: table, targetId: statuses }
+            - { id: wo-nav-priorities, label: Priorities, kind: table, targetId: priorities }
+  forms:
+    - id: wo-form-orders
+      name: Work orders
+      source: { kind: table, table: work_orders }
+      modes: [list]
+      listColumns: [number, title, status_code, priority_code, progress, due_on]
+      detailFormId: wo-form-order
+      controls:
+        - { id: number, kind: text, label: Number, binding: { column: number }, placement: { column: 1, row: 1, columnSpan: 2 } }
+        - { id: title, kind: text, label: Title, binding: { column: title }, placement: { column: 3, row: 1, columnSpan: 4 } }
+        - { id: status, kind: text, label: Status, binding: { column: status_code }, placement: { column: 7, row: 1, columnSpan: 2 } }
+        - { id: priority, kind: text, label: Priority, binding: { column: priority_code }, placement: { column: 9, row: 1, columnSpan: 2 } }
+        - { id: progress, kind: number, label: Progress (%), binding: { column: progress }, placement: { column: 11, row: 1, columnSpan: 2 } }
+        - { id: due_on, kind: date, label: Due on, binding: { column: due_on }, placement: { column: 1, row: 2, columnSpan: 2 } }
+    - id: wo-form-order
+      name: Work order
+      source: { kind: table, table: work_orders }
+      modes: [detail, create, edit]
+      controls:
+        - id: number
+          kind: text
+          label: Number
+          binding: { column: number }
+          validation: { required: true, pattern: "WO-[0-9]{4,}", message: Use the form WO-1234. }
+          placement: { column: 1, row: 1, columnSpan: 3 }
+        - { id: title, kind: text, label: Title, binding: { column: title }, validation: { required: true }, placement: { column: 4, row: 1, columnSpan: 9 } }
+        - id: asset
+          kind: relationship
+          label: Asset
+          binding: { column: asset_id }
+          validation: { required: true }
+          relationship: { table: assets, valueColumn: id, displayColumn: name }
+          placement: { column: 1, row: 2, columnSpan: 4 }
+        - id: priority
+          kind: relationship
+          label: Priority
+          binding: { column: priority_code }
+          validation: { required: true }
+          defaultValue: "'normal'"
+          relationship: { table: priorities, valueColumn: code, displayColumn: name }
+          placement: { column: 5, row: 2, columnSpan: 4 }
+        - id: assignee
+          kind: relationship
+          label: Assignee
+          binding: { column: assignee_id }
+          relationship: { table: assignees, valueColumn: id, displayColumn: name }
+          placement: { column: 9, row: 2, columnSpan: 4 }
+        - { id: opened_on, kind: date, label: Opened on, binding: { column: opened_on }, defaultValue: today(), placement: { column: 1, row: 3, columnSpan: 2 } }
+        - id: due_on
+          kind: date
+          label: Due on
+          binding: { column: due_on }
+          validation: { required: false, expression: isnull(value) or value >= record.opened_on, message: The due date cannot be before the opened date. }
+          placement: { column: 3, row: 3, columnSpan: 2 }
+        - { id: description, kind: multiline, label: Description, binding: { column: description }, placement: { column: 5, row: 3, columnSpan: 8 } }
+        - id: state
+          kind: section
+          label: Progress
+          placement: { column: 1, row: 4, columnSpan: 12 }
+        - id: status
+          kind: relationship
+          label: Status
+          binding: { column: status_code }
+          readOnly: true
+          defaultValue: "'open'"
+          relationship: { table: statuses, valueColumn: code, displayColumn: name }
+          parent: { id: state }
+          placement: { column: 1, row: 1, columnSpan: 3 }
+        - { id: progress, kind: number, label: Progress (%), binding: { column: progress }, readOnly: true, defaultValue: "0", parent: { id: state }, placement: { column: 4, row: 1, columnSpan: 3 } }
+        - { id: started_on, kind: date, label: Started on, binding: { column: started_on }, readOnly: true, parent: { id: state }, placement: { column: 7, row: 1, columnSpan: 3 } }
+        - { id: completed_on, kind: date, label: Completed on, binding: { column: completed_on }, readOnly: true, parent: { id: state }, placement: { column: 10, row: 1, columnSpan: 3 } }
+        - id: start
+          kind: button
+          label: Start work
+          actionId: wo-action-start
+          enabledWhen: "record.status_code = 'open'"
+          parent: { id: state }
+          placement: { column: 1, row: 2, columnSpan: 3 }
+        - id: complete
+          kind: button
+          label: Complete work
+          actionId: wo-action-complete
+          enabledWhen: "record.status_code = 'in_progress'"
+          parent: { id: state }
+          placement: { column: 4, row: 2, columnSpan: 3 }
+        - id: print
+          kind: button
+          label: Print sheet
+          actionId: wo-action-print
+          parent: { id: state }
+          placement: { column: 7, row: 2, columnSpan: 3 }
+        - id: tasks
+          kind: relatedList
+          label: Tasks
+          related: { table: tasks, foreignKey: work_order_id, parentColumn: id, columns: [position, description, done, hours], formId: wo-form-task }
+          placement: { column: 1, row: 5, columnSpan: 12 }
+    - id: wo-form-task
+      name: Task
+      source: { kind: table, table: tasks }
+      modes: [detail, create, edit]
+      controls:
+        - id: work_order
+          kind: relationship
+          label: Work order
+          binding: { column: work_order_id }
+          validation: { required: true }
+          relationship: { table: work_orders, valueColumn: id, displayColumn: number }
+          placement: { column: 1, row: 1, columnSpan: 4 }
+        - { id: position, kind: number, label: Step, binding: { column: position }, defaultValue: "1", validation: { required: true, min: 1 }, placement: { column: 5, row: 1, columnSpan: 2 } }
+        - { id: description, kind: text, label: Description, binding: { column: description }, validation: { required: true }, placement: { column: 7, row: 1, columnSpan: 6 } }
+        - { id: done, kind: boolean, label: Done, binding: { column: done }, defaultValue: "0", placement: { column: 1, row: 2, columnSpan: 2 } }
+        - { id: hours, kind: decimal, label: Hours, binding: { column: hours }, defaultValue: "0", validation: { required: true, min: 0 }, placement: { column: 3, row: 2, columnSpan: 3 } }
+    - id: wo-form-assets
+      name: Assets
+      source: { kind: table, table: assets }
+      modes: [list]
+      listColumns: [tag, name, location, category]
+      detailFormId: wo-form-asset
+    - id: wo-form-asset
+      name: Asset
+      source: { kind: table, table: assets }
+      modes: [detail, create, edit]
+      controls:
+        - { id: tag, kind: text, label: Tag, binding: { column: tag }, validation: { required: true }, placement: { column: 1, row: 1, columnSpan: 3 } }
+        - { id: name, kind: text, label: Name, binding: { column: name }, validation: { required: true }, placement: { column: 4, row: 1, columnSpan: 9 } }
+        - { id: location, kind: text, label: Location, binding: { column: location }, placement: { column: 1, row: 2, columnSpan: 4 } }
+        - id: category
+          kind: select
+          label: Category
+          binding: { column: category }
+          options:
+            - { value: Mechanical, label: Mechanical }
+            - { value: Electrical, label: Electrical }
+            - { value: HVAC, label: HVAC }
+          placement: { column: 5, row: 2, columnSpan: 4 }
+        - { id: installed_on, kind: date, label: Installed on, binding: { column: installed_on }, placement: { column: 9, row: 2, columnSpan: 4 } }
+        - id: orders
+          kind: relatedList
+          label: Work orders
+          related: { table: work_orders, foreignKey: asset_id, parentColumn: id, columns: [number, title, status_code, progress] }
+          placement: { column: 1, row: 3, columnSpan: 12 }
+    - id: wo-form-assignees
+      name: Assignees
+      source: { kind: table, table: assignees }
+      modes: [list]
+      listColumns: [name, team, email]
+      detailFormId: wo-form-assignee
+    - id: wo-form-assignee
+      name: Assignee
+      source: { kind: table, table: assignees }
+      modes: [detail, create, edit]
+      controls:
+        - { id: name, kind: text, label: Name, binding: { column: name }, validation: { required: true }, placement: { column: 1, row: 1, columnSpan: 6 } }
+        - { id: team, kind: text, label: Team, binding: { column: team }, placement: { column: 7, row: 1, columnSpan: 6 } }
+        - id: email
+          kind: text
+          label: Email
+          binding: { column: email }
+          validation: { required: false, pattern: "[^@\\s]+@[^@\\s]+\\.[^@\\s]+", message: Enter an email address like tech@example.com. }
+          placement: { column: 1, row: 2, columnSpan: 6 }
+        - { id: active, kind: boolean, label: Active, binding: { column: active }, defaultValue: "1", placement: { column: 7, row: 2, columnSpan: 2 } }
+reports:
+  - id: wo-report-sheet
+    name: Work order sheet
+    datasetQueryId: wo-q-sheet
+    params: { number: null }
+    page:
+      size: A4
+      orientation: portrait
+      margins: { top: 36, right: 36, bottom: 36, left: 36 }
+    bands:
+      reportHeader:
+        height: 0
+        components: []
+      pageHeader:
+        height: 28
+        components:
+          - { id: title, kind: staticText, x: 0, y: 0, w: 400, h: 20, text: Work order sheet, style: { fontSize: 14, bold: true } }
+          - { id: rule, kind: line, x: 0, y: 24, w: 523, h: 1, orientation: horizontal, style: { borderWidth: 1 } }
+      groups:
+        - id: by-order
+          groupBy: record.number
+          header:
+            height: 76
+            keepTogether: true
+            components:
+              - { id: g-box, kind: rectangle, x: 0, y: 2, w: 523, h: 52, style: { borderWidth: 0.5 } }
+              - { id: g-number, kind: field, x: 6, y: 6, w: 511, h: 16, expression: "record.number & ' · ' & record.title", style: { fontSize: 12, bold: true } }
+              - { id: g-asset, kind: field, x: 6, y: 24, w: 250, h: 12, expression: "'Asset: ' & record.asset_tag & ' ' & record.asset" }
+              - { id: g-assignee, kind: field, x: 260, y: 24, w: 257, h: 12, expression: "'Assignee: ' & record.assignee" }
+              - { id: g-status, kind: field, x: 6, y: 38, w: 250, h: 12, expression: "'Status: ' & record.status & ' · Priority: ' & record.priority" }
+              - { id: g-opened, kind: field, x: 260, y: 38, w: 257, h: 12, expression: "'Opened: ' & record.opened_on & ' · Due: ' & coalesce(record.due_on, 'not set')" }
+              - { id: h-step, kind: staticText, x: 0, y: 60, w: 40, h: 14, text: Step, style: { bold: true } }
+              - { id: h-task, kind: staticText, x: 40, y: 60, w: 333, h: 14, text: Task, style: { bold: true } }
+              - { id: h-state, kind: staticText, x: 373, y: 60, w: 80, h: 14, text: State, style: { bold: true } }
+              - { id: h-hours, kind: staticText, x: 453, y: 60, w: 70, h: 14, text: Hours, style: { bold: true, align: right } }
+          footer:
+            height: 26
+            components:
+              - { id: g-hours, kind: calculated, x: 273, y: 2, w: 250, h: 14, expression: "'Total hours: ' & sum(rows.hours)", style: { bold: true, align: right } }
+      detail:
+        height: 16
+        components:
+          - { id: d-step, kind: field, x: 0, y: 0, w: 40, h: 14, expression: record.position }
+          - { id: d-task, kind: field, x: 40, y: 0, w: 333, h: 14, expression: record.task }
+          - { id: d-state, kind: field, x: 373, y: 0, w: 80, h: 14, expression: record.task_status }
+          - { id: d-hours, kind: field, x: 453, y: 0, w: 70, h: 14, expression: record.hours, format: "0.0", style: { align: right } }
+      pageFooter:
+        height: 18
+        components:
+          - { id: signature, kind: staticText, x: 0, y: 2, w: 260, h: 14, text: "Technician signature: ____________" }
+          - { id: page, kind: calculated, x: 300, y: 2, w: 223, h: 14, expression: "'Page ' & page & ' of ' & pages", style: { align: right } }
+      reportFooter:
+        height: 22
+        components:
+          - { id: total, kind: calculated, x: 0, y: 4, w: 523, h: 16, expression: "'All work orders: ' & sum(rows.hours) & ' hours'", style: { bold: true, align: right } }
+dashboards:
+  - id: wo-dash-operations
+    name: Operations
+    filters:
+      - { id: wo-filter-priority, name: Priority, param: priority, logicalType: text, control: select, optionsQueryId: wo-q-priority-names }
+    components:
+      - { id: priority-filter, kind: filter, title: Priority, filterId: wo-filter-priority, placement: { column: 1, row: 1, columnSpan: 4 } }
+      - { id: open-count, kind: kpi, title: Open work orders, queryId: wo-q-open-orders, expression: count(rows.number), format: "#,##0", placement: { column: 1, row: 2, columnSpan: 4 } }
+      - { id: urgent-count, kind: kpi, title: Urgent, queryId: wo-q-open-orders, expression: "countof(rows, priority = 'Urgent')", format: "#,##0", placement: { column: 5, row: 2, columnSpan: 4 } }
+      - { id: avg-progress, kind: kpi, title: Average progress (%), queryId: wo-q-open-orders, expression: "round(avg(rows.progress), 0)", format: "0", placement: { column: 9, row: 2, columnSpan: 2 } }
+      - { id: overdue-count, kind: kpi, title: Overdue, queryId: wo-q-open-orders, expression: "countof(rows, not isnull(due_on) and due_on < today())", format: "#,##0", placement: { column: 11, row: 2, columnSpan: 2 } }
+      - { id: by-status, kind: chart, title: Work orders by status, queryId: wo-q-by-status, chartType: bar, x: status, y: [work_orders], placement: { column: 1, row: 3, columnSpan: 5, rowSpan: 2 } }
+      - id: open-table
+        kind: table
+        title: Open work order list
+        queryId: wo-q-open-orders
+        columns: [number, title, asset, priority, status, assignee, progress, due_on]
+        pageSize: 10
+        placement: { column: 6, row: 3, columnSpan: 7, rowSpan: 2 }
+actions:
+  - id: wo-action-start
+    name: Start work order
+    description: Moves an assigned, open work order to In progress and logs it.
+    onError: rollback
+    steps:
+      - id: check
+        kind: condition
+        when: "record.status_code = 'open' and not isnull(record.assignee_id)"
+        then:
+          - id: set-status
+            kind: updateRecord
+            table: work_orders
+            match:
+              id: record.id
+              status_code: "'open'"
+            values:
+              status_code: "'in_progress'"
+              started_on: today()
+          - id: log
+            kind: createRecord
+            table: work_order_log
+            values:
+              work_order_id: record.id
+              event: "'started'"
+              message: "'Work started on ' & record.number"
+          - id: started
+            kind: message
+            text: "'Work order started.'"
+        else:
+          - id: refused
+            kind: message
+            tone: error
+            text: "if(record.status_code <> 'open', 'Only open work orders can be started.', 'Assign someone before starting this work order.')"
+  - id: wo-action-complete
+    name: Complete work order
+    description: Moves an in-progress work order with no open tasks to Done and logs it.
+    onError: rollback
+    steps:
+      - id: open-tasks
+        kind: runQuery
+        queryId: wo-q-open-tasks
+        params:
+          work_order_id: record.id
+        storeAs: open
+      - id: check
+        kind: condition
+        when: "record.status_code = 'in_progress' and sum(results.open.open_tasks) = 0"
+        then:
+          - id: set-status
+            kind: updateRecord
+            table: work_orders
+            match:
+              id: record.id
+              status_code: "'in_progress'"
+            values:
+              status_code: "'done'"
+              completed_on: today()
+              progress: "100"
+          - id: log
+            kind: createRecord
+            table: work_order_log
+            values:
+              work_order_id: record.id
+              event: "'completed'"
+              message: "'Work completed on ' & record.number"
+          - id: completed
+            kind: message
+            text: "'Work order completed.'"
+        else:
+          - id: refused
+            kind: message
+            tone: error
+            text: "if(record.status_code <> 'in_progress', 'Start the work order before completing it.', 'Finish every task before completing: ' & sum(results.open.open_tasks) & ' still open.')"
+  - id: wo-action-print
+    name: Print work order sheet
+    onError: stop
+    steps:
+      - id: open
+        kind: openReport
+        reportId: wo-report-sheet
+        params:
+          number: record.number
+  - id: wo-action-progress
+    name: Recompute work-order progress
+    description: Sets the work order's progress to the share of its tasks that are done.
+    onError: stop
+    steps:
+      - id: progress
+        kind: runQuery
+        queryId: wo-q-task-progress
+        params:
+          work_order_id: record.work_order_id
+        storeAs: progress
+      - id: update
+        kind: updateRecord
+        table: work_orders
+        match:
+          id: record.work_order_id
+        values:
+          progress: coalesce(max(results.progress.pct), 0)
+  - id: wo-action-log-created
+    name: Log new work order
+    description: Background job that writes the audit row for a new work order.
+    onError: stop
+    steps:
+      - id: log
+        kind: createRecord
+        table: work_order_log
+        values:
+          work_order_id: record.id
+          event: "'created'"
+          message: "'Work order ' & record.number & ' opened: ' & record.title"
+triggers:
+  - id: wo-trigger-task-created
+    name: Recompute progress when a task is added
+    table: tasks
+    event: created
+    actionId: wo-action-progress
+    mode: sync
+    enabled: true
+  - id: wo-trigger-task-updated
+    name: Recompute progress when a task changes
+    table: tasks
+    event: updated
+    actionId: wo-action-progress
+    mode: sync
+    enabled: true
+  - id: wo-trigger-order-created
+    name: Log new work orders in the background
+    table: work_orders
+    event: created
+    actionId: wo-action-log-created
+    mode: async
+    enabled: true
+    maxAttempts: 3
+    backoffMs: 500
+roles:
+  - id: wo-role-technician
+    name: Technician
+    permissions:
+      navigation: [wo-nav-dashboard, wo-nav-maintenance, wo-nav-orders, wo-nav-assets, wo-nav-reports, wo-nav-sheet]
+      actions: [wo-action-start, wo-action-complete, wo-action-print]
+      objects:
+        - { kind: dashboard, id: wo-dash-operations, read: true }
+        - { kind: report, id: wo-report-sheet, read: true }
+        - { kind: form, id: wo-form-orders, read: true }
+        - { kind: form, id: wo-form-order, read: true, update: true }
+        - { kind: form, id: wo-form-task, read: true, create: true, update: true }
+        - { kind: form, id: wo-form-assets, read: true }
+        - { kind: form, id: wo-form-asset, read: true }
+        - { kind: table, id: work_orders, read: true, update: true }
+        - { kind: table, id: work_order_log, read: true, create: true }
+        - { kind: query, id: wo-q-open-tasks, read: true }
+        - { kind: query, id: wo-q-open-orders, read: true }
+        - { kind: query, id: wo-q-by-status, read: true }
+        - { kind: query, id: wo-q-priority-names, read: true }
+        - { kind: query, id: wo-q-sheet, read: true }

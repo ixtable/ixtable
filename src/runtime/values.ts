@@ -18,7 +18,12 @@ export function toColumnValue(value: unknown, declaredType = ""): DataValue {
   if (type.includes("BOOL"))
     return { type: "boolean", value: value === true || value === "true" || value === 1 };
   if (type.includes("INT") || /REAL|FLOA|DOUB|NUM|DEC|MONEY/.test(type)) {
-    const number = typeof value === "number" ? value : Number(String(value).replace(/,/g, ""));
+    const number =
+      typeof value === "number"
+        ? value
+        : typeof value === "boolean"
+          ? Number(value)
+          : Number(String(value).replace(/,/g, ""));
     if (!Number.isFinite(number)) return { type: "text", value: String(value) };
     return type.includes("INT") && Number.isInteger(number)
       ? { type: "integer", value: number }

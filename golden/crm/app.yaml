@@ -1,0 +1,506 @@
+# Lightweight CRM golden application (PRD §26.2).
+# Pure definition data: the same DocumentConfig YAML the Settings › YAML tab edits.
+# Records come from seed.sql, applied as the "Seed sample data" migration.
+version: 3
+name: CRM
+activeMode: run
+settings:
+  template: crm
+  description: Companies, contacts, a deal pipeline, and activities, with a pipeline dashboard and an activity report.
+release:
+  version: 1.0.0
+  notes: Golden CRM template.
+datasource:
+  kind: sqlite
+entities:
+  - { id: crm-entity-deal-stages, table: deal_stages, concurrency: optimistic }
+  - { id: crm-entity-companies, table: companies, concurrency: optimistic }
+  - { id: crm-entity-contacts, table: contacts, concurrency: optimistic }
+  - { id: crm-entity-deals, table: deals, concurrency: optimistic }
+  - { id: crm-entity-activities, table: activities, concurrency: lastWriteWins }
+migrations:
+  - id: crm-001-schema
+    name: 001 Create CRM schema
+    order: 1
+    targetStore: sqlite
+    up: |
+      CREATE TABLE deal_stages (
+        id INTEGER PRIMARY KEY,
+        name TEXT NOT NULL UNIQUE,
+        position INTEGER NOT NULL UNIQUE,
+        probability REAL NOT NULL DEFAULT 0 CHECK (probability BETWEEN 0 AND 1),
+        is_closed INTEGER NOT NULL DEFAULT 0 CHECK (is_closed IN (0, 1))
+      );
+      CREATE TABLE companies (
+        id INTEGER PRIMARY KEY,
+        name TEXT NOT NULL UNIQUE,
+        industry TEXT,
+        website TEXT,
+        city TEXT,
+        created_on DATE NOT NULL DEFAULT (date('now'))
+      );
+      CREATE TABLE contacts (
+        id INTEGER PRIMARY KEY,
+        company_id INTEGER NOT NULL REFERENCES companies(id) ON DELETE CASCADE,
+        name TEXT NOT NULL,
+        email TEXT UNIQUE CHECK (email IS NULL OR email LIKE '%_@_%._%'),
+        phone TEXT,
+        title TEXT
+      );
+      CREATE TABLE deals (
+        id INTEGER PRIMARY KEY,
+        company_id INTEGER NOT NULL REFERENCES companies(id) ON DELETE CASCADE,
+        contact_id INTEGER REFERENCES contacts(id) ON DELETE SET NULL,
+        stage_id INTEGER NOT NULL REFERENCES deal_stages(id),
+        title TEXT NOT NULL,
+        amount REAL NOT NULL DEFAULT 0 CHECK (amount >= 0),
+        status TEXT NOT NULL DEFAULT 'open' CHECK (status IN ('open', 'won', 'lost')),
+        close_date DATE,
+        owner TEXT
+      );
+      CREATE TABLE activities (
+        id INTEGER PRIMARY KEY,
+        company_id INTEGER NOT NULL REFERENCES companies(id) ON DELETE CASCADE,
+        deal_id INTEGER REFERENCES deals(id) ON DELETE CASCADE,
+        contact_id INTEGER REFERENCES contacts(id) ON DELETE SET NULL,
+        kind TEXT NOT NULL CHECK (kind IN ('call', 'email', 'meeting', 'note')),
+        subject TEXT NOT NULL,
+        due_date DATE,
+        done INTEGER NOT NULL DEFAULT 0 CHECK (done IN (0, 1)),
+        notes TEXT
+      );
+      CREATE INDEX contacts_company ON contacts(company_id);
+      CREATE INDEX deals_company ON deals(company_id);
+      CREATE INDEX deals_stage_status ON deals(stage_id, status);
+      CREATE INDEX activities_company ON activities(company_id, due_date);
+savedQueries:
+  - id: crm-q-deals-by-stage
+    name: Deals by stage
+    sql: |
+      SELECT s.name AS stage, count(d.id) AS deals, coalesce(sum(d.amount), 0) AS total
+      FROM deal_stages s LEFT JOIN deals d ON d.stage_id = s.id
+      WHERE ($stage IS NULL OR s.name = $stage)
+      GROUP BY s.id, s.name, s.position
+      ORDER BY s.position
+    parameters:
+      - { name: stage, logicalType: text }
+  - id: crm-q-open-pipeline
+    name: Open pipeline
+    sql: |
+      SELECT s.name AS stage, count(d.id) AS deals, coalesce(sum(d.amount), 0) AS total,
+        coalesce(sum(d.amount * s.probability), 0) AS weighted
+      FROM deals d JOIN deal_stages s ON s.id = d.stage_id
+      WHERE d.status = 'open' AND ($stage IS NULL OR s.name = $stage)
+      GROUP BY s.id, s.name, s.position
+      ORDER BY s.position
+    parameters:
+      - { name: stage, logicalType: text }
+  - id: crm-q-open-deals
+    name: Open deals
+    sql: |
+      SELECT d.id, d.title, c.name AS company, s.name AS stage, d.amount, d.close_date
+      FROM deals d
+      JOIN companies c ON c.id = d.company_id
+      JOIN deal_stages s ON s.id = d.stage_id
+      WHERE d.status = 'open' AND ($min_amount IS NULL OR d.amount >= $min_amount)
+        AND ($stage IS NULL OR s.name = $stage)
+      ORDER BY d.amount DESC, d.id
+    parameters:
+      - { name: min_amount, logicalType: number }
+      - { name: stage, logicalType: text }
+  - id: crm-q-stage-names
+    name: Stage names
+    sql: SELECT name FROM deal_stages ORDER BY position
+  - id: crm-q-won-stage
+    name: Won stage
+    sql: SELECT id FROM deal_stages WHERE name = 'Won'
+  - id: crm-q-activities
+    name: Activities by company
+    sql: |
+      SELECT c.name AS company, a.kind, a.subject, a.due_date,
+        CASE WHEN a.done = 1 THEN 'Done' ELSE 'Open' END AS state,
+        coalesce(d.title, '') AS deal
+      FROM activities a
+      JOIN companies c ON c.id = a.company_id
+      LEFT JOIN deals d ON d.id = a.deal_id
+      ORDER BY c.name, a.due_date, a.id
+design:
+  version: 3
+  startPage: crm-nav-dashboard
+  navigation:
+    - { id: crm-nav-dashboard, label: Pipeline, kind: dashboard, targetId: crm-dash-pipeline }
+    - { id: crm-nav-companies, label: Companies, kind: form, targetId: crm-form-companies }
+    - { id: crm-nav-contacts, label: Contacts, kind: form, targetId: crm-form-contacts }
+    - { id: crm-nav-deals, label: Deals, kind: form, targetId: crm-form-deals }
+    - { id: crm-nav-activities, label: Activities, kind: form, targetId: crm-form-activities }
+    - id: crm-nav-reports
+      label: Reports
+      kind: group
+      children:
+        - { id: crm-nav-activity-report, label: Activity report, kind: report, targetId: crm-report-activities }
+    - id: crm-nav-setup
+      label: Setup
+      kind: group
+      children:
+        - { id: crm-nav-stages, label: Deal stages, kind: table, targetId: deal_stages }
+  forms:
+    - id: crm-form-companies
+      name: Companies
+      source: { kind: table, table: companies }
+      modes: [list]
+      listColumns: [name, industry, city]
+      detailFormId: crm-form-company
+      controls:
+        - { id: name, kind: text, label: Name, binding: { column: name }, placement: { column: 1, row: 1, columnSpan: 6 } }
+        - { id: industry, kind: text, label: Industry, binding: { column: industry }, placement: { column: 7, row: 1, columnSpan: 3 } }
+        - { id: city, kind: text, label: City, binding: { column: city }, placement: { column: 10, row: 1, columnSpan: 3 } }
+    - id: crm-form-company
+      name: Company
+      source: { kind: table, table: companies }
+      modes: [detail, create, edit]
+      controls:
+        - id: name
+          kind: text
+          label: Name
+          binding: { column: name }
+          validation: { required: true }
+          placement: { column: 1, row: 1, columnSpan: 6 }
+        - id: industry
+          kind: select
+          label: Industry
+          binding: { column: industry }
+          options:
+            - { value: Energy, label: Energy }
+            - { value: Healthcare, label: Healthcare }
+            - { value: Logistics, label: Logistics }
+            - { value: Manufacturing, label: Manufacturing }
+            - { value: Software, label: Software }
+          placement: { column: 7, row: 1, columnSpan: 3 }
+        - { id: city, kind: text, label: City, binding: { column: city }, placement: { column: 10, row: 1, columnSpan: 3 } }
+        - id: website
+          kind: text
+          label: Website
+          binding: { column: website }
+          validation: { required: false, pattern: "https?://\\S+", message: Enter a web address starting with http:// or https://. }
+          placement: { column: 1, row: 2, columnSpan: 6 }
+        - id: contacts
+          kind: relatedList
+          label: Contacts
+          related: { table: contacts, foreignKey: company_id, parentColumn: id, columns: [name, email, title], formId: crm-form-contact }
+          placement: { column: 1, row: 3, columnSpan: 12 }
+        - id: deals
+          kind: relatedList
+          label: Deals
+          related: { table: deals, foreignKey: company_id, parentColumn: id, columns: [title, amount, status], formId: crm-form-deal }
+          placement: { column: 1, row: 4, columnSpan: 12 }
+    - id: crm-form-contacts
+      name: Contacts
+      source: { kind: table, table: contacts }
+      modes: [list]
+      listColumns: [name, email, title]
+      detailFormId: crm-form-contact
+    - id: crm-form-contact
+      name: Contact
+      source: { kind: table, table: contacts }
+      modes: [detail, create, edit]
+      controls:
+        - { id: name, kind: text, label: Name, binding: { column: name }, validation: { required: true }, placement: { column: 1, row: 1, columnSpan: 6 } }
+        - id: company
+          kind: relationship
+          label: Company
+          binding: { column: company_id }
+          validation: { required: true }
+          relationship: { table: companies, valueColumn: id, displayColumn: name }
+          placement: { column: 7, row: 1, columnSpan: 6 }
+        - id: email
+          kind: text
+          label: Email
+          binding: { column: email }
+          validation: { required: false, pattern: "[^@\\s]+@[^@\\s]+\\.[^@\\s]+", message: Enter an email address like name@example.com. }
+          placement: { column: 1, row: 2, columnSpan: 6 }
+        - { id: phone, kind: text, label: Phone, binding: { column: phone }, placement: { column: 7, row: 2, columnSpan: 3 } }
+        - { id: title, kind: text, label: Job title, binding: { column: title }, placement: { column: 10, row: 2, columnSpan: 3 } }
+    - id: crm-form-deals
+      name: Deals
+      source: { kind: table, table: deals }
+      modes: [list]
+      listColumns: [title, amount, status, close_date]
+      detailFormId: crm-form-deal
+      controls:
+        - { id: title, kind: text, label: Title, binding: { column: title }, placement: { column: 1, row: 1, columnSpan: 6 } }
+        - { id: amount, kind: decimal, label: Amount, binding: { column: amount }, format: "$#,##0.00", placement: { column: 7, row: 1, columnSpan: 2 } }
+        - { id: status, kind: text, label: Status, binding: { column: status }, placement: { column: 9, row: 1, columnSpan: 2 } }
+        - { id: close_date, kind: date, label: Close date, binding: { column: close_date }, placement: { column: 11, row: 1, columnSpan: 2 } }
+    - id: crm-form-deal
+      name: Deal
+      source: { kind: table, table: deals }
+      modes: [detail, create, edit]
+      rules:
+        - { id: crm-rule-won-stage, expression: "record.status <> 'won' or record.close_date is not null", message: A won deal needs a close date. }
+      controls:
+        - { id: title, kind: text, label: Title, binding: { column: title }, validation: { required: true }, placement: { column: 1, row: 1, columnSpan: 6 } }
+        - id: company
+          kind: relationship
+          label: Company
+          binding: { column: company_id }
+          validation: { required: true }
+          relationship: { table: companies, valueColumn: id, displayColumn: name }
+          placement: { column: 7, row: 1, columnSpan: 6 }
+        - id: stage
+          kind: relationship
+          label: Stage
+          binding: { column: stage_id }
+          validation: { required: true }
+          relationship: { table: deal_stages, valueColumn: id, displayColumn: name }
+          defaultValue: "1"
+          placement: { column: 1, row: 2, columnSpan: 4 }
+        - id: contact
+          kind: relationship
+          label: Contact
+          binding: { column: contact_id }
+          relationship: { table: contacts, valueColumn: id, displayColumn: name }
+          placement: { column: 5, row: 2, columnSpan: 4 }
+        - id: amount
+          kind: decimal
+          label: Amount
+          binding: { column: amount }
+          format: "$#,##0.00"
+          validation: { required: true, expression: value >= 0, message: Amount cannot be negative. }
+          placement: { column: 9, row: 2, columnSpan: 4 }
+        - id: status
+          kind: select
+          label: Status
+          binding: { column: status }
+          defaultValue: "'open'"
+          options:
+            - { value: open, label: Open }
+            - { value: won, label: Won }
+            - { value: lost, label: Lost }
+          placement: { column: 1, row: 3, columnSpan: 4 }
+        - { id: close_date, kind: date, label: Close date, binding: { column: close_date }, placement: { column: 5, row: 3, columnSpan: 4 } }
+        - { id: owner, kind: text, label: Owner, binding: { column: owner }, placement: { column: 9, row: 3, columnSpan: 4 } }
+        - id: mark_won
+          kind: button
+          label: Mark deal won
+          actionId: crm-action-mark-won
+          enabledWhen: "record.status = 'open'"
+          placement: { column: 1, row: 4, columnSpan: 4 }
+    - id: crm-form-activities
+      name: Activities
+      source: { kind: table, table: activities }
+      modes: [list]
+      listColumns: [subject, kind, due_date, done]
+      detailFormId: crm-form-activity
+    - id: crm-form-activity
+      name: Activity
+      source: { kind: table, table: activities }
+      modes: [detail, create, edit]
+      controls:
+        - { id: subject, kind: text, label: Subject, binding: { column: subject }, validation: { required: true }, placement: { column: 1, row: 1, columnSpan: 8 } }
+        - id: kind
+          kind: select
+          label: Kind
+          binding: { column: kind }
+          validation: { required: true }
+          defaultValue: "'call'"
+          options:
+            - { value: call, label: Call }
+            - { value: email, label: Email }
+            - { value: meeting, label: Meeting }
+            - { value: note, label: Note }
+          placement: { column: 9, row: 1, columnSpan: 4 }
+        - id: company
+          kind: relationship
+          label: Company
+          binding: { column: company_id }
+          validation: { required: true }
+          relationship: { table: companies, valueColumn: id, displayColumn: name }
+          placement: { column: 1, row: 2, columnSpan: 6 }
+        - id: deal
+          kind: relationship
+          label: Deal
+          binding: { column: deal_id }
+          relationship: { table: deals, valueColumn: id, displayColumn: title }
+          placement: { column: 7, row: 2, columnSpan: 6 }
+        - { id: due_date, kind: date, label: Due date, binding: { column: due_date }, placement: { column: 1, row: 3, columnSpan: 4 } }
+        - { id: done, kind: boolean, label: Done, binding: { column: done }, defaultValue: "0", placement: { column: 5, row: 3, columnSpan: 2 } }
+        - { id: notes, kind: multiline, label: Notes, binding: { column: notes }, placement: { column: 1, row: 4, columnSpan: 12 } }
+reports:
+  - id: crm-report-activities
+    name: Activity report
+    datasetQueryId: crm-q-activities
+    page:
+      size: A4
+      orientation: portrait
+      margins: { top: 36, right: 36, bottom: 36, left: 36 }
+    bands:
+      reportHeader:
+        height: 30
+        components:
+          - { id: title, kind: staticText, x: 0, y: 0, w: 523, h: 24, text: Activities by company, style: { fontSize: 16, bold: true } }
+      pageHeader:
+        height: 18
+        components:
+          - { id: h-kind, kind: staticText, x: 0, y: 0, w: 70, h: 14, text: Kind, style: { bold: true } }
+          - { id: h-subject, kind: staticText, x: 70, y: 0, w: 200, h: 14, text: Subject, style: { bold: true } }
+          - { id: h-deal, kind: staticText, x: 270, y: 0, w: 140, h: 14, text: Deal, style: { bold: true } }
+          - { id: h-due, kind: staticText, x: 410, y: 0, w: 70, h: 14, text: Due, style: { bold: true } }
+          - { id: h-state, kind: staticText, x: 480, y: 0, w: 43, h: 14, text: State, style: { bold: true } }
+      groups:
+        - id: by-company
+          groupBy: record.company
+          header:
+            height: 22
+            keepTogether: true
+            components:
+              - { id: g-company, kind: field, x: 0, y: 4, w: 523, h: 16, expression: record.company, style: { fontSize: 12, bold: true } }
+          footer:
+            height: 20
+            components:
+              - { id: g-count, kind: calculated, x: 0, y: 2, w: 523, h: 14, expression: "count(rows.subject) & ' activities, ' & countof(rows, state = 'Open') & ' open'", style: { align: right } }
+      detail:
+        height: 16
+        components:
+          - { id: d-kind, kind: field, x: 0, y: 0, w: 70, h: 14, expression: record.kind }
+          - { id: d-subject, kind: field, x: 70, y: 0, w: 200, h: 14, expression: record.subject }
+          - { id: d-deal, kind: field, x: 270, y: 0, w: 140, h: 14, expression: record.deal }
+          - { id: d-due, kind: field, x: 410, y: 0, w: 70, h: 14, expression: record.due_date }
+          - { id: d-state, kind: field, x: 480, y: 0, w: 43, h: 14, expression: record.state }
+      pageFooter:
+        height: 18
+        components:
+          - { id: page, kind: calculated, x: 0, y: 2, w: 523, h: 14, expression: "'Page ' & page & ' of ' & pages", style: { align: center } }
+      reportFooter:
+        height: 24
+        components:
+          - { id: total, kind: calculated, x: 0, y: 4, w: 523, h: 16, expression: "'Total activities: ' & count(rows.subject)", style: { bold: true } }
+dashboards:
+  - id: crm-dash-pipeline
+    name: Pipeline
+    filters:
+      - { id: crm-filter-stage, name: Stage, param: stage, logicalType: text, control: select, optionsQueryId: crm-q-stage-names }
+    components:
+      - { id: stage-filter, kind: filter, title: Stage, filterId: crm-filter-stage, placement: { column: 1, row: 1, columnSpan: 4 } }
+      - id: open-pipeline
+        kind: kpi
+        title: Open pipeline
+        queryId: crm-q-open-pipeline
+        expression: sum(rows.total)
+        format: "$#,##0"
+        comparison: { expression: sum(rows.weighted), label: Weighted }
+        placement: { column: 1, row: 2, columnSpan: 4 }
+      - id: open-deals
+        kind: kpi
+        title: Open deals
+        queryId: crm-q-open-pipeline
+        expression: sum(rows.deals)
+        format: "#,##0"
+        placement: { column: 5, row: 2, columnSpan: 4 }
+      - id: by-stage
+        kind: chart
+        title: Pipeline by stage
+        queryId: crm-q-deals-by-stage
+        chartType: bar
+        x: stage
+        y: [total]
+        format: "$#,##0"
+        placement: { column: 1, row: 3, columnSpan: 8, rowSpan: 2 }
+      - id: open-deal-table
+        kind: table
+        title: Open deal list
+        queryId: crm-q-open-deals
+        columns: [title, company, stage, amount]
+        pageSize: 10
+        placement: { column: 9, row: 2, columnSpan: 4, rowSpan: 3 }
+actions:
+  - id: crm-action-mark-won
+    name: Mark deal won
+    description: Moves an open deal to the Won stage and logs an activity, in one transaction.
+    onError: rollback
+    steps:
+      - id: won-stage
+        kind: runQuery
+        queryId: crm-q-won-stage
+        params: {}
+        storeAs: won
+      - id: check-open
+        kind: condition
+        when: "record.status = 'open'"
+        then:
+          - id: update-deal
+            kind: updateRecord
+            table: deals
+            match: current
+            values:
+              status: "'won'"
+              stage_id: max(results.won.id)
+              close_date: coalesce(record.close_date, today())
+          - id: log-activity
+            kind: createRecord
+            table: activities
+            values:
+              company_id: record.company_id
+              deal_id: record.id
+              contact_id: record.contact_id
+              kind: "'note'"
+              subject: "'Deal won: ' & record.title"
+              due_date: today()
+              done: "1"
+          - id: done
+            kind: message
+            text: "'Deal marked as won.'"
+        else:
+          - id: not-open
+            kind: message
+            text: "'Only open deals can be marked won.'"
+            tone: error
+  - id: crm-action-log-new-deal
+    name: Log new deal
+    description: Records a note activity when a deal is created.
+    onError: stop
+    steps:
+      - id: log
+        kind: createRecord
+        table: activities
+        values:
+          company_id: record.company_id
+          deal_id: record.id
+          contact_id: record.contact_id
+          kind: "'note'"
+          subject: "'Deal created: ' & record.title"
+          due_date: today()
+          done: "1"
+triggers:
+  - id: crm-trigger-new-deal
+    name: Log activity when a deal is created
+    table: deals
+    event: created
+    actionId: crm-action-log-new-deal
+    mode: sync
+    enabled: true
+roles:
+  - id: crm-role-sales-rep
+    name: Sales rep
+    permissions:
+      navigation: [crm-nav-dashboard, crm-nav-companies, crm-nav-contacts, crm-nav-deals, crm-nav-activities, crm-nav-reports, crm-nav-activity-report]
+      actions: [crm-action-mark-won, crm-action-log-new-deal]
+      objects:
+        - { kind: dashboard, id: crm-dash-pipeline, read: true }
+        - { kind: report, id: crm-report-activities, read: true }
+        - { kind: form, id: crm-form-companies, read: true }
+        - { kind: form, id: crm-form-company, read: true, create: true, update: true, delete: false }
+        - { kind: form, id: crm-form-contacts, read: true }
+        - { kind: form, id: crm-form-contact, read: true, create: true, update: true, delete: true }
+        - { kind: form, id: crm-form-deals, read: true }
+        - { kind: form, id: crm-form-deal, read: true, create: true, update: true, delete: true }
+        - { kind: form, id: crm-form-activities, read: true }
+        - { kind: form, id: crm-form-activity, read: true, create: true, update: true, delete: true }
+        - { kind: table, id: deals, read: true, update: true }
+        - { kind: table, id: activities, read: true, create: true }
+        - { kind: table, id: deal_stages, read: true }
+        - { kind: query, id: crm-q-won-stage, read: true }
+        - { kind: query, id: crm-q-open-pipeline, read: true }
+        - { kind: query, id: crm-q-deals-by-stage, read: true }
+        - { kind: query, id: crm-q-open-deals, read: true }
+        - { kind: query, id: crm-q-stage-names, read: true }
+        - { kind: query, id: crm-q-activities, read: true }

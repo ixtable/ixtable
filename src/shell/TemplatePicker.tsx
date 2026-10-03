@@ -1,23 +1,7 @@
 import { LayoutTemplate } from "lucide-react";
 import { useEffect, useState } from "react";
-import { call } from "../lib/api";
 import type { SessionState } from "../lib/types";
-
-/** A golden application template (golden/<id>/app.yaml), as listed by `list_templates`. */
-export interface TemplateInfo {
-  id: string;
-  name: string;
-  description: string;
-  version: string;
-}
-
-export const listTemplates = () => call<TemplateInfo[]>("list_templates");
-/** New untitled document with the template's definitions, assets, schema, and seed records. */
-export const createFromTemplate = (templateId: string) =>
-  call<SessionState>("create_from_template", { templateId });
-/** The template's definitions as DocumentConfig YAML (what Settings › YAML shows). */
-export const readTemplateConfig = (templateId: string) =>
-  call<string>("read_template_config", { templateId });
+import { createFromTemplate, listTemplates, type TemplateInfo } from "../templates/api";
 
 /**
  * Start-screen section listing the golden applications (PRD §26). Choosing one

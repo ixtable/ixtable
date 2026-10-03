@@ -68,6 +68,8 @@ export function RecordView({
   const [status, setStatus] = useState<{ text: string; tone: "info" | "error" } | null>(null);
   const [loading, setLoading] = useState(mode !== "create");
   const [busy, setBusy] = useState(false);
+  // Bumped when an action changed the shown record, so detail mode reloads it.
+  const [reload, setReload] = useState(0);
   const [dialog, confirm] = useConfirm();
   const heading = useRef<HTMLHeadingElement>(null);
 
@@ -127,7 +129,7 @@ export function RecordView({
     return () => {
       live = false;
     };
-  }, [form.id, mode, table, recordKey]);
+  }, [form.id, mode, table, recordKey, reload]);
 
   useEffect(() => {
     if (!loading) heading.current?.focus();
@@ -265,7 +267,7 @@ export function RecordView({
         runtime.notify(text, tone);
       },
       authorize: (kind, id, op) => can(config, roleId, kind, id, op as "read"),
-      refresh: () => onMode(mode, recordId),
+      refresh: () => (mode === "detail" ? setReload((n) => n + 1) : onMode(mode, recordId)),
     }).catch((reason) => ({ ok: false, error: message(reason) }));
     if (!result.ok && result.error) setStatus({ text: result.error, tone: "error" });
   };

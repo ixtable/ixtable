@@ -10,6 +10,9 @@ export type Doc = {
   mode: ModeId;
   sessionId: string;
   documentId: string;
+  /** Runtime-only bundle session (Studio modes hidden). */
+  runtimeOnly?: boolean;
+  bundleVersion?: string | null;
 };
 
 export type Selection = {

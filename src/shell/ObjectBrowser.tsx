@@ -1,8 +1,8 @@
 import { Database, Eye, Plus, Search, Table2 } from "lucide-react";
-import { useState } from "react";
+import { useContext, useState } from "react";
 import type { SavedQuery } from "../query/types";
 import type { DbObject } from "../lib/types";
-import type { Selection } from "./context";
+import { type Selection, ShellContext } from "./context";
 
 export function ObjectBrowser({
   objects,
@@ -20,10 +20,18 @@ export function ObjectBrowser({
   onSelect: (value: Selection) => void;
 }) {
   const [search, setSearch] = useState("");
+  const shell = useContext(ShellContext);
+  /** Saved queries open in Query mode. */
+  const choose = (value: Selection) => {
+    onSelect(value);
+    if ((value.kind === "query" || value.kind === "new-query") && shell)
+      void shell.changeMode("query");
+  };
   const needle = search.trim().toLowerCase();
   const tablesAndViews = objects.filter(
     (o) =>
       (o.objectType === "table" || o.objectType === "view") &&
+      !o.name.startsWith("_ixtable_") &&
       o.name.toLowerCase().includes(needle),
   );
   const visibleQueries = queries.filter((q) => q.name.toLowerCase().includes(needle));
@@ -50,7 +58,7 @@ export function ObjectBrowser({
           </button>
         )}
         {label === "Queries" && (
-          <button aria-label="New query" onClick={() => onSelect({ kind: "new-query", id: "" })}>
+          <button aria-label="New query" onClick={() => choose({ kind: "new-query", id: "" })}>
             <Plus />
           </button>
         )}
@@ -67,7 +75,7 @@ export function ObjectBrowser({
               <button
                 className={active?.kind === kind && active.id === id ? "selected" : ""}
                 aria-pressed={active?.kind === kind && active.id === id}
-                onClick={() => onSelect({ kind, id })}
+                onClick={() => choose({ kind, id })}
               >
                 <Icon />
                 <span>

@@ -1,14 +1,28 @@
 pub mod archive;
+pub mod archive_io;
+pub mod assets;
 pub mod automation;
+pub mod bundle;
+pub mod bundle_export;
+pub mod checkpoints;
 pub mod dashboards;
 pub mod data;
 pub mod design;
+pub mod installation;
+pub mod installation_checks;
+pub mod installation_commands;
+pub mod jobs;
+pub mod logging;
 pub mod manager;
 pub mod migrations;
+pub mod postgres;
+pub mod queries;
 pub mod recordstore;
+pub mod recovery;
 pub mod reports;
 pub mod roles;
 pub mod storage;
+pub mod templates;
 pub mod validation;
 
 use archive::{Attachment, DocumentConfig};
@@ -63,7 +77,10 @@ fn read_document_config_yaml(window_label: String) -> Result<String, AppError> {
     manager()?.config_yaml(&window_label)
 }
 #[tauri::command]
-fn apply_document_config_yaml(window_label: String, yaml: String) -> Result<SessionState, AppError> {
+fn apply_document_config_yaml(
+    window_label: String,
+    yaml: String,
+) -> Result<SessionState, AppError> {
     manager()?.apply_config_yaml(&window_label, &yaml)
 }
 #[tauri::command]
@@ -92,7 +109,7 @@ fn import_attachment(
 }
 #[tauri::command]
 fn list_attachments(window_label: String) -> Result<Vec<Attachment>, AppError> {
-    manager()?.attachments(&window_label)
+    manager()?.asset_list(&window_label)
 }
 #[tauri::command]
 fn export_attachment(window_label: String, id: String, path: String) -> Result<(), AppError> {
@@ -125,51 +142,11 @@ fn list_recent_files() -> Result<Vec<storage::RecentFile>, AppError> {
 }
 #[tauri::command]
 fn list_recovery_sessions() -> Result<Vec<storage::RecoveryRecord>, AppError> {
-    manager()?
-        .global
-        .recoveries()
-        .map_err(|e| AppError::new("IO_ERROR", e))
+    manager()?.recoverable_sessions()
 }
 #[tauri::command]
 fn discard_recovery(session_id: String) -> Result<(), AppError> {
-    let m = manager()?;
-    if let Some(r) = m
-        .global
-        .recoveries()
-        .map_err(|e| AppError::new("IO_ERROR", e))?
-        .into_iter()
-        .find(|r| r.session_id == session_id)
-    {
-        let _ = std::fs::remove_dir_all(r.workspace);
-    }
-    m.global
-        .remove_recovery(&session_id)
-        .map_err(|e| AppError::new("IO_ERROR", e))
-}
-fn db(window: &str) -> Result<PathBuf, AppError> {
-    manager()?.database_path(window)
-}
-fn data_err(e: String) -> AppError {
-    let lower = e.to_ascii_lowercase();
-    let code = if lower.contains("does not exist") || lower.contains("not found") {
-        "NOT_FOUND"
-    } else if lower.contains("expected one row") || lower.contains("identity") {
-        "STALE_ROW"
-    } else if lower.contains("constraint") || lower.contains("foreign key") {
-        "CONSTRAINT_VIOLATION"
-    } else if lower.contains("read-only") || lower.contains("readonly") {
-        "READ_ONLY"
-    } else if lower.contains("unknown column")
-        || lower.contains("required")
-        || lower.contains("allowed")
-    {
-        "VALIDATION_ERROR"
-    } else if lower.contains("extension") {
-        "EXTENSION_STARTUP"
-    } else {
-        "DATABASE_ERROR"
-    };
-    AppError::new(code, e)
+    manager()?.discard_recovery(&session_id)
 }
 #[tauri::command]
 fn list_database_objects(window_label: String) -> Result<Vec<data::DbObject>, AppError> {
@@ -200,38 +177,36 @@ fn insert_row(
     table: String,
     values: Vec<data::NamedValue>,
 ) -> Result<Vec<data::DataValue>, AppError> {
-    let r = data::insert(&db(&window_label)?, &table, &values).map_err(data_err)?;
-    manager()?.mark_data_dirty(&window_label)?;
-    Ok(r)
+    recordstore::insert_row(&window_label, &table, &values)
 }
+/// `expected` carries the values the user started from; entities with the
+/// optimistic policy reject the update with CONFLICT when they changed.
 #[tauri::command]
 fn update_row(
     window_label: String,
     table: String,
     values: Vec<data::NamedValue>,
     identity: Vec<data::DataValue>,
+    expected: Option<Vec<data::NamedValue>>,
 ) -> Result<u64, AppError> {
-    let r = data::update(&db(&window_label)?, &table, &values, &identity).map_err(data_err)?;
-    manager()?.mark_data_dirty(&window_label)?;
-    Ok(r)
+    recordstore::update_row(&window_label, &table, &values, &identity, expected)
 }
 #[tauri::command]
 fn delete_row(
     window_label: String,
     table: String,
     identity: Vec<data::DataValue>,
+    expected: Option<Vec<data::NamedValue>>,
 ) -> Result<u64, AppError> {
-    let r = data::delete(&db(&window_label)?, &table, &identity).map_err(data_err)?;
-    manager()?.mark_data_dirty(&window_label)?;
-    Ok(r)
+    recordstore::delete_row(&window_label, &table, &identity, expected)
 }
 #[tauri::command]
 fn create_database_table(
     window_label: String,
     spec: data::CreateTable,
 ) -> Result<SessionState, AppError> {
-    data::create_table(&db(&window_label)?, &spec).map_err(data_err)?;
-    manager()?.mark_data_dirty(&window_label)
+    installation::ensure_studio(&window_label)?;
+    recordstore::create_table(&window_label, &spec)
 }
 #[tauri::command]
 fn alter_database_table(
@@ -239,8 +214,8 @@ fn alter_database_table(
     table: String,
     operation: data::AlterTable,
 ) -> Result<SessionState, AppError> {
-    data::alter_table(&db(&window_label)?, &table, &operation).map_err(data_err)?;
-    manager()?.mark_data_dirty(&window_label)
+    installation::ensure_studio(&window_label)?;
+    recordstore::alter_table(&window_label, &table, &[operation])
 }
 #[tauri::command]
 fn save_query(
@@ -302,16 +277,75 @@ pub fn run() {
             save_query,
             delete_saved_query,
             // archive commands
+            manager::autosave_document,
+            recovery::recover_session,
+            checkpoints::create_checkpoint,
+            checkpoints::list_checkpoints,
+            checkpoints::restore_checkpoint_as_copy,
+            assets::import_asset,
+            assets::list_orphan_assets,
+            assets::cleanup_orphan_assets,
+            assets::archive_size_report,
+            // logging commands
+            logging::read_logs,
+            logging::write_log,
             validation::validate_document,
             // reports commands
+            reports::write_report_pdf,
+            reports::read_report_assets,
             // dashboards commands
             // automation commands
+            automation::validate_automation,
+            jobs::enqueue_job,
+            jobs::claim_next_job,
+            jobs::complete_job,
+            jobs::fail_job,
+            jobs::cancel_job,
+            jobs::retry_job,
+            jobs::list_jobs,
+            jobs::job_attempts,
             // migrations commands
+            migrations::commands::migration_status,
+            migrations::commands::migration_history,
+            migrations::commands::preview_migration,
+            migrations::commands::dry_run_migrations,
+            migrations::commands::apply_migrations,
+            migrations::commands::rollback_migration,
             // recordstore commands
+            recordstore::commands::store_capabilities,
+            recordstore::commands::table_drop_impact,
+            recordstore::commands::drop_database_table,
+            recordstore::commands::preview_table_changes,
+            recordstore::commands::apply_table_changes,
+            recordstore::commands::create_index,
+            recordstore::commands::drop_index,
+            recordstore::commands::list_indexes,
+            recordstore::commands::execute_write_batch,
+            recordstore::commands::test_datasource_connection,
+            recordstore::commands::set_datasource_password,
+            recordstore::commands::clear_datasource_password,
+            recordstore::commands::connect_datasource,
             // roles commands
             // design commands
+            design::validate_design,
             // queries commands
+            queries::execute_parameterized_query,
+            queries::run_saved_query,
+            queries::cancel_query,
+            queries::check_query_sql,
+            // templates commands
+            templates::list_templates,
+            templates::read_template_config,
+            templates::create_from_template,
             // bundle commands
+            bundle_export::export_runtime_bundle,
+            bundle_export::bundle_signer_fingerprint,
+            installation_commands::inspect_runtime_bundle,
+            installation_commands::open_runtime_bundle,
+            installation_commands::update_runtime_installation,
+            installation_commands::runtime_installation_info,
+            installation_commands::preview_installation_reset,
+            installation_commands::reset_runtime_installation_data,
         ])
         .run(tauri::generate_context!())
         .expect("error while running ixtable")

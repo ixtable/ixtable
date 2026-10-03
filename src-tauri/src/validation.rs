@@ -47,7 +47,11 @@ pub fn check_named_ids<'a>(
     let mut issues = vec![];
     for (id, name) in items {
         if id.trim().is_empty() {
-            issues.push(Issue::error(kind, id, format!("{kind} \"{name}\" has no id")));
+            issues.push(Issue::error(
+                kind,
+                id,
+                format!("{kind} \"{name}\" has no id"),
+            ));
         } else if !seen.insert(id) {
             issues.push(Issue::error(kind, id, format!("duplicate {kind} id {id}")));
         }
@@ -78,16 +82,22 @@ pub fn validate_config(config: &DocumentConfig) -> Vec<Issue> {
             .iter()
             .map(|q| (q.id.as_str(), q.name.as_str())),
     ));
+    issues.extend(crate::queries::validate(config));
     issues.extend(reports::validate(config));
     issues.extend(dashboards::validate(config));
     issues.extend(automation::validate(config));
     issues.extend(migrations::validate(config));
     issues.extend(recordstore::validate(config));
     issues.extend(roles::validate(config));
+    issues.extend(crate::design::validate(config));
     issues
 }
 
 #[tauri::command]
 pub fn validate_document(window_label: String) -> Result<Vec<Issue>, AppError> {
-    Ok(validate_config(&crate::manager()?.config(&window_label)?))
+    let config = crate::manager()?.config(&window_label)?;
+    let mut issues = validate_config(&config);
+    issues.extend(crate::design::table_issues(&window_label, &config).unwrap_or_default());
+    issues.extend(crate::recordstore::table_issues(&window_label, &config));
+    Ok(issues)
 }

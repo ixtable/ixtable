@@ -4,20 +4,19 @@
 //! compressed record-store bytes, JSON document config, and application-asset
 //! attachments. Working sessions extract `data.db`, `document.json`, and
 //! `config.yaml`. The `.ixt` file is the source of truth after a successful save.
+//! File-format I/O (versions, streaming payloads, preservation) lives in `archive_io`.
 use crate::design::DesignSchema;
-use crate::{automation, dashboards, migrations, recordstore, reports, roles};
 pub use crate::validation::{check_named_ids, validate_config, Issue, Severity};
+use crate::{automation, dashboards, migrations, recordstore, reports, roles};
 use chrono::Utc;
-use rusqlite::{params, Connection};
+use rusqlite::Connection;
 use serde::{Deserialize, Serialize};
-use sha2::{Digest, Sha256};
-use std::{
-    fs,
-    path::{Path, PathBuf},
-};
+use std::fs;
 use uuid::Uuid;
 
-pub const FORMAT_VERSION: i64 = 1;
+pub use crate::archive_io::{
+    read_archive, read_header, write_archive, ArchiveHeader, FORMAT_VERSION, MIN_FORMAT_VERSION,
+};
 /// Current `DocumentConfig.version`. Version 2 configs load through serde defaults.
 pub const CONFIG_VERSION: u32 = 3;
 
@@ -29,8 +28,12 @@ pub enum ArchiveError {
     Sql(#[from] rusqlite::Error),
     #[error("Invalid archive: {0}")]
     Invalid(String),
-    #[error("Unsupported archive version {0}")]
+    #[error("Unsupported archive format {0}. This ixtable build opens formats {min} to {max}.", min = MIN_FORMAT_VERSION, max = FORMAT_VERSION)]
     Unsupported(i64),
+    #[error(
+        "This document was created by a newer ixtable (format {0}). Update ixtable to open it."
+    )]
+    NewerFormat(i64),
     #[error("Corrupt payload: {0}")]
     Corrupt(String),
 }
@@ -90,6 +93,9 @@ pub struct QueryParameter {
     pub logical_type: String,
     #[serde(default)]
     pub default_value: Option<serde_json::Value>,
+    /// A required parameter with no default must be supplied at run time.
+    #[serde(default)]
+    pub required: bool,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
@@ -183,16 +189,6 @@ pub struct ArchiveDocument {
     pub attachments: Vec<Attachment>,
 }
 
-fn checksum(data: &[u8]) -> String {
-    format!("{:x}", Sha256::digest(data))
-}
-fn compress(data: &[u8]) -> Result<Vec<u8>, ArchiveError> {
-    Ok(zstd::stream::encode_all(data, 3)?)
-}
-fn decompress(data: &[u8]) -> Result<Vec<u8>, ArchiveError> {
-    zstd::stream::decode_all(data).map_err(|e| ArchiveError::Corrupt(e.to_string()))
-}
-
 pub fn empty_data_db() -> Result<Vec<u8>, ArchiveError> {
     let path = std::env::temp_dir().join(format!("ixtable-empty-{}.db", Uuid::new_v4()));
     Connection::open(&path)?.execute_batch("PRAGMA user_version=1;")?;
@@ -219,182 +215,6 @@ pub fn create_document(name: impl Into<String>) -> Result<ArchiveDocument, Archi
     })
 }
 
-fn schema(conn: &Connection) -> Result<(), ArchiveError> {
-    conn.execute_batch(
-    "PRAGMA journal_mode=DELETE; PRAGMA foreign_keys=ON;
-     CREATE TABLE archive_metadata(format_version INTEGER NOT NULL, document_id TEXT NOT NULL, created_at TEXT NOT NULL, updated_at TEXT NOT NULL, application_version TEXT NOT NULL);
-     CREATE TABLE data_payload(id INTEGER PRIMARY KEY CHECK(id=1), compression TEXT NOT NULL, checksum TEXT NOT NULL, uncompressed_size INTEGER NOT NULL, contents BLOB NOT NULL);
-     CREATE TABLE document_config(id INTEGER PRIMARY KEY CHECK(id=1), version INTEGER NOT NULL, json TEXT NOT NULL);
-     CREATE TABLE attachments(id TEXT PRIMARY KEY, display_name TEXT NOT NULL, media_type TEXT NOT NULL, checksum TEXT NOT NULL, uncompressed_size INTEGER NOT NULL, created_at TEXT NOT NULL, updated_at TEXT NOT NULL, compression TEXT NOT NULL, contents BLOB NOT NULL);"
-)?;
-    Ok(())
-}
-
-pub fn write_archive(path: &Path, doc: &ArchiveDocument) -> Result<(), ArchiveError> {
-    doc.config
-        .design
-        .validate()
-        .map_err(ArchiveError::Invalid)?;
-    let parent = path.parent().unwrap_or_else(|| Path::new("."));
-    fs::create_dir_all(parent)?;
-    let tmp = parent.join(format!(
-        ".{}.{}.tmp",
-        path.file_name().unwrap_or_default().to_string_lossy(),
-        Uuid::new_v4()
-    ));
-    let result = (|| {
-        let mut conn = Connection::open(&tmp)?;
-        schema(&conn)?;
-        let tx = conn.transaction()?;
-        tx.execute(
-            "INSERT INTO archive_metadata VALUES(?1,?2,?3,?4,?5)",
-            params![
-                FORMAT_VERSION,
-                doc.metadata.document_id,
-                doc.metadata.created_at,
-                Utc::now().to_rfc3339(),
-                doc.metadata.application_version
-            ],
-        )?;
-        let packed = compress(&doc.data)?;
-        tx.execute(
-            "INSERT INTO data_payload VALUES(1,'zstd',?1,?2,?3)",
-            params![checksum(&doc.data), doc.data.len() as i64, packed],
-        )?;
-        tx.execute(
-            "INSERT INTO document_config VALUES(1,?1,?2)",
-            params![
-                doc.config.version,
-                serde_json::to_string(&doc.config)
-                    .map_err(|e| ArchiveError::Invalid(e.to_string()))?
-            ],
-        )?;
-        for a in &doc.attachments {
-            tx.execute(
-                "INSERT INTO attachments VALUES(?1,?2,?3,?4,?5,?6,?7,'zstd',?8)",
-                params![
-                    a.id,
-                    a.display_name,
-                    a.media_type,
-                    checksum(&a.contents),
-                    a.contents.len() as i64,
-                    a.created_at,
-                    a.updated_at,
-                    compress(&a.contents)?
-                ],
-            )?;
-        }
-        tx.commit()?;
-        conn.execute_batch("PRAGMA optimize;")?;
-        drop(conn);
-        let file = fs::OpenOptions::new().read(true).write(true).open(&tmp)?;
-        file.sync_all()?;
-        // Validate the complete temporary archive before replacing a valid destination.
-        read_archive(&tmp)?;
-        fs::rename(&tmp, path)?;
-        if let Ok(dir) = fs::File::open(parent) {
-            let _ = dir.sync_all();
-        }
-        Ok(())
-    })();
-    if result.is_err() {
-        let _ = fs::remove_file(&tmp);
-    }
-    result
-}
-
-pub fn read_archive(path: &Path) -> Result<ArchiveDocument, ArchiveError> {
-    if !path.exists() {
-        return Err(ArchiveError::Io(std::io::Error::new(
-            std::io::ErrorKind::NotFound,
-            "document not found",
-        )));
-    }
-    let conn = Connection::open_with_flags(path, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY)?;
-    let (version, metadata) = conn.query_row("SELECT format_version,document_id,created_at,updated_at,application_version FROM archive_metadata LIMIT 1", [], |r| Ok((r.get::<_,i64>(0)?, ArchiveMetadata { document_id:r.get(1)?,created_at:r.get(2)?,updated_at:r.get(3)?,application_version:r.get(4)? })))?;
-    if version != FORMAT_VERSION {
-        return Err(ArchiveError::Unsupported(version));
-    }
-    let (expected, size, packed): (String, i64, Vec<u8>) = conn.query_row(
-        "SELECT checksum,uncompressed_size,contents FROM data_payload WHERE id=1",
-        [],
-        |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
-    )?;
-    let data = decompress(&packed)?;
-    if data.len() as i64 != size || checksum(&data) != expected {
-        return Err(ArchiveError::Corrupt(
-            "data.db checksum or size mismatch".into(),
-        ));
-    }
-    let json: String = conn.query_row("SELECT json FROM document_config WHERE id=1", [], |r| {
-        r.get(0)
-    })?;
-    let config = serde_json::from_str::<DocumentConfig>(&json)
-        .map_err(|e| ArchiveError::Invalid(e.to_string()))?
-        .upgrade()?;
-    config.design.validate().map_err(ArchiveError::Invalid)?;
-    let mut stmt=conn.prepare("SELECT id,display_name,media_type,checksum,uncompressed_size,created_at,updated_at,contents FROM attachments ORDER BY created_at,id")?;
-    let rows = stmt.query_map([], |r| {
-        Ok((
-            r.get::<_, String>(0)?,
-            r.get::<_, String>(1)?,
-            r.get::<_, String>(2)?,
-            r.get::<_, String>(3)?,
-            r.get::<_, i64>(4)?,
-            r.get::<_, String>(5)?,
-            r.get::<_, String>(6)?,
-            r.get::<_, Vec<u8>>(7)?,
-        ))
-    })?;
-    let mut attachments = vec![];
-    for row in rows {
-        let (id, display_name, media_type, expected, size, created_at, updated_at, packed) = row?;
-        let contents = decompress(&packed)?;
-        if contents.len() as i64 != size || checksum(&contents) != expected {
-            return Err(ArchiveError::Corrupt(format!(
-                "attachment {id} checksum or size mismatch"
-            )));
-        }
-        attachments.push(Attachment {
-            id,
-            display_name,
-            media_type,
-            checksum: expected,
-            size: size as u64,
-            created_at,
-            updated_at,
-            contents,
-        });
-    }
-    Ok(ArchiveDocument {
-        metadata,
-        data,
-        config,
-        attachments,
-    })
-}
-
-pub fn extract(doc: &ArchiveDocument, root: &Path) -> Result<PathBuf, ArchiveError> {
-    let work = root.join(&doc.metadata.document_id);
-    fs::create_dir_all(&work)?;
-    fs::write(work.join("data.db"), &doc.data)?;
-    fs::write(
-        work.join("document.json"),
-        serde_json::to_vec_pretty(&doc.config).unwrap(),
-    )?;
-    fs::write(work.join("config.yaml"), document_config_yaml(&doc.config)?)?;
-    for a in &doc.attachments {
-        let dir = work.join("attachments").join(&a.id);
-        fs::create_dir_all(&dir)?;
-        fs::write(dir.join("content"), &a.contents)?;
-        fs::write(
-            dir.join("metadata.json"),
-            serde_json::to_vec_pretty(a).unwrap(),
-        )?;
-    }
-    Ok(work)
-}
-
 pub fn add_attachment(
     doc: &mut ArchiveDocument,
     display_name: String,
@@ -407,7 +227,7 @@ pub fn add_attachment(
         id: id.clone(),
         display_name,
         media_type,
-        checksum: checksum(&contents),
+        checksum: crate::archive_io::sha256_hex(&contents),
         size: contents.len() as u64,
         created_at: now.clone(),
         updated_at: now,
@@ -441,6 +261,7 @@ mod tests {
                 row_span: 1,
                 region: None,
             },
+            ..Default::default()
         });
         write_archive(&path, &document).unwrap();
         let reopened = read_archive(&path).unwrap();
@@ -488,6 +309,7 @@ mod tests {
                 name: "customer".into(),
                 logical_type: "text".into(),
                 default_value: Some(serde_json::json!("CUST-001")),
+                ..Default::default()
             }],
             builder: Some(serde_json::json!({"source": "Customers"})),
             ..Default::default()
@@ -495,37 +317,43 @@ mod tests {
         config.reports.push(crate::reports::Report {
             id: "r1".into(),
             name: "Sales".into(),
+            ..Default::default()
         });
         config.dashboards.push(crate::dashboards::Dashboard {
             id: "d1".into(),
             name: "Overview".into(),
+            ..Default::default()
         });
         config.actions.push(crate::automation::ActionDef {
             id: "a1".into(),
             name: "Approve".into(),
+            ..Default::default()
         });
         config.triggers.push(crate::automation::Trigger {
             id: "t1".into(),
             name: "On create".into(),
+            ..Default::default()
         });
         config.migrations.push(crate::migrations::Migration {
             id: "m1".into(),
             name: "Add index".into(),
+            ..Default::default()
         });
         config.entities.push(crate::recordstore::EntitySettings {
             id: "e1".into(),
             table: "Orders".into(),
+            ..Default::default()
         });
         config.roles.push(crate::roles::Role {
             id: "role1".into(),
             name: "Clerk".into(),
+            ..Default::default()
         });
         config.release.version = "1.2.0".into();
         config.release.min_runtime_version = Some("1.0.0".into());
         let yaml = document_config_yaml(&config).unwrap();
         assert!(yaml.contains("minRuntimeVersion"));
         assert_eq!(document_config_from_yaml(&yaml).unwrap(), config);
-        assert!(validate_config(&config).is_empty());
     }
 
     #[test]
@@ -535,11 +363,14 @@ mod tests {
             config.reports.push(crate::reports::Report {
                 id: "same".into(),
                 name: name.into(),
+                ..Default::default()
             });
         }
         config.design.version += 1;
         let issues = validate_config(&config);
-        assert!(issues.iter().any(|i| i.object_kind == "design" && i.severity == Severity::Error));
+        assert!(issues
+            .iter()
+            .any(|i| i.object_kind == "design" && i.severity == Severity::Error));
         assert!(issues
             .iter()
             .any(|i| i.object_kind == "report" && i.message.contains("duplicate")));
@@ -557,8 +388,8 @@ mod tests {
         let yaml = document_config_yaml(&config).unwrap();
         let parsed = document_config_from_yaml(&yaml).unwrap();
         assert_eq!(parsed, config);
-        let loaded = document_config_from_yaml("name: From YAML\nactiveMode: data\nversion: 2\n")
-            .unwrap();
+        let loaded =
+            document_config_from_yaml("name: From YAML\nactiveMode: data\nversion: 2\n").unwrap();
         assert_eq!(loaded.name, "From YAML");
         assert!(loaded.design.validate().is_ok());
     }

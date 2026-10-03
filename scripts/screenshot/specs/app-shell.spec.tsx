@@ -236,13 +236,14 @@ it("captures the document lifecycle shell", async () => {
     expect(inserted.rows).toHaveLength(3);
   });
   await user.click(screen.getByRole("button", { name: "New query" }));
+  await user.click(await screen.findByRole("tab", { name: "SQL" }));
   const sqlEditor = await screen.findByRole("textbox", { name: "SQL editor" });
   await user.clear(sqlEditor);
   await user.type(sqlEditor, "SELECT Company FROM Customers");
   await user.click(screen.getByRole("button", { name: "Run" }));
   expect(await screen.findByText("Northstar Goods")).toBeInTheDocument();
   await user.click(screen.getByRole("button", { name: "Save query" }));
-  expect(await screen.findByRole("button", { name: /^Untitled Query\b/ })).toHaveAttribute(
+  expect(await screen.findByRole("button", { name: /^Untitled query\b/ })).toHaveAttribute(
     "aria-pressed",
     "true",
   );
@@ -307,7 +308,7 @@ it("captures the document lifecycle shell", async () => {
       "The component library, form canvas, and properties panel are visible.",
     ],
   });
-  await user.click(screen.getByRole("button", { name: "Preview app" }));
+  await user.click(screen.getByRole("button", { name: "Preview" }));
   expect(screen.getByRole("region", { name: "Products preview" })).toBeInTheDocument();
   await captureDocument(document, {
     name: "app-qa-07-app-preview",

@@ -1,4 +1,4 @@
-import { Database, FilePlus2, FileText, FolderOpen, X } from "lucide-react";
+import { Database, FilePlus2, FileText, FolderOpen, PackageOpen, X } from "lucide-react";
 import { useEffect, useState } from "react";
 import {
   asTauriError,
@@ -9,6 +9,10 @@ import {
 } from "../lib/api";
 import { chooseDocumentToOpen } from "../lib/dialog";
 import type { RecentFile, SessionState } from "../lib/types";
+import { RecoveryList } from "../persistence";
+import { BundleFileFlow } from "../release";
+import { openRuntimeBundle } from "../release/api";
+import { TemplatePicker } from "./TemplatePicker";
 
 const RECENT_PREVIEW = 5;
 const fileName = (path: string) => path.split(/[\\/]/).pop() || path;
@@ -86,6 +90,18 @@ export function StartScreen({
               <small>Choose an .ixt file</small>
             </span>
           </button>
+          <BundleFileFlow
+            disabled={!!pending}
+            act={openRuntimeBundle}
+            onDone={(state) => onOpened(state)}
+            onCancel={() => setNotice("Open canceled.")}
+          >
+            <PackageOpen />
+            <span>
+              <b>Open runtime bundle…</b>
+              <small>Run an .ixtr application</small>
+            </span>
+          </BundleFileFlow>
         </div>
         {pending && (
           <div className="progress" role="status">
@@ -109,6 +125,8 @@ export function StartScreen({
             </button>
           </div>
         )}
+        <RecoveryList disabled={!!pending} run={run} onError={setError} />
+        <TemplatePicker disabled={!!pending} run={run} />
         <section className="start-section" aria-labelledby="recent-documents">
           <div>
             <h2 id="recent-documents">Recent documents</h2>

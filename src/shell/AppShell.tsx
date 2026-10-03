@@ -11,30 +11,50 @@ import {
 } from "../lib/api";
 import { DocumentConfigProvider, useDocumentConfig } from "../lib/config-store";
 import { chooseDocumentDestination } from "../lib/dialog";
+import { AutomationHost } from "../automation/AutomationHost";
 import type { DbObject, SessionState } from "../lib/types";
 import { type Doc, type Selection, type ShellApi, ShellContext } from "./context";
 import { ModeSwitch } from "./ModeSwitch";
 import { findMode, type ModeId, modes } from "./modes";
+import { SaveStatus } from "../persistence";
+import { type Autosave, useAutosave } from "../persistence/useAutosave";
+import { RuntimeBar } from "../release";
 
 const fromSession = (state: SessionState): Doc => ({
   name: state.name,
   path: state.path ?? undefined,
   dirty: state.dirty,
-  mode: findMode(state.activeMode).id,
+  mode: state.runtimeOnly ? "run" : findMode(state.activeMode).id,
   sessionId: state.sessionId,
   documentId: state.documentId,
+  runtimeOnly: !!state.runtimeOnly,
+  bundleVersion: state.bundleVersion ?? null,
 });
 
 /** The open-document frame: sidebar, mode switch, ribbon, and the active mode's workspace. */
 export function AppShell({ initial, onClosed }: { initial: SessionState; onClosed: () => void }) {
   const [doc, setDoc] = useState<Doc>(() => fromSession(initial));
-  const applySession = useCallback((state: SessionState) => setDoc(fromSession(state)), []);
+  const adopt = useCallback((state: SessionState) => setDoc(fromSession(state)), []);
+  const autosave = useAutosave(adopt, initial);
+  const applySession = useCallback(
+    (state: SessionState) => {
+      setDoc(fromSession(state));
+      autosave.controller.sync(state);
+    },
+    [autosave.controller],
+  );
   return (
     <DocumentConfigProvider
       onState={applySession}
       fallback={<div className="document-app">Opening {doc.name}…</div>}
     >
-      <ShellFrame doc={doc} setDoc={setDoc} applySession={applySession} onClosed={onClosed} />
+      <ShellFrame
+        doc={doc}
+        setDoc={setDoc}
+        applySession={applySession}
+        onClosed={onClosed}
+        autosave={autosave}
+      />
     </DocumentConfigProvider>
   );
 }
@@ -44,11 +64,13 @@ function ShellFrame({
   setDoc,
   applySession,
   onClosed,
+  autosave,
 }: {
   doc: Doc;
   setDoc: (update: (doc: Doc) => Doc) => void;
   applySession: (state: SessionState) => void;
   onClosed: () => void;
+  autosave: Autosave;
 }) {
   const store = useDocumentConfig();
   const [pending, setPending] = useState("");
@@ -88,7 +110,10 @@ function ShellFrame({
     };
   }, [doc.name, doc.dirty]);
 
-  const markDirty = useCallback(() => setDoc((d) => ({ ...d, dirty: true })), [setDoc]);
+  const markDirty = useCallback(() => {
+    setDoc((d) => ({ ...d, dirty: true }));
+    autosave.controller.touch();
+  }, [setDoc, autosave.controller]);
   const changeMode = useCallback(
     async (mode: ModeId) => {
       if (doc.mode === mode) return;
@@ -131,10 +156,13 @@ function ShellFrame({
     [doc.path, doc.name, applySession],
   );
   const close = async () => {
-    const discard = doc.dirty
+    const flushed = doc.dirty && autosave.view.eligible ? await autosave.controller.flush() : null;
+    if (flushed) applySession(flushed);
+    const dirty = flushed ? flushed.dirty : doc.dirty;
+    const discard = dirty
       ? window.confirm("Discard unsaved changes and close this document?")
       : false;
-    if (doc.dirty && !discard) return;
+    if (dirty && !discard) return;
     setPending("Closing document…");
     setError(null);
     try {
@@ -185,32 +213,48 @@ function ShellFrame({
 
   return (
     <ShellContext.Provider value={shell}>
+      <AutomationHost />
       <div className="document-app">
         <aside className="doc-sidebar">
           <div className="doc-brand">
             <span>ix</span>
             <div className="project-actions">
-              <button aria-label="Save project" disabled={!!pending} onClick={() => save()}>
-                <Save />
-              </button>
-              <button aria-label="Save project as" disabled={!!pending} onClick={() => save(true)}>
-                <Save />
-              </button>
+              {!doc.runtimeOnly && (
+                <>
+                  <button aria-label="Save project" disabled={!!pending} onClick={() => save()}>
+                    <Save />
+                  </button>
+                  <button
+                    aria-label="Save project as"
+                    disabled={!!pending}
+                    onClick={() => save(true)}
+                  >
+                    <Save />
+                  </button>
+                </>
+              )}
               <button aria-label="Close project" disabled={!!pending} onClick={close}>
                 <X />
               </button>
             </div>
           </div>
-          <div className="document-label">
-            <small>PROJECT</small>
-            <strong>{doc.name}</strong>
-            <span>{doc.path ? "Saved archive" : "Not saved yet"}</span>
-          </div>
-          <ModeSwitch active={doc.mode} disabled={!!pending} onChange={changeMode} />
+          {doc.runtimeOnly ? (
+            <RuntimeBar />
+          ) : (
+            <div className="document-label">
+              <small>PROJECT</small>
+              <strong>{doc.name}</strong>
+              <span>{doc.path ? "Saved archive" : "Not saved yet"}</span>
+            </div>
+          )}
+          <ModeSwitch
+            active={doc.mode}
+            disabled={!!pending}
+            onChange={changeMode}
+            only={doc.runtimeOnly ? ["run"] : undefined}
+          />
           {mode.Sidebar && <mode.Sidebar />}
-          <div className="sidebar-bottom">
-            <span className="status-dot" /> {doc.dirty ? "Unsaved changes" : "All changes saved"}
-          </div>
+          <SaveStatus autosave={autosave} hasPath={!!doc.path} />
         </aside>
         <main className={`workspace ${mode.workspaceClassName ?? ""}`}>
           <div className="ribbon-tabs">
@@ -229,16 +273,18 @@ function ShellFrame({
                 <DropdownMenu.Portal>
                   <DropdownMenu.Content className="view-menu" sideOffset={6}>
                     <DropdownMenu.Label>Switch view</DropdownMenu.Label>
-                    {modes.map((item) => (
-                      <DropdownMenu.Item
-                        key={item.id}
-                        onSelect={() => run(() => changeMode(item.id))}
-                        className={doc.mode === item.id ? "checked" : ""}
-                      >
-                        {item.label} view
-                        <span>{doc.mode === item.id ? "✓" : ""}</span>
-                      </DropdownMenu.Item>
-                    ))}
+                    {modes
+                      .filter((item) => !doc.runtimeOnly || item.id === "run")
+                      .map((item) => (
+                        <DropdownMenu.Item
+                          key={item.id}
+                          onSelect={() => run(() => changeMode(item.id))}
+                          className={doc.mode === item.id ? "checked" : ""}
+                        >
+                          {item.label} view
+                          <span>{doc.mode === item.id ? "✓" : ""}</span>
+                        </DropdownMenu.Item>
+                      ))}
                   </DropdownMenu.Content>
                 </DropdownMenu.Portal>
               </DropdownMenu.Root>

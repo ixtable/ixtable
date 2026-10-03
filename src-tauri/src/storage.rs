@@ -22,6 +22,11 @@ pub struct RecoveryRecord {
     pub workspace: String,
     pub document_path: Option<String>,
     pub updated_at: String,
+    /// The session had edits that were not yet saved into its archive.
+    #[serde(default)]
+    pub dirty: bool,
+    #[serde(default)]
+    pub name: Option<String>,
 }
 
 impl GlobalStorage {
@@ -36,6 +41,14 @@ impl GlobalStorage {
     fn connection(&self) -> Result<Connection, rusqlite::Error> {
         let c = Connection::open(&self.path)?;
         c.execute_batch("PRAGMA journal_mode=WAL; CREATE TABLE IF NOT EXISTS preferences(key TEXT PRIMARY KEY,value TEXT NOT NULL,version INTEGER NOT NULL DEFAULT 1); CREATE TABLE IF NOT EXISTS recent_files(path TEXT PRIMARY KEY,opened_at TEXT NOT NULL); CREATE TABLE IF NOT EXISTS window_state(label TEXT PRIMARY KEY,json TEXT NOT NULL); CREATE TABLE IF NOT EXISTS recovery_sessions(session_id TEXT PRIMARY KEY,document_id TEXT NOT NULL,workspace TEXT NOT NULL,document_path TEXT,updated_at TEXT NOT NULL);")?;
+        let has_dirty: bool = c.query_row(
+            "SELECT COUNT(*) FROM pragma_table_info('recovery_sessions') WHERE name='dirty'",
+            [],
+            |r| r.get::<_, i64>(0).map(|n| n > 0),
+        )?;
+        if !has_dirty {
+            c.execute_batch("ALTER TABLE recovery_sessions ADD COLUMN dirty INTEGER NOT NULL DEFAULT 1; ALTER TABLE recovery_sessions ADD COLUMN name TEXT;")?;
+        }
         Ok(c)
     }
     pub fn set_preference(
@@ -84,20 +97,22 @@ impl GlobalStorage {
     }
     pub fn register_recovery(&self, r: &RecoveryRecord) -> Result<(), rusqlite::Error> {
         self.connection()?.execute(
-            "INSERT OR REPLACE INTO recovery_sessions VALUES(?1,?2,?3,?4,?5)",
+            "INSERT OR REPLACE INTO recovery_sessions(session_id,document_id,workspace,document_path,updated_at,dirty,name) VALUES(?1,?2,?3,?4,?5,?6,?7)",
             params![
                 r.session_id,
                 r.document_id,
                 r.workspace,
                 r.document_path,
-                r.updated_at
+                r.updated_at,
+                r.dirty,
+                r.name
             ],
         )?;
         Ok(())
     }
     pub fn recoveries(&self) -> Result<Vec<RecoveryRecord>, rusqlite::Error> {
         let c = self.connection()?;
-        let mut s=c.prepare("SELECT session_id,document_id,workspace,document_path,updated_at FROM recovery_sessions ORDER BY updated_at DESC")?;
+        let mut s=c.prepare("SELECT session_id,document_id,workspace,document_path,updated_at,dirty,name FROM recovery_sessions ORDER BY updated_at DESC")?;
         let rows = s
             .query_map([], |r| {
                 Ok(RecoveryRecord {
@@ -106,12 +121,33 @@ impl GlobalStorage {
                     workspace: r.get(2)?,
                     document_path: r.get(3)?,
                     updated_at: r.get(4)?,
+                    dirty: r.get(5)?,
+                    name: r.get(6)?,
                 })
             })?
             .filter_map(Result::ok)
             .filter(|r| Path::new(&r.workspace).exists())
             .collect();
         Ok(rows)
+    }
+    pub fn update_recovery(
+        &self,
+        id: &str,
+        dirty: bool,
+        document_path: Option<&Path>,
+        name: &str,
+    ) -> Result<(), rusqlite::Error> {
+        self.connection()?.execute(
+            "UPDATE recovery_sessions SET dirty=?2, document_path=?3, name=?4, updated_at=?5 WHERE session_id=?1",
+            params![
+                id,
+                dirty,
+                document_path.map(|p| p.to_string_lossy().into_owned()),
+                name,
+                chrono::Utc::now().to_rfc3339()
+            ],
+        )?;
+        Ok(())
     }
     pub fn remove_recovery(&self, id: &str) -> Result<(), rusqlite::Error> {
         self.connection()?

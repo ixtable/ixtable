@@ -8,8 +8,8 @@ test.describe("smoke", () => {
   });
 
   test("docs page renders", async ({ page }) => {
-    await page.goto("/docs/intro");
-    await expect(page.locator("h1")).toContainText("Introduction");
+    await page.goto("/docs/");
+    await expect(page.locator("h1")).toContainText("Overview");
   });
 
   test("navbar shows a login link when signed out", async ({ page }) => {

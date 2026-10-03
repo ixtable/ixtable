@@ -1,10 +1,5 @@
-import { TabPlaceholder } from "../shell/FeaturePlaceholder";
+import "./release.css";
 
-export function ReleaseTab() {
-  return (
-    <TabPlaceholder
-      title="Release"
-      description="Set the release version and notes, then export a runtime bundle."
-    />
-  );
-}
+export { BundleFileFlow } from "./BundleFileFlow";
+export { ReleaseTab } from "./ReleaseTab";
+export { RuntimeBar } from "./RuntimeBar";

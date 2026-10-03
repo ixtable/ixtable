@@ -3,6 +3,7 @@ import type { Dashboard } from "../dashboards/types";
 import type { DesignSchema } from "../design/schema";
 import type { Migration } from "../migrations/types";
 import type { SavedQuery } from "../query/types";
+import type { CloudLink } from "../cloud/types";
 import type { Report } from "../reports/types";
 import type { Role } from "../runtime/types";
 import type { DatasourceConfig, EntitySettings } from "../schema/types";
@@ -53,6 +54,8 @@ export interface DocumentConfig {
   entities: EntitySettings[];
   roles: Role[];
   release: ReleaseInfo;
+  /** The ixtable Cloud application this document publishes to. */
+  cloud?: CloudLink | null;
 }
 
 export interface Issue {

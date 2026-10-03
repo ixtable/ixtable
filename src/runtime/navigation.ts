@@ -1,7 +1,7 @@
 import { createContext, useCallback, useContext, useMemo, useState } from "react";
 import type { FormMode, NavigationItem } from "../design/schema";
 import type { DocumentConfig } from "../lib/types";
-import { can, findRole } from "./rbac";
+import { assignedRuntimeRole, can, findRole } from "./rbac";
 
 export type PageKind = "form" | "report" | "dashboard" | "table";
 export type RuntimePage = {
@@ -92,7 +92,10 @@ export function visibleNavigation(
 /** State behind `RuntimeContext` for Run mode. */
 export function useRuntimeState(config: DocumentConfig): RuntimeNavigation {
   const [history, setHistory] = useState<RuntimePage[]>([]);
-  const [roleId, setRole] = useState<string | null>(null);
+  // A cloud runtime user has exactly the role ixtable Cloud assigned.
+  const assigned = assignedRuntimeRole();
+  const [previewRole, setRole] = useState<string | null>(null);
+  const roleId = assigned ? assigned.id : previewRole;
   const [state, setState] = useState<Record<string, unknown>>({});
   const [notice, setNotice] = useState<Notice | null>(null);
   const [visit, setVisit] = useState(0);
@@ -106,6 +109,7 @@ export function useRuntimeState(config: DocumentConfig): RuntimeNavigation {
     setHistory((items) => items.slice(0, -1));
   }, []);
   const setRoleId = useCallback((next: string | null) => {
+    if (assignedRuntimeRole()) return;
     setRole(next);
     setNotice(null);
     setVisit((n) => n + 1);
@@ -123,10 +127,10 @@ export function useRuntimeState(config: DocumentConfig): RuntimeNavigation {
   const app = useMemo(
     () => ({
       ...state,
-      user: { name: roleName ? `${roleName} preview` : "Developer" },
+      user: assigned?.user ?? { name: roleName ? `${roleName} preview` : "Developer" },
       role: roleName,
     }),
-    [state, roleName],
+    [state, roleName, assigned],
   );
   return {
     page: history.at(-1) ?? null,

@@ -1,4 +1,5 @@
 import type { ComponentType } from "react";
+import { CloudTab } from "../cloud";
 import { AssetsTab, LogsTab } from "../persistence";
 import { ReleaseTab } from "../release";
 import { RolesTab } from "../runtime";
@@ -10,6 +11,7 @@ import { YamlTab } from "./YamlTab";
 export type SettingsTabId =
   | "assets"
   | "release"
+  | "cloud"
   | "datasource"
   | "entities"
   | "migrations"
@@ -28,6 +30,7 @@ export interface SettingsTabDefinition {
 export const settingsTabs: readonly SettingsTabDefinition[] = [
   { id: "assets", label: "Assets", Component: AssetsTab },
   { id: "release", label: "Release", Component: ReleaseTab },
+  { id: "cloud", label: "Cloud", Component: CloudTab },
   { id: "datasource", label: "Datasource", Component: DatasourceTab },
   { id: "entities", label: "Entities", Component: EntitiesTab },
   { id: "migrations", label: "Migrations", Component: MigrationsTab },

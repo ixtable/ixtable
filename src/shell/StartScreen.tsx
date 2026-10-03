@@ -7,6 +7,7 @@ import {
   openDocument,
   type TauriError,
 } from "../lib/api";
+import { CloudApps } from "../cloud";
 import { chooseDocumentToOpen } from "../lib/dialog";
 import { isRuntimeBundle, type OpenRequest, useEachRequest } from "../lib/launch";
 import type { RecentFile, SessionState } from "../lib/types";
@@ -138,6 +139,7 @@ export function StartScreen({
             </button>
           </div>
         )}
+        <CloudApps disabled={!!pending} onOpened={onOpened} onNotice={setNotice} />
         <RecoveryList disabled={!!pending} run={run} onError={setError} />
         <TemplatePicker disabled={!!pending} run={run} />
         <section className="start-section" aria-labelledby="recent-documents">

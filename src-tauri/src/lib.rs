@@ -6,6 +6,7 @@ pub mod automation;
 pub mod bundle;
 pub mod bundle_export;
 pub mod checkpoints;
+pub mod cloud;
 pub mod dashboards;
 pub mod data;
 pub mod design;
@@ -438,6 +439,25 @@ pub fn run() {
             installation_commands::runtime_installation_info,
             installation_commands::preview_installation_reset,
             installation_commands::reset_runtime_installation_data,
+            // cloud commands
+            cloud::commands::cloud_config,
+            cloud::commands::cloud_auth_storage_get,
+            cloud::commands::cloud_auth_storage_set,
+            cloud::commands::cloud_auth_storage_remove,
+            cloud::commands::cloud_desktop_auth_start,
+            cloud::commands::cloud_desktop_auth_poll,
+            cloud::commands::cloud_sign_out_local,
+            cloud::commands::cloud_publish_preflight,
+            cloud::commands::cloud_upload_archive,
+            cloud::commands::cloud_upload_credential,
+            cloud::commands::cloud_restore_copy,
+            cloud::commands::cloud_transfer_progress,
+            cloud::runtime_commands::cloud_installed_apps,
+            cloud::runtime_commands::cloud_install_app,
+            cloud::runtime_commands::cloud_open_installed,
+            cloud::runtime_commands::cloud_runtime_info,
+            cloud::runtime_commands::cloud_key_grant,
+            cloud::runtime_commands::cloud_release_credentials,
         ])
         .build(tauri::generate_context!())
         .expect("error while building ixtable")

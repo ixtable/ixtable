@@ -16,6 +16,7 @@ import {
   useRuntimeState,
   visibleNavigation,
 } from "./navigation";
+import { assignedRuntimeRole } from "./rbac";
 import { tableForms } from "./registry";
 import "./runtime.css";
 
@@ -49,20 +50,24 @@ export function RunMode() {
           <h1>Runtime</h1>
         </div>
         <div className="header-actions">
-          <label className="rt-role">
-            Preview as role
-            <select
-              value={runtime.roleId ?? ""}
-              onChange={(e) => runtime.setRoleId(e.target.value || null)}
-            >
-              <option value="">Developer (full access)</option>
-              {roles.map((role) => (
-                <option key={role.id} value={role.id}>
-                  {role.name}
-                </option>
-              ))}
-            </select>
-          </label>
+          {assignedRuntimeRole() ? (
+            <span className="rt-role">Role: {assignedRuntimeRole()?.name}</span>
+          ) : (
+            <label className="rt-role">
+              Preview as role
+              <select
+                value={runtime.roleId ?? ""}
+                onChange={(e) => runtime.setRoleId(e.target.value || null)}
+              >
+                <option value="">Developer (full access)</option>
+                {roles.map((role) => (
+                  <option key={role.id} value={role.id}>
+                    {role.name}
+                  </option>
+                ))}
+              </select>
+            </label>
+          )}
         </div>
       </header>
       <div className="rt-app">

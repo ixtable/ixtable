@@ -375,6 +375,14 @@ pub fn verify(bytes: &[u8]) -> Result<SignedBundle, AppError> {
 }
 
 impl SignedBundle {
+    /// A header verified by a signed cloud manifest (`cloud::manifest`); callers check the archive bytes.
+    pub fn trusted(header: BundleHeader) -> Self {
+        Self {
+            header,
+            payload: Vec::new(),
+            header_bytes: Vec::new(),
+        }
+    }
     pub fn signer_fingerprint(&self) -> String {
         fingerprint(&self.header.signer_public_key)
     }

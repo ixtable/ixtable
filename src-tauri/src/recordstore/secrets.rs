@@ -291,6 +291,11 @@ pub fn ensure_transport(ds: &DatasourceConfig) -> Result<(), SecretError> {
 /// The password referenced by a datasource config, released only to the
 /// target it was stored for and only over a confirmed transport.
 pub fn datasource_credential(ds: &DatasourceConfig) -> Result<Option<String>, SecretError> {
+    // A credential delivered by an ixtable Cloud key grant (memory only) wins.
+    if let Some(granted) = crate::cloud::grants::granted_password(ds) {
+        ensure_transport(ds)?;
+        return Ok(Some(granted));
+    }
     let Some(r) = ds.password_ref.as_deref().filter(|r| !r.is_empty()) else {
         return Ok(None);
     };

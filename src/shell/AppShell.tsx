@@ -18,6 +18,8 @@ import { ModeSwitch } from "./ModeSwitch";
 import { findMode, type ModeId, modes } from "./modes";
 import { SaveStatus } from "../persistence";
 import { type Autosave, useAutosave } from "../persistence/useAutosave";
+import { CloudRuntimeBar } from "../cloud";
+import { useIsCloudSession } from "../cloud/session";
 import { RuntimeBar } from "../release";
 import type { OpenRequest } from "../lib/launch";
 import { useOpenRequestInShell } from "./openRequests";
@@ -248,6 +250,7 @@ function ShellFrame({
   );
   const mode = findMode(doc.mode);
   const shownError = error ?? (store.error === dismissed ? null : store.error);
+  const cloudSession = useIsCloudSession(doc.sessionId);
   const run = (action: () => Promise<unknown>) => {
     action().catch((reason: unknown) => setError(asTauriError(reason)));
   };
@@ -280,7 +283,11 @@ function ShellFrame({
             </div>
           </div>
           {doc.runtimeOnly ? (
-            <RuntimeBar />
+            cloudSession ? (
+              <CloudRuntimeBar />
+            ) : (
+              <RuntimeBar />
+            )
           ) : (
             <div className="document-label">
               <small>PROJECT</small>

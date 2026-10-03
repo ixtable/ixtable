@@ -3,8 +3,24 @@ import type { ObjectKind, Operation, Permissions, Role } from "./types";
 
 const emptyPermissions = (): Permissions => ({ navigation: [], objects: [], actions: [] });
 
-export const findRole = (config: Pick<DocumentConfig, "roles">, roleId: string | null) =>
-  roleId == null ? null : (config.roles ?? []).find((role) => role.id === roleId);
+/** A runtime role assigned by ixtable Cloud (signed manifest), with the signed-in user. */
+export type AssignedRole = Role & { user: { name: string; email?: string; id?: string } };
+let assigned: AssignedRole | null = null;
+
+/**
+ * Pins the runtime to a cloud-assigned role (PRD §20, §21.2): while set, every
+ * check uses it, `roleId` null no longer means developer access, and the
+ * role's permissions come from the signed manifest, not the archive.
+ */
+export function assignRuntimeRole(role: AssignedRole | null) {
+  assigned = role;
+}
+export const assignedRuntimeRole = () => assigned;
+
+export const findRole = (config: Pick<DocumentConfig, "roles">, roleId: string | null) => {
+  if (assigned) return roleId == null || roleId === assigned.id ? assigned : undefined;
+  return roleId == null ? null : (config.roles ?? []).find((role) => role.id === roleId);
+};
 
 const permissionsOf = (role: Role): Permissions => ({
   ...emptyPermissions(),
@@ -25,7 +41,7 @@ export function can(
   objectId: string,
   op: Operation,
 ): boolean {
-  if (roleId == null) return true;
+  if (roleId == null && !assigned) return true;
   const role = findRole(config, roleId);
   if (!role) return false;
   const permissions = permissionsOf(role);

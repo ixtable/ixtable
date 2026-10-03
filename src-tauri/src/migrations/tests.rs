@@ -119,3 +119,97 @@ fn checksums_identify_changed_up_sql() {
     assert_ne!(a.checksum(), b.checksum());
     assert!(a.targets("sqlite") && a.targets("postgres"));
 }
+
+#[test]
+fn transaction_control_statements_are_rejected() {
+    let mut config = DocumentConfig::default();
+    config.migrations = vec![
+        m("a", 1, "BEGIN; CREATE TABLE a(x); COMMIT;"),
+        Migration {
+            reversible: true,
+            down: Some("SAVEPOINT s; DROP TABLE b; RELEASE s".into()),
+            ..m("b", 2, "CREATE TABLE b(note TEXT DEFAULT 'commit;')")
+        },
+        m(
+            "c",
+            3,
+            "CREATE TRIGGER t AFTER INSERT ON b BEGIN UPDATE b SET note = 'x'; END;",
+        ),
+    ];
+    let errors: Vec<String> = validate(&config)
+        .into_iter()
+        .filter(|i| i.severity == Severity::Error)
+        .map(|i| format!("{} {}", i.object_id, i.message))
+        .collect();
+    assert!(
+        errors
+            .iter()
+            .any(|e| e.starts_with("a ") && e.contains("BEGIN is not allowed")),
+        "{errors:?}"
+    );
+    assert!(
+        errors
+            .iter()
+            .any(|e| e.starts_with("b ") && e.contains("(down): SAVEPOINT")),
+        "{errors:?}"
+    );
+    assert!(
+        !errors
+            .iter()
+            .any(|e| e.starts_with("b ") && e.contains("(up)")),
+        "{errors:?}"
+    );
+    assert!(!errors.iter().any(|e| e.starts_with("c ")), "{errors:?}");
+
+    // Execution refuses it too, before anything runs.
+    let path = std::env::temp_dir().join(format!("ixtable-migrations-{}.db", uuid::Uuid::new_v4()));
+    rusqlite::Connection::open(&path).unwrap();
+    let err = apply_sqlite(
+        &path,
+        &[m("x", 1, "CREATE TABLE z(x); COMMIT; CREATE TABLE y(x)")],
+    )
+    .unwrap_err();
+    assert!(err.contains("COMMIT is not allowed"), "{err}");
+    let tables: i64 = rusqlite::Connection::open(&path)
+        .unwrap()
+        .query_row(
+            "SELECT count(*) FROM sqlite_master WHERE name IN ('z','y')",
+            [],
+            |r| r.get(0),
+        )
+        .unwrap();
+    assert_eq!(tables, 0);
+    let mut store = SqliteRecordStore::new(&path);
+    assert_eq!(
+        store.run_script("END", &[], true).unwrap_err().code,
+        "VALIDATION_ERROR"
+    );
+    let _ = std::fs::remove_file(path);
+}
+
+#[test]
+fn postgres_recovery_text_says_no_record_backup_was_taken() {
+    let mig = m("a", 1, "CREATE TABLE a(x)");
+    let pg = recovery(&mig, "boom", Some("cp1"), true);
+    assert!(
+        pg.contains("no backup of PostgreSQL records was taken"),
+        "{pg}"
+    );
+    assert!(!pg.contains("If records look wrong"), "{pg}");
+    let lite = recovery(&mig, "boom", Some("cp1"), false);
+    assert!(
+        lite.contains("restore the pre-migration checkpoint cp1"),
+        "{lite}"
+    );
+
+    let mut config = DocumentConfig::default();
+    assert!(commands::require_external_backup(&config, None).is_ok());
+    config.datasource.kind = "postgres".into();
+    assert_eq!(
+        commands::require_external_backup(&config, None)
+            .unwrap_err()
+            .code,
+        "BACKUP_REQUIRED"
+    );
+    assert!(commands::require_external_backup(&config, Some(true)).is_ok());
+}

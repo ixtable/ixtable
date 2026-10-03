@@ -31,16 +31,22 @@ forms, grids, dashboards, and actions passes through trigger matching in
 ### The queue
 
 `src-tauri/src/jobs.rs` keeps jobs in `<state>/data/jobs.db`, a SQLite file
-in WAL mode next to the global store. Jobs are keyed by document id, so they
-survive restarts and stay with their application.
+in WAL mode next to the global store. Jobs are keyed by the record store they
+belong to (`store_key`): `studio:<documentId>` for Studio sessions of a
+document, `runtime:<bundleId>` for an installed runtime bundle, whose
+`data.db` is separate even though it has the same document id. Jobs survive
+restarts and stay with their records. A queue created before `store_key`
+existed is rebuilt in place on open; its rows move to the Studio queue of
+their document.
 
 | Column | Meaning |
 |---|---|
 | `status` | `queued`, `running`, `succeeded`, `failed`, or `cancelled` |
-| `idempotency_key` | unique per document. Enqueueing a duplicate returns the existing job |
+| `idempotency_key` | unique per store key. Enqueueing a duplicate returns the existing job |
 | `attempts`, `max_attempts` | default 3 attempts |
 | `backoff_ms`, `next_run_at` | retry delay `backoff · 2^(attempts − 1)`, default 1 s, capped at 1 hour |
 | `lease_until` | a claimed job's lease, default 5 minutes |
+| `lease_token` | `<attempt>:<uuid>`, new on every claim |
 
 `job_attempts` stores one row per attempt with start and finish times, the
 outcome, the error, and the step log.
@@ -49,10 +55,15 @@ A claim runs in an `IMMEDIATE` transaction. It picks the oldest due `queued`
 job, marks it `running`, and sets the lease, so two workers cannot claim the
 same job. A job whose lease expired, because the app crashed or quit mid-run,
 goes back to `queued` on the next claim or start. Cancel and retry are
-explicit commands.
+explicit commands. `complete_job` and `fail_job` take the claim's lease token
+and check it, with `status = 'running'`, in one `IMMEDIATE` transaction. A
+worker whose lease expired, or whose job was cancelled and claimed again, gets
+`STALE_LEASE` and its result is ignored.
 
 The default idempotency key combines the trigger id, table, record identity,
-event, and a hash of the record values. A trigger can supply its own key as an
+event, a hash of the record values, and the write id that `records.ts` gives
+each write call (`meta.writeId`). It dedupes retries of the same write only; a
+later identical write is a new event. A trigger can supply its own key as an
 expression instead.
 
 ### The worker
@@ -76,9 +87,10 @@ clear message. It reports `complete_job` or `fail_job` with the step log.
 
 ## Evidence
 
-- `src-tauri/src/jobs.rs` tests: idempotent enqueue per document, atomic and
+- `src-tauri/src/jobs.rs` tests: idempotent enqueue per store, atomic and
   exclusive claims, exponential backoff until failed, completion with log,
-  cancel and retry, expired leases recovered after restart.
+  cancel and retry, expired leases recovered after restart, stale lease tokens
+  refused, separate Studio and runtime queues, v1 queue migration.
 - `tests/unit/automation-triggers.test.ts`: sync triggers inside the write,
   old values on update, failure propagation, recursion depth limit.
 - `tests/unit/automation-runner.test.ts`: step behavior, stop, continue, and

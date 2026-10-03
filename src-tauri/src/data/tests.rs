@@ -77,3 +77,107 @@ fn read_only_guard_rejects_writes_and_scanner_functions() {
     }
     assert!(read_only_guard("WITH x AS (SELECT 1) SELECT * FROM x").is_ok());
 }
+
+#[test]
+fn read_only_guard_ignores_literals_identifiers_and_comments() {
+    for sql in [
+        "SELECT * FROM calls WHERE kind = 'Call'",
+        "SELECT 'Delete request' AS label",
+        "SELECT \"update\", \"set\" FROM t",
+        "SELECT 'a;b' AS x",
+        "SELECT 1;",
+        "SELECT 1; -- trailing comment",
+        "SELECT 1 /* drop table x; */",
+        "SELECT read_count FROM t",
+    ] {
+        assert!(read_only_guard(sql).is_ok(), "{sql}");
+    }
+    assert_eq!(read_only_guard(" SELECT 1 ; ").unwrap(), "SELECT 1");
+    for sql in [
+        "SELECT 1; SELECT 2",
+        "SELECT 1;;",
+        ";",
+        "SELECT * FROM read_csv_auto('/etc/passwd')",
+        "SELECT * FROM read_json_objects('/etc/passwd')",
+        "SELECT * FROM read_text ('/etc/passwd')",
+        "SELECT * FROM glob('/etc/*')",
+        "SELECT * FROM duckdb_databases()",
+        "SELECT * FROM delta_scan('/x')",
+        "SELECT 'x'; DELETE FROM t",
+    ] {
+        assert!(read_only_guard(sql).is_err(), "{sql}");
+    }
+}
+
+/// A reader over a real data.db, used to prove that external access is off even
+/// when the keyword guard is bypassed.
+fn locked_reader() -> (ReadRuntime, std::path::PathBuf) {
+    let dir = std::env::temp_dir().join(format!("ixtable-lock-{}", uuid::Uuid::new_v4()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let c = rusqlite::Connection::open(dir.join("data.db")).unwrap();
+    c.execute_batch(
+        "CREATE TABLE t(id INTEGER PRIMARY KEY, v TEXT); INSERT INTO t VALUES (1,'a');",
+    )
+    .unwrap();
+    std::fs::write(dir.join("x.csv"), "a,b\n1,2\n").unwrap();
+    (ReadRuntime::for_test(&dir).unwrap(), dir)
+}
+
+#[test]
+fn reader_runs_without_external_access() {
+    let (mut reader, dir) = locked_reader();
+    let csv = dir.join("x.csv").to_string_lossy().replace('\'', "''");
+    let out = dir.join("out.csv").to_string_lossy().replace('\'', "''");
+    let other = dir
+        .join("other.duckdb")
+        .to_string_lossy()
+        .replace('\'', "''");
+    let attacks = [
+        format!("SELECT * FROM read_csv_auto('{csv}')"),
+        "SELECT * FROM read_text('/etc/passwd')".to_string(),
+        format!("SELECT * FROM '{csv}'"),
+        "SELECT * FROM '/etc/passwd'".to_string(),
+        format!("COPY (SELECT 1) TO '{out}'"),
+        format!("ATTACH '{other}' AS other"),
+        "INSTALL httpfs".to_string(),
+        "LOAD httpfs".to_string(),
+        "SELECT * FROM glob('/etc/*')".to_string(),
+        "SET enable_external_access = true".to_string(),
+        "SET allowed_paths = ['/etc/passwd']".to_string(),
+    ];
+    for sql in &attacks {
+        // The guard rejects it or DuckDB refuses it...
+        assert!(reader.query(sql).is_err(), "guarded: {sql}");
+        // ...and DuckDB refuses it even when the guard is bypassed.
+        let direct = reader.connection().prepare(sql).and_then(|mut s| {
+            let mut rows = s.query([])?;
+            while rows.next()?.is_some() {}
+            Ok(())
+        });
+        assert!(direct.is_err(), "direct: {sql}");
+    }
+    assert!(!dir.join("out.csv").exists());
+    assert!(!dir.join("other.duckdb").exists());
+    // PRAGMA is rejected by the guard (it reads no files, so DuckDB allows it).
+    assert!(reader.query("PRAGMA database_list").is_err());
+    // The datasource still reads, and refresh re-attaches it after a write.
+    assert_eq!(reader.row_count("t").unwrap(), 1);
+    rusqlite::Connection::open(dir.join("data.db"))
+        .unwrap()
+        .execute("INSERT INTO t VALUES (2,'b')", [])
+        .unwrap();
+    reader.refresh().unwrap();
+    assert_eq!(reader.row_count("t").unwrap(), 2);
+    assert_eq!(reader.table_def("t").unwrap().primary_key, vec!["id"]);
+    // A cloned connection (saved-query runs) is locked too.
+    let clone = reader.connection().try_clone().unwrap();
+    clone.execute_batch("USE data").unwrap();
+    assert!(clone
+        .query_row(
+            &format!("SELECT count(*) FROM read_csv_auto('{csv}')"),
+            [],
+            |r| r.get::<_, i64>(0)
+        )
+        .is_err());
+    let _ = std::fs::remove_dir_all(dir);
+}

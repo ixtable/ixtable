@@ -449,6 +449,12 @@ impl RecordStore for PostgresRecordStore {
         record: &[crate::recordstore::Bookkeeping],
         dry_run: bool,
     ) -> Result<ScriptReport, StoreError> {
+        if let Some(message) = crate::data::sqltext::transaction_control_error(sql) {
+            return Err(crate::recordstore::StoreError::new(
+                "VALIDATION_ERROR",
+                message,
+            ));
+        }
         let mut tx = self.client.transaction().map_err(pe)?;
         let mut report = ScriptReport::default();
         tx.batch_execute(sql).map_err(pe)?;

@@ -60,10 +60,24 @@ it("passes identity and values for updates and stops calling unregistered hooks"
     identity,
     expected: null,
   });
-  expect(after).toHaveBeenCalledWith({ operation: "update", table: "people", values, identity }, 1);
+  expect(after).toHaveBeenCalledWith(
+    {
+      operation: "update",
+      table: "people",
+      values,
+      identity,
+      meta: { writeId: expect.stringMatching(/^[0-9a-f-]{36}$/) },
+    },
+    1,
+  );
+  await updateRecord("people", values, identity);
+  await updateRecord("people", values, identity, { writeId: "retry-1" });
+  const ids = after.mock.calls.map(([write]) => write.meta.writeId);
+  expect(new Set(ids).size).toBe(3);
+  expect(ids[2]).toBe("retry-1");
   unregister();
   await deleteRecord("people", identity);
-  expect(after).toHaveBeenCalledTimes(1);
+  expect(after).toHaveBeenCalledTimes(3);
   expect(call).toHaveBeenLastCalledWith("delete_row", {
     table: "people",
     identity,

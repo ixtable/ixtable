@@ -270,6 +270,18 @@ it("saves SQL with a required parameter and rejects mutating SQL on save", async
   );
 });
 
+it("saves parameterized SQL through save_query without parameter values", async () => {
+  await openQueryMode();
+  const config = await invoke<Config>("save_query", {
+    windowLabel: "main",
+    id: null,
+    name: "Since",
+    sql: "SELECT name FROM customers WHERE id >= $min AND name <> 'Delete; me';",
+    filterState: null,
+  });
+  expect(config.savedQueries.map((q) => q.name)).toContain("Since");
+});
+
 it("shows progress and a Cancel button for a long query, and cancels it", async () => {
   const user = await openQueryMode();
   await user.click(screen.getByRole("button", { name: "New query" }));

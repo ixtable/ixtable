@@ -29,37 +29,33 @@ pub enum ReadTarget {
 
 /// Session-scoped DuckDB reader. Production callers pass the signed extension
 /// copied from the application resources; no extension may be auto-installed.
+///
+/// App SQL never runs with external access: the database is opened with access
+/// enabled only long enough to load the bundled extensions and attach the
+/// datasource, then `enable_external_access=false` and `lock_configuration=true`
+/// are set. The only file left reachable is `<workspace>/data.db` (via
+/// `allowed_paths`), so a SQLite refresh re-attaches in place; a PostgreSQL
+/// refresh (or a datasource switch) builds a fresh locked database instead,
+/// because DuckDB refuses Postgres ATTACH once external access is off.
 pub struct ReadRuntime {
     pub workspace: PathBuf,
     pub(super) connection: duckdb::Connection,
     pub(super) target: ReadTarget,
-    postgres_loaded: bool,
+    sqlite_extension: PathBuf,
     /// Set when the configured datasource could not be attached; reads fail with this message (code CONNECTION) instead of silently reading the embedded file.
     attach_error: Option<String>,
 }
 
 impl ReadRuntime {
     pub fn new(workspace: &Path, sqlite_extension: &Path) -> Result<Self, String> {
-        let config = duckdb::Config::default()
-            .enable_autoload_extension(false)
-            .map_err(|e| e.to_string())?
-            .enable_external_access(true)
-            .map_err(|e| e.to_string())?;
-        let connection = duckdb::Connection::open_in_memory_with_flags(config)
-            .map_err(|e| format!("DuckDB startup: {e}"))?;
-        let extension = sqlite_extension.to_string_lossy().replace('\'', "''");
-        connection
-            .execute_batch(&format!("LOAD '{extension}'"))
-            .map_err(|e| format!("SQLite extension startup: {e}"))?;
-        let mut runtime = Self {
+        let (connection, attached) = open_locked(workspace, sqlite_extension, &ReadTarget::Sqlite)?;
+        Ok(Self {
             workspace: workspace.to_owned(),
             connection,
             target: ReadTarget::Sqlite,
-            postgres_loaded: false,
-            attach_error: None,
-        };
-        runtime.refresh()?;
-        Ok(runtime)
+            sqlite_extension: sqlite_extension.to_owned(),
+            attach_error: attached.err(),
+        })
     }
     pub fn target(&self) -> &ReadTarget {
         &self.target
@@ -73,9 +69,7 @@ impl ReadRuntime {
             return Ok(());
         }
         self.target = target;
-        let result = self.refresh();
-        self.attach_error = result.as_ref().err().cloned();
-        result
+        self.rebuild()
     }
     pub(super) fn schema_name(&self) -> &str {
         match &self.target {
@@ -83,48 +77,21 @@ impl ReadRuntime {
             ReadTarget::Postgres { schema, .. } => schema,
         }
     }
-    fn ensure_postgres_extension(&mut self) -> Result<(), String> {
-        if self.postgres_loaded {
-            return Ok(());
-        }
-        let path = postgres_extension_path()?;
-        let extension = path.to_string_lossy().replace('\'', "''");
-        self.connection
-            .execute_batch(&format!("LOAD '{extension}'"))
-            .map_err(|e| format!("PostgreSQL extension startup: {e}"))?;
-        self.postgres_loaded = true;
-        Ok(())
+    /// Replaces the DuckDB database with a freshly attached, locked one.
+    fn rebuild(&mut self) -> Result<(), String> {
+        let (connection, attached) =
+            open_locked(&self.workspace, &self.sqlite_extension, &self.target)?;
+        self.connection = connection;
+        self.attach_error = attached.as_ref().err().cloned();
+        attached
     }
     /// Re-attaches the datasource so DuckDB sees committed writes and DDL.
     pub fn refresh(&mut self) -> Result<(), String> {
+        if self.target != ReadTarget::Sqlite || self.attach_error.is_some() {
+            return self.rebuild();
+        }
         let _ = self.connection.execute_batch("USE memory; DETACH data");
-        let result = match self.target.clone() {
-            ReadTarget::Sqlite => {
-                let db = self
-                    .workspace
-                    .join("data.db")
-                    .to_string_lossy()
-                    .replace('\'', "''");
-                self.connection
-                    .execute_batch(&format!(
-                        "ATTACH '{db}' AS data (TYPE SQLITE, READ_ONLY); USE data"
-                    ))
-                    .map_err(|e| format!("SQLite attachment: {e}"))
-            }
-            ReadTarget::Postgres { conninfo, schema } => {
-                self.ensure_postgres_extension()?;
-                self.connection
-                    .execute_batch(&format!(
-                        "ATTACH '{}' AS data (TYPE POSTGRES, READ_ONLY, SCHEMA '{}'); USE data.{}",
-                        conninfo.replace('\'', "''"),
-                        schema.replace('\'', "''"),
-                        q(&schema)
-                    ))
-                    .map_err(|e| {
-                        format!("PostgreSQL connection failed: {}", redact(&e.to_string()))
-                    })
-            }
-        };
+        let result = attach(&self.connection, &self.workspace, &self.target);
         self.attach_error = result.as_ref().err().cloned();
         result
     }
@@ -139,12 +106,10 @@ impl ReadRuntime {
     }
     /// The attached SQLite file's schema table, read through the sqlite scanner.
     fn sqlite_master(&self) -> String {
-        let path = self
-            .workspace
-            .join("data.db")
-            .to_string_lossy()
-            .replace('\'', "''");
-        format!("sqlite_scan('{path}', 'sqlite_master')")
+        format!(
+            "sqlite_scan('{}', 'sqlite_master')",
+            sql_path(&self.workspace)
+        )
     }
     pub(super) fn from(&self, table: &str) -> String {
         format!("data.{}.{}", q(self.schema_name()), q(table))
@@ -367,7 +332,7 @@ impl ReadRuntime {
             workspace: PathBuf::new(),
             connection,
             target: ReadTarget::Sqlite,
-            postgres_loaded: false,
+            sqlite_extension: PathBuf::new(),
             attach_error: None,
         })
     }
@@ -380,6 +345,76 @@ impl ReadRuntime {
                 super::support::resource_candidates("sqlite_scanner.duckdb_extension")[0].clone()
             });
         Self::new(workspace, &ext)
+    }
+}
+
+/// Opens an in-memory DuckDB database, loads the extensions `target` needs, and
+/// attaches the datasource as `data`. External access is then disabled and the
+/// configuration locked whether or not the attach succeeded; the attach result is
+/// returned separately so a failed datasource still yields a safe connection.
+fn open_locked(
+    workspace: &Path,
+    sqlite_extension: &Path,
+    target: &ReadTarget,
+) -> Result<(duckdb::Connection, Result<(), String>), String> {
+    let config = duckdb::Config::default()
+        .enable_autoload_extension(false)
+        .map_err(|e| e.to_string())?
+        .enable_external_access(true)
+        .map_err(|e| e.to_string())?;
+    let connection = duckdb::Connection::open_in_memory_with_flags(config)
+        .map_err(|e| format!("DuckDB startup: {e}"))?;
+    let load = |path: &Path, what: &str| {
+        let extension = path.to_string_lossy().replace('\'', "''");
+        connection
+            .execute_batch(&format!("LOAD '{extension}'"))
+            .map_err(|e| format!("{what} extension startup: {e}"))
+    };
+    load(sqlite_extension, "SQLite")?;
+    let attached = match target {
+        ReadTarget::Sqlite => Ok(()),
+        ReadTarget::Postgres { .. } => {
+            postgres_extension_path().and_then(|p| load(&p, "PostgreSQL"))
+        }
+    }
+    .and_then(|()| attach(&connection, workspace, target));
+    let db = sql_path(workspace);
+    connection
+        .execute_batch(&format!(
+            "SET allowed_paths=['{db}']; SET enable_external_access=false; SET lock_configuration=true"
+        ))
+        .map_err(|e| format!("DuckDB lockdown: {e}"))?;
+    Ok((connection, attached))
+}
+
+/// `<workspace>/data.db`, quoted for a SQL string literal.
+fn sql_path(workspace: &Path) -> String {
+    workspace
+        .join("data.db")
+        .to_string_lossy()
+        .replace('\'', "''")
+}
+
+fn attach(
+    connection: &duckdb::Connection,
+    workspace: &Path,
+    target: &ReadTarget,
+) -> Result<(), String> {
+    match target {
+        ReadTarget::Sqlite => connection
+            .execute_batch(&format!(
+                "ATTACH '{}' AS data (TYPE SQLITE, READ_ONLY); USE data",
+                sql_path(workspace)
+            ))
+            .map_err(|e| format!("SQLite attachment: {e}")),
+        ReadTarget::Postgres { conninfo, schema } => connection
+            .execute_batch(&format!(
+                "ATTACH '{}' AS data (TYPE POSTGRES, READ_ONLY, SCHEMA '{}'); USE data.{}",
+                conninfo.replace('\'', "''"),
+                schema.replace('\'', "''"),
+                q(schema)
+            ))
+            .map_err(|e| format!("PostgreSQL connection failed: {}", redact(&e.to_string()))),
     }
 }
 

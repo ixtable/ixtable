@@ -1,10 +1,15 @@
 //! Durable local job queue for asynchronous triggers (PRD §17.3).
 //!
-//! Jobs live in `<state>/data/jobs.db` (next to the global store), keyed by
-//! document id, so they survive app restarts. The queue only runs while the app
+//! Jobs live in `<state>/data/jobs.db` (next to the global store), keyed by a
+//! record-store identity (`studio:<documentId>` for Studio sessions,
+//! `runtime:<bundleId>` for an installed runtime bundle, whose records are a
+//! separate database), so they survive app restarts. The queue only runs while the app
 //! is running: the frontend worker claims jobs, runs the action, and reports the
 //! outcome. A claimed job holds a lease; a job whose lease expired (the app
 //! crashed or quit mid-run) goes back to `queued` on the next start or claim.
+//! Every claim issues a fresh lease token; completing or failing a job needs the
+//! token of its current lease, so a stale worker (whose lease expired, or whose
+//! job was cancelled and requeued) cannot finish someone else's attempt.
 use crate::manager::AppError;
 use chrono::{DateTime, Duration, SecondsFormat, Utc};
 use rusqlite::{params, Connection, OptionalExtension, Row, TransactionBehavior};
@@ -35,6 +40,9 @@ pub struct Job {
     pub created_at: String,
     pub updated_at: String,
     pub last_error: Option<String>,
+    /// Token of the current lease while running (`<attempt>:<uuid>`).
+    #[serde(default)]
+    pub lease_token: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -84,7 +92,18 @@ pub fn backoff_delay(backoff_ms: u64, attempts: u32) -> u64 {
     backoff_ms.saturating_mul(factor).min(MAX_BACKOFF_MS)
 }
 
-const COLUMNS: &str = "id,document_id,trigger_id,action_id,payload,idempotency_key,status,attempts,max_attempts,backoff_ms,next_run_at,lease_until,created_at,updated_at,last_error";
+const COLUMNS: &str = "id,document_id,trigger_id,action_id,payload,idempotency_key,status,attempts,max_attempts,backoff_ms,next_run_at,lease_until,created_at,updated_at,last_error,lease_token";
+
+/// `jobs` table (v2: `store_key` identity and `lease_token`). `{name}` is the table name.
+const JOBS_TABLE: &str = "CREATE TABLE IF NOT EXISTS {name}(
+   id TEXT PRIMARY KEY, document_id TEXT NOT NULL, trigger_id TEXT NOT NULL,
+   action_id TEXT NOT NULL, payload TEXT NOT NULL, idempotency_key TEXT NOT NULL,
+   status TEXT NOT NULL CHECK(status IN ('queued','running','succeeded','failed','cancelled')),
+   attempts INTEGER NOT NULL DEFAULT 0, max_attempts INTEGER NOT NULL,
+   backoff_ms INTEGER NOT NULL, next_run_at TEXT NOT NULL, lease_until TEXT,
+   created_at TEXT NOT NULL, updated_at TEXT NOT NULL, last_error TEXT,
+   store_key TEXT NOT NULL DEFAULT '', lease_token TEXT,
+   UNIQUE(store_key, idempotency_key))";
 
 fn job(r: &Row) -> rusqlite::Result<Job> {
     let payload: String = r.get(4)?;
@@ -104,6 +123,7 @@ fn job(r: &Row) -> rusqlite::Result<Job> {
         created_at: r.get(12)?,
         updated_at: r.get(13)?,
         last_error: r.get(14)?,
+        lease_token: r.get(15)?,
     })
 }
 
@@ -122,17 +142,15 @@ impl JobStore {
             std::fs::create_dir_all(dir).map_err(err)?;
         }
         let store = Self { path: path.into() };
-        store.connection()?.execute_batch(
-            "PRAGMA journal_mode=WAL;
-             CREATE TABLE IF NOT EXISTS jobs(
-               id TEXT PRIMARY KEY, document_id TEXT NOT NULL, trigger_id TEXT NOT NULL,
-               action_id TEXT NOT NULL, payload TEXT NOT NULL, idempotency_key TEXT NOT NULL,
-               status TEXT NOT NULL CHECK(status IN ('queued','running','succeeded','failed','cancelled')),
-               attempts INTEGER NOT NULL DEFAULT 0, max_attempts INTEGER NOT NULL,
-               backoff_ms INTEGER NOT NULL, next_run_at TEXT NOT NULL, lease_until TEXT,
-               created_at TEXT NOT NULL, updated_at TEXT NOT NULL, last_error TEXT,
-               UNIQUE(document_id, idempotency_key));
-             CREATE INDEX IF NOT EXISTS jobs_ready ON jobs(document_id, status, next_run_at);
+        let mut c = store.connection()?;
+        c.execute_batch(&format!(
+            "PRAGMA journal_mode=WAL; {};",
+            JOBS_TABLE.replace("{name}", "jobs")
+        ))
+        .map_err(err)?;
+        Self::migrate_v1(&mut c)?;
+        c.execute_batch(
+            "CREATE INDEX IF NOT EXISTS jobs_ready_v2 ON jobs(store_key, status, next_run_at);
              CREATE TABLE IF NOT EXISTS job_attempts(
                job_id TEXT NOT NULL REFERENCES jobs(id) ON DELETE CASCADE, attempt INTEGER NOT NULL,
                started_at TEXT NOT NULL, finished_at TEXT, ok INTEGER, error TEXT, log TEXT,
@@ -141,6 +159,38 @@ impl JobStore {
         .map_err(err)?;
         store.recover_expired(Utc::now())?;
         Ok(store)
+    }
+
+    /// Upgrades a v1 queue (keyed by document id, no lease tokens) in place. Old
+    /// rows are kept and assigned to the Studio store of their document.
+    fn migrate_v1(c: &mut Connection) -> Result<(), AppError> {
+        let has_key = |c: &Connection| {
+            c.query_row(
+                "SELECT count(*) FROM pragma_table_info('jobs') WHERE name='store_key'",
+                [],
+                |r| r.get::<_, i64>(0),
+            )
+            .map(|n| n > 0)
+        };
+        if has_key(c).map_err(err)? {
+            return Ok(());
+        }
+        // job_attempts references jobs(id): keep foreign keys off while the table is rebuilt.
+        c.execute_batch("PRAGMA foreign_keys=OFF").map_err(err)?;
+        let result = (|| {
+            let tx = c.transaction_with_behavior(TransactionBehavior::Immediate)?;
+            if !has_key(&tx)? {
+                let old = "id,document_id,trigger_id,action_id,payload,idempotency_key,status,attempts,max_attempts,backoff_ms,next_run_at,lease_until,created_at,updated_at,last_error";
+                tx.execute_batch(&format!(
+                    "{}; INSERT INTO jobs_v2({old},store_key) SELECT {old},'studio:'||document_id FROM jobs;
+                     DROP TABLE jobs; ALTER TABLE jobs_v2 RENAME TO jobs;",
+                    JOBS_TABLE.replace("{name}", "jobs_v2")
+                ))?;
+            }
+            tx.commit()
+        })();
+        c.execute_batch("PRAGMA foreign_keys=ON").map_err(err)?;
+        result.map_err(err)
     }
 
     fn connection(&self) -> Result<Connection, AppError> {
@@ -153,7 +203,7 @@ impl JobStore {
 
     fn get(c: &Connection, document_id: &str, id: &str) -> Result<Job, AppError> {
         c.query_row(
-            &format!("SELECT {COLUMNS} FROM jobs WHERE id=?1 AND document_id=?2"),
+            &format!("SELECT {COLUMNS} FROM jobs WHERE id=?1 AND store_key=?2"),
             params![id, document_id],
             job,
         )
@@ -162,9 +212,22 @@ impl JobStore {
         .ok_or_else(|| AppError::new("NOT_FOUND", format!("Job {id} not found")))
     }
 
-    /// Adds a job, or returns the existing job with the same idempotency key.
+    /// Adds a job to the queue `key` (also used as its document id), or returns
+    /// the existing job with the same idempotency key.
     pub fn enqueue(
         &self,
+        key: &str,
+        req: &EnqueueJob,
+        now: DateTime<Utc>,
+    ) -> Result<Job, AppError> {
+        self.enqueue_for(key, key, req, now)
+    }
+
+    /// Adds a job to the queue of store `key` for `document_id`, or returns the
+    /// existing job with the same idempotency key in that queue.
+    pub fn enqueue_for(
+        &self,
+        key: &str,
         document_id: &str,
         req: &EnqueueJob,
         now: DateTime<Utc>,
@@ -179,9 +242,9 @@ impl JobStore {
         let id = uuid::Uuid::new_v4().to_string();
         let at = ts(now);
         c.execute(
-            "INSERT INTO jobs(id,document_id,trigger_id,action_id,payload,idempotency_key,status,attempts,max_attempts,backoff_ms,next_run_at,created_at,updated_at)
-             VALUES(?1,?2,?3,?4,?5,?6,'queued',0,?7,?8,?9,?9,?9)
-             ON CONFLICT(document_id, idempotency_key) DO NOTHING",
+            "INSERT INTO jobs(id,document_id,trigger_id,action_id,payload,idempotency_key,status,attempts,max_attempts,backoff_ms,next_run_at,created_at,updated_at,store_key)
+             VALUES(?1,?2,?3,?4,?5,?6,'queued',0,?7,?8,?9,?9,?9,?10)
+             ON CONFLICT(store_key, idempotency_key) DO NOTHING",
             params![
                 id,
                 document_id,
@@ -191,13 +254,14 @@ impl JobStore {
                 req.idempotency_key,
                 req.max_attempts.unwrap_or(3).max(1),
                 req.backoff_ms.unwrap_or(1000) as i64,
-                at
+                at,
+                key
             ],
         )
         .map_err(err)?;
         c.query_row(
-            &format!("SELECT {COLUMNS} FROM jobs WHERE document_id=?1 AND idempotency_key=?2"),
-            params![document_id, req.idempotency_key],
+            &format!("SELECT {COLUMNS} FROM jobs WHERE store_key=?1 AND idempotency_key=?2"),
+            params![key, req.idempotency_key],
             job,
         )
         .map_err(err)
@@ -218,7 +282,7 @@ impl JobStore {
             .map_err(err)?;
         let next: Option<String> = tx
             .query_row(
-                "SELECT id FROM jobs WHERE document_id=?1 AND status='queued' AND next_run_at<=?2
+                "SELECT id FROM jobs WHERE store_key=?1 AND status='queued' AND next_run_at<=?2
                  ORDER BY next_run_at, created_at LIMIT 1",
                 params![document_id, ts(now)],
                 |r| r.get(0),
@@ -229,8 +293,14 @@ impl JobStore {
             return Ok(None);
         };
         tx.execute(
-            "UPDATE jobs SET status='running', attempts=attempts+1, lease_until=?2, updated_at=?3 WHERE id=?1",
-            params![id, after(now, lease_ms), ts(now)],
+            "UPDATE jobs SET status='running', attempts=attempts+1, lease_until=?2, updated_at=?3,
+               lease_token=(attempts+1)||':'||?4 WHERE id=?1",
+            params![
+                id,
+                after(now, lease_ms),
+                ts(now),
+                uuid::Uuid::new_v4().to_string()
+            ],
         )
         .map_err(err)?;
         tx.execute(
@@ -259,12 +329,17 @@ impl JobStore {
         Ok(())
     }
 
-    fn running(c: &Connection, document_id: &str, id: &str) -> Result<Job, AppError> {
+    /// The job, if `token` is its current lease; otherwise `STALE_LEASE` (the
+    /// lease expired, or the job was cancelled, finished or claimed again).
+    fn running(c: &Connection, document_id: &str, id: &str, token: &str) -> Result<Job, AppError> {
         let j = Self::get(c, document_id, id)?;
-        if j.status != "running" {
+        if j.status != "running" || j.lease_token.as_deref() != Some(token) {
             return Err(AppError::new(
-                "INVALID_STATE",
-                format!("Job {id} is {}, not running", j.status),
+                "STALE_LEASE",
+                format!(
+                    "Job {id} is {} and this worker no longer holds its lease; the result was ignored",
+                    j.status
+                ),
             ));
         }
         Ok(j)
@@ -274,18 +349,25 @@ impl JobStore {
         &self,
         document_id: &str,
         id: &str,
+        token: &str,
         log: &Value,
         now: DateTime<Utc>,
     ) -> Result<Job, AppError> {
-        let c = self.connection()?;
-        let j = Self::running(&c, document_id, id)?;
-        Self::finish_attempt(&c, &j, now, true, None, log)?;
-        c.execute(
-            "UPDATE jobs SET status='succeeded', lease_until=NULL, last_error=NULL, updated_at=?2 WHERE id=?1",
-            params![id, ts(now)],
+        let mut c = self.connection()?;
+        let tx = c
+            .transaction_with_behavior(TransactionBehavior::Immediate)
+            .map_err(err)?;
+        let j = Self::running(&tx, document_id, id, token)?;
+        Self::finish_attempt(&tx, &j, now, true, None, log)?;
+        tx.execute(
+            "UPDATE jobs SET status='succeeded', lease_until=NULL, lease_token=NULL, last_error=NULL, updated_at=?2
+             WHERE id=?1 AND status='running' AND lease_token=?3",
+            params![id, ts(now), token],
         )
         .map_err(err)?;
-        Self::get(&c, document_id, id)
+        let done = Self::get(&tx, document_id, id)?;
+        tx.commit().map_err(err)?;
+        Ok(done)
     }
 
     /// Records a failed attempt; schedules a retry with exponential backoff, or
@@ -294,26 +376,34 @@ impl JobStore {
         &self,
         document_id: &str,
         id: &str,
+        token: &str,
         error: &str,
         log: &Value,
         now: DateTime<Utc>,
     ) -> Result<Job, AppError> {
-        let c = self.connection()?;
-        let j = Self::running(&c, document_id, id)?;
-        Self::finish_attempt(&c, &j, now, false, Some(error), log)?;
-        if j.attempts >= j.max_attempts {
-            c.execute(
-                "UPDATE jobs SET status='failed', lease_until=NULL, last_error=?2, updated_at=?3 WHERE id=?1",
-                params![id, error, ts(now)],
-            )
+        let mut c = self.connection()?;
+        let tx = c
+            .transaction_with_behavior(TransactionBehavior::Immediate)
+            .map_err(err)?;
+        let j = Self::running(&tx, document_id, id, token)?;
+        Self::finish_attempt(&tx, &j, now, false, Some(error), log)?;
+        let (status, next) = if j.attempts >= j.max_attempts {
+            ("failed", j.next_run_at.clone())
         } else {
-            c.execute(
-                "UPDATE jobs SET status='queued', lease_until=NULL, last_error=?2, updated_at=?3, next_run_at=?4 WHERE id=?1",
-                params![id, error, ts(now), after(now, backoff_delay(j.backoff_ms, j.attempts))],
+            (
+                "queued",
+                after(now, backoff_delay(j.backoff_ms, j.attempts)),
             )
-        }
+        };
+        tx.execute(
+            "UPDATE jobs SET status=?2, lease_until=NULL, lease_token=NULL, last_error=?3, updated_at=?4, next_run_at=?5
+             WHERE id=?1 AND status='running' AND lease_token=?6",
+            params![id, status, error, ts(now), next, token],
+        )
         .map_err(err)?;
-        Self::get(&c, document_id, id)
+        let done = Self::get(&tx, document_id, id)?;
+        tx.commit().map_err(err)?;
+        Ok(done)
     }
 
     /// Cancels a queued or running job. A running attempt's later result is refused.
@@ -330,7 +420,7 @@ impl JobStore {
             Self::finish_attempt(&c, &j, now, false, Some("Cancelled"), &Value::Null)?;
         }
         c.execute(
-            "UPDATE jobs SET status='cancelled', lease_until=NULL, updated_at=?2 WHERE id=?1",
+            "UPDATE jobs SET status='cancelled', lease_until=NULL, lease_token=NULL, updated_at=?2 WHERE id=?1",
             params![id, ts(now)],
         )
         .map_err(err)?;
@@ -362,7 +452,7 @@ impl JobStore {
         let c = self.connection()?;
         let mut s = c
             .prepare(&format!(
-                "SELECT {COLUMNS} FROM jobs WHERE document_id=?1 AND (?2 IS NULL OR status=?2)
+                "SELECT {COLUMNS} FROM jobs WHERE store_key=?1 AND (?2 IS NULL OR status=?2)
                  ORDER BY created_at DESC, rowid DESC LIMIT ?3"
             ))
             .map_err(err)?;
@@ -423,7 +513,7 @@ impl JobStore {
         let n = tx
             .execute(
                 "UPDATE jobs SET status=CASE WHEN attempts>=max_attempts THEN 'failed' ELSE 'queued' END,
-                   lease_until=NULL, last_error=?2, next_run_at=?1, updated_at=?1
+                   lease_until=NULL, lease_token=NULL, last_error=?2, next_run_at=?1, updated_at=?1
                  WHERE status='running' AND lease_until<?1",
                 params![at, reason],
             )
@@ -440,21 +530,32 @@ pub fn store() -> Result<&'static JobStore, AppError> {
     if let Some(s) = STORE.get() {
         return Ok(s);
     }
-    let base = std::env::var_os("IXTABLE_STATE_DIR")
-        .map(PathBuf::from)
-        .unwrap_or_else(|| std::env::temp_dir().join("ixtable"));
+    let base = crate::paths::state_dir();
     let opened = JobStore::open(&base.join("data").join("jobs.db"))?;
     let _ = STORE.set(opened);
     Ok(STORE.get().unwrap())
 }
 
+/// The queue of the record store a window writes to: Studio sessions of a
+/// document share `studio:<documentId>`; a runtime installation (its own
+/// data.db, same document id) uses `runtime:<bundleId>`.
+pub fn store_key(session_id: &str, document_id: &str) -> String {
+    match crate::installation::runtime_session(session_id) {
+        Some(runtime) => format!("runtime:{}", runtime.bundle_id),
+        None => format!("studio:{document_id}"),
+    }
+}
+
 fn document(window: &str) -> Result<String, AppError> {
-    Ok(crate::manager()?.state(window)?.document_id)
+    let state = crate::manager()?.state(window)?;
+    Ok(store_key(&state.session_id, &state.document_id))
 }
 
 #[tauri::command]
 pub fn enqueue_job(window_label: String, job: crate::jobs::EnqueueJob) -> Result<Job, AppError> {
-    store()?.enqueue(&document(&window_label)?, &job, Utc::now())
+    let state = crate::manager()?.state(&window_label)?;
+    let key = store_key(&state.session_id, &state.document_id);
+    store()?.enqueue_for(&key, &state.document_id, &job, Utc::now())
 }
 #[tauri::command]
 pub fn claim_next_job(
@@ -468,10 +569,16 @@ pub fn claim_next_job(
     )
 }
 #[tauri::command]
-pub fn complete_job(window_label: String, id: String, log: Option<Value>) -> Result<Job, AppError> {
+pub fn complete_job(
+    window_label: String,
+    id: String,
+    lease_token: String,
+    log: Option<Value>,
+) -> Result<Job, AppError> {
     store()?.complete(
         &document(&window_label)?,
         &id,
+        &lease_token,
         &log.unwrap_or(Value::Null),
         Utc::now(),
     )
@@ -480,12 +587,14 @@ pub fn complete_job(window_label: String, id: String, log: Option<Value>) -> Res
 pub fn fail_job(
     window_label: String,
     id: String,
+    lease_token: String,
     error: String,
     log: Option<Value>,
 ) -> Result<Job, AppError> {
     store()?.fail(
         &document(&window_label)?,
         &id,
+        &lease_token,
         &error,
         &log.unwrap_or(Value::Null),
         Utc::now(),
@@ -598,10 +707,12 @@ mod tests {
         for attempt in 1..=3 {
             let claimed = s.claim_next("doc", now, 60_000).unwrap().unwrap();
             assert_eq!(claimed.attempts, attempt);
+            let token = claimed.lease_token.clone().unwrap();
             let failed = s
                 .fail(
                     "doc",
                     &j.id,
+                    &token,
                     &format!("boom {attempt}"),
                     &serde_json::json!([]),
                     now,
@@ -633,12 +744,20 @@ mod tests {
         let s = JobStore::open(&temp()).unwrap();
         let j = s.enqueue("doc", &req("k"), t0()).unwrap();
         assert!(
-            s.complete("doc", &j.id, &Value::Null, t0()).is_err(),
+            s.complete("doc", &j.id, "1:x", &Value::Null, t0()).is_err(),
             "not running"
         );
-        s.claim_next("doc", t0(), 60_000).unwrap().unwrap();
+        let claimed = s.claim_next("doc", t0(), 60_000).unwrap().unwrap();
+        let token = claimed.lease_token.unwrap();
+        assert!(token.starts_with("1:"), "{token}");
         let done = s
-            .complete("doc", &j.id, &serde_json::json!([{"ok": true}]), t0())
+            .complete(
+                "doc",
+                &j.id,
+                &token,
+                &serde_json::json!([{"ok": true}]),
+                t0(),
+            )
             .unwrap();
         assert_eq!(done.status, "succeeded");
         let history = s.attempts("doc", &j.id).unwrap();
@@ -661,7 +780,10 @@ mod tests {
         );
         // Cancelling a running job refuses its later result.
         s.cancel("doc", &running.id, t0()).unwrap();
-        assert!(s.complete("doc", &running.id, &Value::Null, t0()).is_err());
+        let token = running.lease_token.clone().unwrap();
+        assert!(s
+            .complete("doc", &running.id, &token, &Value::Null, t0())
+            .is_err());
         // Retry after exhausting attempts grants one more.
         let k = s
             .enqueue(
@@ -673,9 +795,14 @@ mod tests {
                 t0(),
             )
             .unwrap();
-        s.claim_next("doc", t0(), 60_000).unwrap();
+        let token = s
+            .claim_next("doc", t0(), 60_000)
+            .unwrap()
+            .unwrap()
+            .lease_token
+            .unwrap();
         assert_eq!(
-            s.fail("doc", &k.id, "x", &Value::Null, t0())
+            s.fail("doc", &k.id, &token, "x", &Value::Null, t0())
                 .unwrap()
                 .status,
             "failed"
@@ -718,5 +845,143 @@ mod tests {
         let claimed = s.claim_next("doc", Utc::now(), 60_000).unwrap().unwrap();
         assert_eq!(claimed.attempts, 2);
         assert_eq!(s.recover_expired(Utc::now()).unwrap(), 0);
+    }
+
+    #[test]
+    fn stale_workers_cannot_finish_a_requeued_job() {
+        let s = JobStore::open(&temp()).unwrap();
+        let j = s.enqueue("doc", &req("k"), t0()).unwrap();
+        // Worker A claims, the job is cancelled and requeued, worker B claims it.
+        let a = s.claim_next("doc", t0(), 60_000).unwrap().unwrap();
+        s.cancel("doc", &j.id, t0()).unwrap();
+        s.retry("doc", &j.id, t0()).unwrap();
+        let b = s.claim_next("doc", t0(), 60_000).unwrap().unwrap();
+        let (ta, tb) = (a.lease_token.unwrap(), b.lease_token.unwrap());
+        assert_ne!(ta, tb);
+        // A's late result is refused and changes nothing.
+        let stale = s
+            .complete("doc", &j.id, &ta, &Value::Null, t0())
+            .unwrap_err();
+        assert_eq!(stale.code, "STALE_LEASE");
+        assert_eq!(
+            s.fail("doc", &j.id, &ta, "late", &Value::Null, t0())
+                .unwrap_err()
+                .code,
+            "STALE_LEASE"
+        );
+        let job = s.list("doc", &JobFilter::default()).unwrap().remove(0);
+        assert_eq!((job.status.as_str(), job.attempts), ("running", 2));
+        // B holds the current lease.
+        assert_eq!(
+            s.complete("doc", &j.id, &tb, &Value::Null, t0())
+                .unwrap()
+                .status,
+            "succeeded"
+        );
+        assert_eq!(
+            s.complete("doc", &j.id, &tb, &Value::Null, t0())
+                .unwrap_err()
+                .code,
+            "STALE_LEASE"
+        );
+
+        // An expired lease that was re-claimed rejects the first worker too.
+        let k = s.enqueue("doc", &req("k2"), t0()).unwrap();
+        let first = s.claim_next("doc", t0(), 1).unwrap().unwrap();
+        let later = t0() + Duration::seconds(10);
+        let second = s.claim_next("doc", later, 60_000).unwrap().unwrap();
+        assert_eq!(second.id, k.id);
+        assert_eq!(
+            s.complete(
+                "doc",
+                &k.id,
+                first.lease_token.as_deref().unwrap(),
+                &Value::Null,
+                later
+            )
+            .unwrap_err()
+            .code,
+            "STALE_LEASE"
+        );
+    }
+
+    #[test]
+    fn studio_and_runtime_queues_are_separate() {
+        let s = JobStore::open(&temp()).unwrap();
+        let studio = s.enqueue_for("studio:doc", "doc", &req("k"), t0()).unwrap();
+        let runtime = s
+            .enqueue_for("runtime:doc", "doc", &req("k"), t0())
+            .unwrap();
+        assert_ne!(studio.id, runtime.id);
+        assert_eq!(studio.document_id, "doc");
+        let claimed = s.claim_next("runtime:doc", t0(), 60_000).unwrap().unwrap();
+        assert_eq!(claimed.id, runtime.id);
+        assert!(s.claim_next("runtime:doc", t0(), 60_000).unwrap().is_none());
+        assert!(
+            s.cancel("runtime:doc", &studio.id, t0()).is_err(),
+            "other queue"
+        );
+        assert_eq!(
+            s.list("studio:doc", &JobFilter::default()).unwrap().len(),
+            1
+        );
+        assert_eq!(store_key("no-such-session", "doc"), "studio:doc");
+    }
+
+    #[test]
+    fn v1_queue_is_migrated_keeping_rows() {
+        let path = temp();
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        let c = Connection::open(&path).unwrap();
+        c.execute_batch(
+            "CREATE TABLE jobs(
+               id TEXT PRIMARY KEY, document_id TEXT NOT NULL, trigger_id TEXT NOT NULL,
+               action_id TEXT NOT NULL, payload TEXT NOT NULL, idempotency_key TEXT NOT NULL,
+               status TEXT NOT NULL CHECK(status IN ('queued','running','succeeded','failed','cancelled')),
+               attempts INTEGER NOT NULL DEFAULT 0, max_attempts INTEGER NOT NULL,
+               backoff_ms INTEGER NOT NULL, next_run_at TEXT NOT NULL, lease_until TEXT,
+               created_at TEXT NOT NULL, updated_at TEXT NOT NULL, last_error TEXT,
+               UNIQUE(document_id, idempotency_key));
+             CREATE INDEX jobs_ready ON jobs(document_id, status, next_run_at);
+             CREATE TABLE job_attempts(
+               job_id TEXT NOT NULL REFERENCES jobs(id) ON DELETE CASCADE, attempt INTEGER NOT NULL,
+               started_at TEXT NOT NULL, finished_at TEXT, ok INTEGER, error TEXT, log TEXT,
+               PRIMARY KEY(job_id, attempt));
+             INSERT INTO jobs VALUES('j1','doc','t','a','{}','k','queued',1,3,1000,'2026-01-01T00:00:00.000Z',NULL,'2026-01-01T00:00:00.000Z','2026-01-01T00:00:00.000Z',NULL);
+             INSERT INTO job_attempts VALUES('j1',1,'2026-01-01T00:00:00.000Z','2026-01-01T00:00:01.000Z',0,'boom','null');",
+        )
+        .unwrap();
+        drop(c);
+        let s = JobStore::open(&path).unwrap();
+        let jobs = s.list("studio:doc", &JobFilter::default()).unwrap();
+        assert_eq!(jobs.len(), 1);
+        assert_eq!(
+            (jobs[0].id.as_str(), jobs[0].document_id.as_str()),
+            ("j1", "doc")
+        );
+        assert_eq!(
+            s.attempts("studio:doc", "j1").unwrap().len(),
+            1,
+            "attempts kept"
+        );
+        // The same idempotency key may now exist once per store.
+        let again = s.enqueue_for("studio:doc", "doc", &req("k"), t0()).unwrap();
+        assert_eq!(again.id, "j1");
+        assert_ne!(
+            s.enqueue_for("runtime:doc", "doc", &req("k"), t0())
+                .unwrap()
+                .id,
+            "j1"
+        );
+        // Reopening is a no-op.
+        drop(s);
+        assert_eq!(
+            JobStore::open(&path)
+                .unwrap()
+                .list("studio:doc", &JobFilter::default())
+                .unwrap()
+                .len(),
+            1
+        );
     }
 }

@@ -167,9 +167,10 @@ const MUTATING: [&str; 11] = [
 /// Rewrites placeholders and applies the shared read-only guard. Mutating SQL gets
 /// a message that points to migrations and actions (PRD §12).
 pub fn prepare_sql(sql: &str) -> Result<Rewritten, AppError> {
-    let rewritten = rewrite_placeholders(sql).map_err(|e| AppError::new("VALIDATION_ERROR", e))?;
+    let mut rewritten =
+        rewrite_placeholders(sql).map_err(|e| AppError::new("VALIDATION_ERROR", e))?;
     if let Err(message) = data::read_only_guard(&rewritten.sql) {
-        let upper = rewritten.sql.to_ascii_uppercase();
+        let upper = data::sqltext::mask(&rewritten.sql).to_ascii_uppercase();
         let found = upper
             .split(|c: char| !ident_char(c))
             .find(|t| MUTATING.contains(t));
@@ -180,6 +181,9 @@ pub fn prepare_sql(sql: &str) -> Result<Rewritten, AppError> {
             None => message,
         };
         return Err(AppError::new("READ_ONLY", message));
+    }
+    if let Ok(statement) = data::read_only_guard(&rewritten.sql) {
+        rewritten.sql = statement.to_string();
     }
     Ok(rewritten)
 }

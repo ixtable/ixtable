@@ -119,17 +119,17 @@ it("stops trigger recursion at the depth limit", async () => {
   expect(db.rows("orders")).toHaveLength(1 + 1 + MAX_TRIGGER_DEPTH);
 });
 
-it("enqueues async triggers once per idempotency key and the worker runs them", async () => {
+it("enqueues async triggers once per write and the worker runs them", async () => {
   config.triggers = [trigger({ mode: "async", event: "updated" })];
-  const write = () =>
+  const write = (writeId?: string) =>
     updateRecord(
       "orders",
       [{ column: "status", value: text("closed") }],
       [{ type: "integer", value: 1 }],
-      { old: { id: 1, status: "open" } },
+      { old: { id: 1, status: "open" }, ...(writeId && { writeId }) },
     );
-  await write();
-  await write();
+  await write("w-1");
+  await write("w-1");
   expect(db.jobs).toHaveLength(1);
   expect(db.jobs[0]).toMatchObject({
     triggerId: "t1",
@@ -138,15 +138,21 @@ it("enqueues async triggers once per idempotency key and the worker runs them", 
     backoffMs: 10,
     payload: { table: "orders", event: "updated", record: { id: 1, status: "closed" } },
   });
-  expect(String(db.jobs[0].idempotencyKey)).toMatch(/^t1:orders:1:updated:[0-9a-f]{8}$/);
+  expect(String(db.jobs[0].idempotencyKey)).toMatch(/^t1:orders:1:updated:[0-9a-f]{8}:w-1$/);
   expect(db.rows("audit")).toEqual([]);
 
   const job = db.jobs[0];
   const done = vi.fn();
-  db.on("claim_next_job", () => (job.status === "queued" ? ((job.status = "running"), job) : null));
-  db.on("complete_job", ({ id, log }) => done(id, log));
+  db.on("claim_next_job", () =>
+    job.status === "queued" ? ((job.status = "running"), { ...job, leaseToken: "1:abc" }) : null,
+  );
+  db.on("complete_job", ({ id, leaseToken, log }) => done(id, leaseToken, log));
   await runNextJob({ getConfig: () => config });
-  expect(done).toHaveBeenCalledWith("job1", expect.objectContaining({ steps: expect.any(Array) }));
+  expect(done).toHaveBeenCalledWith(
+    "job1",
+    "1:abc",
+    expect.objectContaining({ steps: expect.any(Array) }),
+  );
   expect(db.rows("audit").map((r) => r.message)).toEqual(["order 1: open → closed"]);
   expect(await runNextJob({ getConfig: () => config })).toBeNull();
 });
@@ -164,4 +170,35 @@ it("uses a custom idempotency key expression and reports worker failures", async
   db.on("fail_job", ({ id, error }) => failed(id, error));
   await runNextJob({ getConfig: () => config });
   expect(failed).toHaveBeenCalledWith("job1", "Action audit does not exist");
+});
+
+it("enqueues a later identical write as a new event", async () => {
+  config.triggers = [trigger({ mode: "async", event: "updated" })];
+  const write = () =>
+    updateRecord(
+      "orders",
+      [{ column: "status", value: text("closed") }],
+      [{ type: "integer", value: 1 }],
+      { old: { id: 1, status: "open" } },
+    );
+  await write();
+  await write();
+  expect(db.jobs).toHaveLength(2);
+  expect(db.jobs[0].idempotencyKey).not.toBe(db.jobs[1].idempotencyKey);
+});
+
+it("ignores a stale lease instead of recording a failure", async () => {
+  config.triggers = [trigger({ mode: "async" })];
+  await insertRecord("orders", [{ column: "status", value: text("open") }]);
+  const job = db.jobs[0];
+  const failed = vi.fn();
+  db.on("claim_next_job", () =>
+    job.status === "queued" ? ((job.status = "running"), { ...job, leaseToken: "1:old" }) : null,
+  );
+  db.on("complete_job", () => {
+    throw { code: "STALE_LEASE", message: "Job job1 is cancelled" };
+  });
+  db.on("fail_job", ({ id }) => failed(id));
+  await runNextJob({ getConfig: () => config });
+  expect(failed).not.toHaveBeenCalled();
 });

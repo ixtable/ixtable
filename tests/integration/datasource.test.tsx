@@ -101,7 +101,7 @@ it("sets a concurrency policy per table and flags tables without one", async () 
       ],
     },
   });
-  await invoke("apply_migrations", { windowLabel: "main" });
+  await invoke("apply_migrations", { windowLabel: "main", externalBackupConfirmed: null });
   await refreshDatabase();
   const issues = await invoke<Array<{ objectId: string; message: string }>>("validate_document", {
     windowLabel: "main",
@@ -192,5 +192,41 @@ it.skipIf(!postgresUrl)(
     });
     expect(capabilities.store).toBe("postgres");
     await invoke("drop_database_table", { windowLabel: "main", table });
+
+    const current = await invoke<Record<string, unknown>>("read_document_config", {
+      windowLabel: "main",
+    });
+    await invoke("update_document_config", {
+      windowLabel: "main",
+      config: {
+        ...current,
+        migrations: [
+          {
+            id: `m-${table}`,
+            name: "PG migration",
+            order: 1,
+            up: `CREATE TABLE ${table}_m (id INTEGER PRIMARY KEY)`,
+          },
+        ],
+      },
+    });
+    await expect(
+      invoke("apply_migrations", { windowLabel: "main" }).then(
+        () => "applied",
+        (e: unknown) => String((e as Error).message ?? e),
+      ),
+    ).resolves.toMatch(/BACKUP_REQUIRED/);
+    await openTab(user, "Migrations");
+    const apply = await screen.findByRole("button", { name: "Apply pending (1)" }, LONG);
+    expect(apply).toBeDisabled();
+    await user.click(
+      screen.getByRole("checkbox", { name: "I have an external PostgreSQL backup" }),
+    );
+    await waitFor(() => expect(apply).toBeEnabled());
+    await user.click(apply);
+    expect(
+      await screen.findByText(/no backup of PostgreSQL records was taken/, {}, LONG),
+    ).toBeInTheDocument();
+    await invoke("drop_database_table", { windowLabel: "main", table: `${table}_m` });
   },
 );

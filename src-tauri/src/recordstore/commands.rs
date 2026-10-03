@@ -16,10 +16,9 @@ use serde_json::Value;
 pub fn after_write(window: &str) -> Result<SessionState, AppError> {
     let m = crate::manager()?;
     if m.config(window)?.datasource.is_postgres() {
+        // A refresh failure after a committed write is a stale-read warning, never an error.
         m.with_session(window, |s| {
-            s.reader
-                .refresh()
-                .map_err(|e| AppError::new("CONNECTION", e))?;
+            crate::manager::refresh_after_write(s);
             Ok(s.state())
         })
     } else {
@@ -330,11 +329,10 @@ pub fn test_datasource_connection(
             message: "The embedded SQLite store is always available.".into(),
         });
     }
+    secrets::ensure_transport(&datasource)?;
     let password = match password.filter(|p| !p.is_empty()) {
         Some(p) => Some(p),
-        None => {
-            secrets::datasource_password(&datasource).map_err(|e| AppError::new("CONNECTION", e))?
-        }
+        None => secrets::datasource_credential(&datasource)?,
     };
     Ok(
         match super::blocking(|| crate::postgres::probe(&datasource, password.as_deref())) {
@@ -367,19 +365,19 @@ pub fn set_datasource_password(
     window_label: String,
     datasource_id: String,
     password: String,
+    datasource: Option<crate::recordstore::DatasourceConfig>,
 ) -> Result<String, AppError> {
-    crate::manager()?.config(&window_label)?;
+    let config = crate::manager()?.config(&window_label)?;
     if datasource_id.trim().is_empty() {
         return Err(AppError::new(
             "VALIDATION_ERROR",
             "The datasource needs an id",
         ));
     }
-    let id = secrets::datasource_secret_id(&datasource_id);
-    secrets::SecretStore::default_location()
-        .and_then(|s| s.put(&id, &password))
-        .map_err(|e| AppError::new("IO_ERROR", e))?;
-    Ok(id)
+    // The password is bound to the server it is entered for (secrets::datasource_target).
+    let mut target = datasource.unwrap_or(config.datasource);
+    target.id = datasource_id;
+    secrets::store_datasource_password(&target, &password).map_err(|e| AppError::new("IO_ERROR", e))
 }
 
 #[tauri::command]

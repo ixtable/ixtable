@@ -1,5 +1,6 @@
 pub mod archive;
 pub mod archive_io;
+pub mod asset_data;
 pub mod assets;
 pub mod automation;
 pub mod bundle;
@@ -15,6 +16,7 @@ pub mod jobs;
 pub mod logging;
 pub mod manager;
 pub mod migrations;
+pub mod paths;
 pub mod postgres;
 pub mod queries;
 pub mod recordstore;
@@ -35,9 +37,7 @@ fn manager() -> Result<&'static DocumentManager, AppError> {
     if let Some(m) = MANAGER.get() {
         return Ok(m);
     }
-    let base = std::env::var_os("IXTABLE_STATE_DIR")
-        .map(PathBuf::from)
-        .unwrap_or_else(|| std::env::temp_dir().join("ixtable"));
+    let base = paths::state_dir();
     let _ = MANAGER.set(DocumentManager::new(base.join("data"), base.join("cache"))?);
     Ok(MANAGER.get().unwrap())
 }
@@ -239,10 +239,52 @@ fn delete_saved_query(window_label: String, id: String) -> Result<DocumentConfig
     Ok(c)
 }
 
+/// Event the main window receives with the `.ixt` paths a second launch was asked to open.
+pub const OPEN_FILES_EVENT: &str = "ixtable://open-files";
+
+/// Paths among a launch's arguments that name `.ixt` documents, resolved against its cwd.
+pub fn open_file_args(args: &[String], cwd: &str) -> Vec<String> {
+    args.iter()
+        .skip(1)
+        .filter(|a| !a.starts_with('-'))
+        .filter(|a| {
+            std::path::Path::new(a)
+                .extension()
+                .is_some_and(|e| e.eq_ignore_ascii_case("ixt"))
+        })
+        .map(|a| {
+            std::path::Path::new(cwd)
+                .join(a)
+                .to_string_lossy()
+                .into_owned()
+        })
+        .collect()
+}
+
+fn forward_open_args(app: &tauri::AppHandle, args: Vec<String>, cwd: String) {
+    use tauri::{Emitter, Manager};
+    if let Some(window) = app.get_webview_window("main") {
+        let _ = window.unminimize();
+        let _ = window.set_focus();
+        let files = open_file_args(&args, &cwd);
+        if !files.is_empty() {
+            let _ = window.emit(OPEN_FILES_EVENT, files);
+        }
+    }
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
+        // Registered first: a second launch hands its file arguments to this process and exits, so two processes never share the state dir.
+        .plugin(tauri_plugin_single_instance::init(forward_open_args))
         .plugin(tauri_plugin_dialog::init())
+        .setup(|app| {
+            use tauri::Manager;
+            // Durable state lives in the app's local data dir, resolved before any command runs.
+            paths::init_app_dir(app.path().app_local_data_dir()?);
+            Ok(())
+        })
         .invoke_handler(tauri::generate_handler![
             app_info,
             new_document,
@@ -293,6 +335,8 @@ pub fn run() {
             // reports commands
             reports::write_report_pdf,
             reports::read_report_assets,
+            // asset_data commands
+            asset_data::read_asset_data_url,
             // dashboards commands
             // automation commands
             automation::validate_automation,
@@ -349,4 +393,22 @@ pub fn run() {
         ])
         .run(tauri::generate_context!())
         .expect("error while running ixtable")
+}
+
+#[cfg(test)]
+mod launch_args_tests {
+    #[test]
+    fn a_second_launch_forwards_only_ixt_paths_resolved_against_its_cwd() {
+        let args = ["ixtable", "--flag", "notes.IXT", "/abs/b.ixt", "readme.txt"].map(String::from);
+        let files = super::open_file_args(&args, "/home/u");
+        assert_eq!(files.len(), 2);
+        assert_eq!(
+            std::path::Path::new(&files[0]),
+            std::path::Path::new("/home/u/notes.IXT")
+        );
+        assert_eq!(
+            std::path::Path::new(&files[1]),
+            std::path::Path::new("/abs/b.ixt")
+        );
+    }
 }

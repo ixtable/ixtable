@@ -30,7 +30,9 @@ export type StepBody =
   | { kind: "message"; text: Expr; tone?: "info" | "error" }
   /** `when` picks the branch: true → then, false/null → else. */
   | { kind: "condition"; then: Step[]; else: Step[] }
-  | { kind: "runAction"; actionId: string };
+  | { kind: "runAction"; actionId: string }
+  /** Business-rule abort: ends the action with ok: false and this message (nothing commits under rollback). */
+  | { kind: "fail"; message: Expr };
 
 export type StepKind = StepBody["kind"];
 
@@ -99,6 +101,8 @@ export interface Job {
   createdAt: string;
   updatedAt: string;
   lastError?: string | null;
+  /** Token of the current lease while running; completeJob/failJob must pass it. */
+  leaseToken?: string | null;
 }
 
 export interface JobAttempt {
@@ -125,4 +129,5 @@ export const STEP_KINDS: StepKind[] = [
   "message",
   "condition",
   "runAction",
+  "fail",
 ];

@@ -20,6 +20,12 @@ impl SqliteRecordStore {
         record: &[super::Bookkeeping],
         dry_run: bool,
     ) -> Result<ScriptReport, StoreError> {
+        if let Some(message) = crate::data::sqltext::transaction_control_error(sql) {
+            return Err(crate::recordstore::StoreError::new(
+                "VALIDATION_ERROR",
+                message,
+            ));
+        }
         let mut c = self.connection()?;
         let tx = c.transaction().map_err(se)?;
         let mut report = ScriptReport::default();

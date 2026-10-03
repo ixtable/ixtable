@@ -6,10 +6,22 @@ let user: ReturnType<typeof userEvent.setup>;
 import type { DocumentConfig, SessionState } from "../../src/lib/types";
 
 let backend: DocumentConfig;
+let configRevision = 0;
 const updateDocumentConfig = vi.fn(async (config: DocumentConfig) => {
   backend = config;
-  return { name: config.name, activeMode: config.activeMode, dirty: true } as SessionState;
+  configRevision += 1;
+  return {
+    name: config.name,
+    activeMode: config.activeMode,
+    dirty: true,
+    configRevision,
+  } as SessionState;
 });
+const backendEdit = (change: Partial<DocumentConfig>) => {
+  backend = { ...backend, ...change };
+  configRevision += 1;
+  return { name: backend.name, configRevision } as SessionState;
+};
 const readDocumentConfig = vi.fn(async () => structuredClone(backend));
 vi.mock("../../src/lib/api", () => ({
   asTauriError: (error: unknown) => ({ code: "TEST", message: String(error) }),
@@ -46,6 +58,13 @@ function Probe() {
       </button>
       <input aria-label="field" />
       <button onClick={() => store.reload("Apply YAML")}>Reload</button>
+      <button onClick={() => store.reload()}>Reload quietly</button>
+      <button onClick={() => store.observe(backendEdit({ savedQueries: [{ id: "q1" }] } as never))}>
+        Backend edit
+      </button>
+      <button onClick={() => store.observe(backendEdit({ savedQueries: [{ id: "q2" }] } as never))}>
+        Second backend edit
+      </button>
       <span>{store.undoLabel ?? "none"}</span>
     </div>
   );
@@ -65,7 +84,9 @@ async function renderStore() {
 beforeEach(() => {
   user = userEvent.setup();
   backend = { name: "Untitled", activeMode: "data" } as DocumentConfig;
+  configRevision = 0;
   updateDocumentConfig.mockClear();
+  readDocumentConfig.mockClear();
 });
 
 it("persists updates through update_document_config and reports session state", async () => {
@@ -123,4 +144,39 @@ it("records an external change as an undo step when reloading with a label", asy
   expect(await screen.findByText("Apply YAML")).toBeInTheDocument();
   await user.click(screen.getByRole("button", { name: "Undo" }));
   await waitFor(() => expect(backend.name).toBe("Untitled"));
+});
+
+it("reloads backend-owned changes without an undo step and keeps them on undo", async () => {
+  const { user } = await renderStore();
+  await user.click(screen.getByRole("button", { name: "Alpha" }));
+  await waitFor(() => expect(backend.name).toBe("Alpha"));
+  backend = { ...backend, entities: [{ id: "e1", table: "orders" }] } as unknown as DocumentConfig;
+  await user.click(screen.getByRole("button", { name: "Reload quietly" }));
+  await waitFor(() => expect(readDocumentConfig).toHaveBeenCalledTimes(2));
+  expect(await screen.findByText("Rename")).toBeInTheDocument();
+  await user.click(screen.getByRole("button", { name: "Undo" }));
+  expect(screen.getByRole("status", { name: "name" })).toHaveTextContent("Untitled");
+  await waitFor(() => expect(backend.name).toBe("Untitled"));
+  expect(backend.entities).toEqual([{ id: "e1", table: "orders" }]);
+  expect(screen.getByRole("button", { name: "Undo" })).toBeDisabled();
+});
+
+it("reloads before editing when a session state shows a newer config revision", async () => {
+  const { user } = await renderStore();
+  await user.click(screen.getByRole("button", { name: "Alpha" }));
+  await waitFor(() => expect(backend.name).toBe("Alpha"));
+  expect(readDocumentConfig).toHaveBeenCalledTimes(1);
+  await user.click(screen.getByRole("button", { name: "Backend edit" }));
+  await user.click(screen.getByRole("button", { name: "Beta" }));
+  await waitFor(() => expect(backend.name).toBe("Beta"));
+  expect(readDocumentConfig).toHaveBeenCalledTimes(2);
+  expect(backend.savedQueries).toEqual([{ id: "q1" }]);
+  await user.click(screen.getByRole("button", { name: "Alpha" }));
+  await waitFor(() => expect(backend.name).toBe("Alpha"));
+  expect(readDocumentConfig).toHaveBeenCalledTimes(2);
+  await user.click(screen.getByRole("button", { name: "Second backend edit" }));
+  await user.click(screen.getByRole("button", { name: "Undo" }));
+  await waitFor(() => expect(readDocumentConfig).toHaveBeenCalledTimes(3));
+  await waitFor(() => expect(backend.name).toBe("Beta"));
+  expect(backend.savedQueries).toEqual([{ id: "q2" }]);
 });

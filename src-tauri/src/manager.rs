@@ -75,9 +75,13 @@ pub struct Session {
     pub last_error: Option<AppError>,
     /// Bumped on every edit; a save only clears `dirty` when no edit raced it.
     pub revision: u64,
+    /// Bumped on every backend config mutation (see `SessionState::config_revision`).
+    pub config_revision: u64,
     /// Archive the session was opened from or last saved to (source of preserved tables).
     pub origin: Option<PathBuf>,
     save_lock: Arc<Mutex<()>>,
+    /// OS advisory lock on `<workspace>.lock`, held while the session is open so other ixtable processes never treat the workspace as abandoned.
+    pub(crate) workspace_lock: Option<crate::recovery::WorkspaceLock>,
 }
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -98,6 +102,10 @@ pub struct SessionState {
     /// Runtime-only bundle session: Studio modes hidden, definition read-only.
     pub runtime_only: bool,
     pub bundle_version: Option<String>,
+    /// Bumped on every config change made by the backend (update_config and every
+    /// command built on it). The frontend config store reloads when it sees a
+    /// revision newer than the last one it wrote or loaded.
+    pub config_revision: u64,
 }
 impl Session {
     pub(crate) fn state(&self) -> SessionState {
@@ -117,6 +125,7 @@ impl Session {
             last_error: self.last_error.clone(),
             runtime_only: crate::installation::runtime_session(&self.id).is_some(),
             bundle_version: crate::installation::runtime_version(&self.id),
+            config_revision: self.config_revision,
         }
     }
 }
@@ -201,6 +210,22 @@ impl DocumentManager {
         workspace: PathBuf,
         dirty: bool,
     ) -> Result<SessionState, AppError> {
+        let workspace_lock = match crate::recovery::try_lock_workspace(&workspace) {
+            Ok(Some(lock)) => Some(lock),
+            Ok(None) => {
+                return Err(AppError::new(
+                    "SESSION_OPEN",
+                    "That work is open in another ixtable window",
+                ))
+            }
+            Err(e) => {
+                logging::warn(
+                    "recovery",
+                    &format!("could not lock workspace of session {id}: {e}"),
+                );
+                None
+            }
+        };
         let mut reader = ReadRuntime::new(&workspace, &sqlite_extension_path()?)
             .map_err(|e| AppError::new("EXTENSION_STARTUP", e))?;
         crate::recordstore::attach_configured(&mut reader, &doc.config);
@@ -233,7 +258,9 @@ impl DocumentManager {
             last_saved_at: None,
             last_error: None,
             revision: 0,
+            config_revision: 0,
             save_lock: Arc::default(),
+            workspace_lock,
         };
         let state = s.state();
         // Registered under the sessions lock so recovery listing never sees it as abandoned.
@@ -249,8 +276,10 @@ impl DocumentManager {
         Ok(state)
     }
     /// Drops a session that is no longer open and deletes its WIP workspace.
-    fn dispose(&self, old: Session) {
+    fn dispose(&self, mut old: Session) {
         let (id, workspace) = (old.id.clone(), old.workspace.clone());
+        // Released only after the workspace and its record are gone.
+        let lock = old.workspace_lock.take();
         drop(old);
         if crate::installation::runtime_session(&id).is_some() {
             crate::installation::forget_runtime(&id);
@@ -258,6 +287,7 @@ impl DocumentManager {
         }
         let _ = fs::remove_dir_all(workspace);
         let _ = self.global.remove_recovery(&id);
+        drop(lock);
     }
     /// Records an edit: bumps the revision and flags the recovery record dirty once.
     pub(crate) fn touch(&self, s: &mut Session) {
@@ -323,13 +353,12 @@ impl DocumentManager {
         let s = all
             .get_mut(window)
             .ok_or_else(|| AppError::new("NO_DOCUMENT", "No document is open"))?;
-        s.reader
-            .refresh()
-            .map_err(|e| AppError::new("IO_ERROR", e))?;
+        // The write is already committed: record it before anything that can fail.
         // Runtime installation writes are durable immediately; there is nothing to save.
         if crate::installation::runtime_session(&s.id).is_none() {
             self.touch(s);
         }
+        refresh_after_write(s);
         Ok(s.state())
     }
     pub fn database_objects(&self, window: &str) -> Result<Vec<data::DbObject>, AppError> {
@@ -400,7 +429,8 @@ impl DocumentManager {
         sql: String,
         filter_state: Option<serde_json::Value>,
     ) -> Result<DocumentConfig, AppError> {
-        self.read_query(window, &sql)?;
+        // Prepared, not run: `$name` parameters need no values to be saved.
+        crate::queries::check_on(&self.read_connection(window)?, &sql)?;
         let mut config = self.config(window)?;
         let id = id.unwrap_or_else(|| Uuid::new_v4().to_string());
         let previous = config.saved_queries.iter().find(|query| query.id == id);
@@ -428,8 +458,35 @@ impl DocumentManager {
             .get_mut(window)
             .ok_or_else(|| AppError::new("NO_DOCUMENT", "No document is open"))?;
         read_only_guard(s)?;
+        let datasource_changed = s.doc.config.datasource != c.datasource;
+        let workspace = s.workspace.clone();
+        drop(all);
+        // Attaching a datasource can block (PostgreSQL connect timeout), so a new
+        // reader is built outside the sessions lock and swapped in below.
+        let prepared = if datasource_changed {
+            let mut reader = ReadRuntime::new(&workspace, &sqlite_extension_path()?)
+                .map_err(|e| AppError::new("EXTENSION_STARTUP", e))?;
+            crate::recordstore::attach_configured(&mut reader, &c);
+            Some((c.datasource.clone(), reader))
+        } else {
+            None
+        };
+        let mut all = self.sessions.lock().unwrap();
+        let s = all
+            .get_mut(window)
+            .ok_or_else(|| AppError::new("NO_DOCUMENT", "No document is open"))?;
+        read_only_guard(s)?;
+        if s.doc.config.datasource != c.datasource {
+            match prepared {
+                Some((ds, reader)) if ds == c.datasource && s.workspace == workspace => {
+                    s.reader = reader
+                }
+                // Another edit changed the datasource meanwhile: attach inline.
+                _ => crate::recordstore::attach_configured(&mut s.reader, &c),
+            }
+        }
         s.doc.config = c;
-        crate::recordstore::attach_configured(&mut s.reader, &s.doc.config);
+        s.config_revision += 1;
         self.touch(s);
         archive_io::write_config_files(&s.workspace, &s.doc.config)?;
         Ok(s.state())
@@ -610,7 +667,9 @@ impl DocumentManager {
                 "Save or resolve the document before closing",
             ));
         }
-        let s = all.remove(window).unwrap();
+        let mut s = all.remove(window).unwrap();
+        // Released only after the workspace and its record are gone.
+        let lock = s.workspace_lock.take();
         if crate::installation::runtime_session(&s.id).is_some() {
             // The workspace is the installation itself; keep it.
             crate::installation::forget_runtime(&s.id);
@@ -623,6 +682,7 @@ impl DocumentManager {
         self.global
             .remove_recovery(&id)
             .map_err(|e| AppError::new("IO_ERROR", e))?;
+        drop(lock);
         logging::info("close", &format!("closed session {id}"));
         Ok(())
     }
@@ -636,18 +696,50 @@ impl DocumentManager {
         doc: ArchiveDocument,
         runtime: crate::installation::RuntimeSession,
     ) -> Result<SessionState, AppError> {
+        // The reader follows the bundle's datasource, like the record store does
+        // (built before the sessions lock: a PostgreSQL attach can block).
+        let mut reader = ReadRuntime::new(installation, &sqlite_extension_path()?)
+            .map_err(|e| AppError::new("EXTENSION_STARTUP", e))?;
+        crate::recordstore::attach_configured(&mut reader, &doc.config);
         let state = self.install(window, None, doc)?;
         let mut all = self.sessions.lock().unwrap();
         let s = all
             .get_mut(window)
             .ok_or_else(|| AppError::new("NO_DOCUMENT", "No document is open"))?;
         let extracted = std::mem::replace(&mut s.workspace, installation.to_owned());
-        s.reader = ReadRuntime::new(installation, &sqlite_extension_path()?)
-            .map_err(|e| AppError::new("EXTENSION_STARTUP", e))?;
+        s.reader = reader;
         let _ = fs::remove_dir_all(extracted);
         let _ = self.global.remove_recovery(&state.session_id);
         crate::installation::register_runtime(&state.session_id, runtime);
         Ok(s.state())
+    }
+}
+/// Error code of a committed write whose read refresh failed (reads may be stale).
+pub const READ_REFRESH_FAILED: &str = "READ_REFRESH_FAILED";
+
+/// Refreshes the DuckDB reader after a committed write. A failure never fails the
+/// write: it is surfaced as `lastError` (`READ_REFRESH_FAILED`) and cleared by the
+/// next successful refresh.
+pub(crate) fn refresh_after_write(s: &mut Session) {
+    match s.reader.refresh() {
+        Ok(()) => {
+            if s.last_error
+                .as_ref()
+                .is_some_and(|e| e.code == READ_REFRESH_FAILED)
+            {
+                s.last_error = None;
+            }
+        }
+        Err(e) => {
+            logging::warn(
+                "data",
+                &format!("read refresh after a committed write failed: {e}"),
+            );
+            s.last_error = Some(AppError::new(
+                READ_REFRESH_FAILED,
+                format!("The change was saved, but the view could not be refreshed and may be out of date ({e})."),
+            ));
+        }
     }
 }
 pub(crate) fn read_only_guard(s: &Session) -> Result<(), AppError> {
@@ -759,4 +851,8 @@ fn validate_extension(path: PathBuf) -> Result<PathBuf, AppError> {
 #[tauri::command]
 pub fn autosave_document(window_label: String) -> Result<SessionState, AppError> {
     crate::manager()?.autosave(&window_label)
+}
+#[cfg(test)]
+mod config_tests {
+    include!("manager_config_tests.rs");
 }

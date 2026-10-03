@@ -108,10 +108,14 @@ export function DatabaseWorkbench() {
       .finally(() => setLoading(false));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selected, offset, sorts, filter, revision]);
-  /** After DDL: entities may have changed in the backend config, and metadata is stale. */
+  /**
+   * After DDL: entities may have changed in the backend config, and metadata is stale.
+   * The reload adds no undo step: undo cannot revert the schema, so it must not
+   * revert the config that describes it either.
+   */
   const afterSchemaChange = async (table: string | null) => {
     markDirty();
-    await reloadConfig("Schema change");
+    await reloadConfig();
     await reloadMetadata();
     onSelect(table ? { kind: "table", id: table } : null);
     setDesigningSelected(false);

@@ -57,13 +57,19 @@ export function installTriggers(env: TriggerEnv): () => void {
   });
 }
 
-/** Default idempotency key: `${triggerId}:${table}:${pk}:${event}:${hash(values)}`. */
+/**
+ * Default idempotency key: `${triggerId}:${table}:${pk}:${event}:${hash(values)}:${writeId}`.
+ * The write id (one per records.ts write call) makes it dedupe retries of the
+ * same write only; a later identical write is a new event and enqueues again.
+ */
 export function defaultIdempotencyKey(
   trigger: Trigger,
   identity: unknown[],
   values: Record<string, unknown>,
+  writeId?: string,
 ): string {
-  return `${trigger.id}:${trigger.table}:${identity.map(String).join(",")}:${trigger.event}:${stableHash(values)}`;
+  const key = `${trigger.id}:${trigger.table}:${identity.map(String).join(",")}:${trigger.event}:${stableHash(values)}`;
+  return writeId ? `${key}:${writeId}` : key;
 }
 
 export async function dispatchTriggers(
@@ -97,7 +103,7 @@ export async function dispatchTriggers(
       const plainIdentity = identity.map(fromDataValue);
       const key = trigger.idempotencyKey?.trim()
         ? String(evaluate(trigger.idempotencyKey, { ...scope, trigger: { id: trigger.id } }))
-        : defaultIdempotencyKey(trigger, plainIdentity, values);
+        : defaultIdempotencyKey(trigger, plainIdentity, values, write.meta?.writeId);
       const payload: JobPayload = {
         table: write.table,
         event,

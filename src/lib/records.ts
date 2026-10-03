@@ -1,5 +1,6 @@
 import { call } from "./api";
 import type { DataValue, NamedValue } from "./types";
+import { newId } from "./utils";
 
 export type RecordOperation = "insert" | "update" | "delete";
 
@@ -19,6 +20,11 @@ export interface RecordWriteMeta {
   old?: Record<string, unknown>;
   /** Original values the edit started from; optimistic entities reject the write with CONFLICT if they changed. */
   expected?: NamedValue[];
+  /**
+   * Identity of this write call (a uuid set by records.ts when absent). A caller
+   * retrying the same write passes the same id, so async triggers dedupe it.
+   */
+  writeId?: string;
 }
 
 export interface RecordHook {
@@ -38,7 +44,13 @@ export function registerRecordHook(hook: RecordHook): () => void {
   };
 }
 
-async function write<T>(record: RecordWrite, run: () => Promise<T>): Promise<T> {
+/** Gives the write a `meta.writeId` (kept when the caller supplied one). */
+function withWriteId(record: RecordWrite): RecordWrite {
+  return record.meta?.writeId ? record : { ...record, meta: { ...record.meta, writeId: newId() } };
+}
+
+async function write<T>(input: RecordWrite, run: () => Promise<T>): Promise<T> {
+  const record = withWriteId(input);
   const active = [...hooks];
   for (const hook of active) await hook.before?.(record);
   const result = await run();
@@ -80,7 +92,8 @@ interface BatchOutcome {
  * the batch); after hooks run once it commits, each with its own result (identity
  * for inserts, affected count otherwise).
  */
-export async function writeRecordBatch(writes: RecordWrite[]): Promise<unknown[]> {
+export async function writeRecordBatch(input: RecordWrite[]): Promise<unknown[]> {
+  const writes = input.map(withWriteId);
   const active = [...hooks];
   for (const record of writes) for (const hook of active) await hook.before?.(record);
   const ops = writes.map(({ operation, table, values, identity, meta }) =>

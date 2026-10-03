@@ -172,6 +172,7 @@ pub fn dry_run_migrations(
     window_label: String,
     ids: Option<Vec<String>>,
 ) -> Result<MigrationLog, AppError> {
+    crate::installation::ensure_studio(&window_label)?;
     let config = config(&window_label)?;
     blocking_issues(&config)?;
     let selected: Vec<Migration> = match ids {
@@ -203,6 +204,12 @@ pub fn dry_run_migrations(
         started_at,
         ..Default::default()
     };
+    if let Some(message) = crate::data::sqltext::transaction_control_error(&script) {
+        log.status = "dry_run_failed".into();
+        log.error = Some(message);
+        log.finished_at = chrono::Utc::now().to_rfc3339();
+        return Ok(log);
+    }
     if selected.is_empty() {
         log.status = "dry_run_ok".into();
         log.log.push("Nothing to run.".into());
@@ -237,12 +244,33 @@ fn checkpoint(window: &str, reason: String) -> Result<CheckpointInfo, AppError> 
         })
 }
 
+/// A checkpoint copies the embedded SQLite records but not PostgreSQL ones, so
+/// changing a PostgreSQL store needs the caller to confirm an external backup.
+pub(crate) fn require_external_backup(
+    config: &DocumentConfig,
+    confirmed: Option<bool>,
+) -> Result<(), AppError> {
+    if config.datasource.is_postgres() && confirmed != Some(true) {
+        return Err(AppError::new(
+            "BACKUP_REQUIRED",
+            "Recovery checkpoints do not back up PostgreSQL records. Confirm that you have an external PostgreSQL backup before running migrations.",
+        ));
+    }
+    Ok(())
+}
+
 /// Applies every pending migration in order after a mandatory checkpoint.
 /// Stops at the first failure; the failed migration's transaction is rolled back.
+/// PostgreSQL datasources require `external_backup_confirmed`.
 #[tauri::command]
-pub fn apply_migrations(window_label: String) -> Result<MigrationRun, AppError> {
+pub fn apply_migrations(
+    window_label: String,
+    external_backup_confirmed: Option<bool>,
+) -> Result<MigrationRun, AppError> {
+    crate::installation::ensure_studio(&window_label)?;
     let config = config(&window_label)?;
     blocking_issues(&config)?;
+    require_external_backup(&config, external_backup_confirmed)?;
     let (done, pending) = with_store(&window_label, |s| {
         Ok((applied(s)?, pending_in(s, &config.migrations)?))
     })?;
@@ -308,8 +336,13 @@ fn run_pending(
 
 /// Runs the `down` SQL of the most recently applied migration (reversible only).
 #[tauri::command]
-pub fn rollback_migration(window_label: String) -> Result<MigrationRun, AppError> {
+pub fn rollback_migration(
+    window_label: String,
+    external_backup_confirmed: Option<bool>,
+) -> Result<MigrationRun, AppError> {
+    crate::installation::ensure_studio(&window_label)?;
     let config = config(&window_label)?;
+    require_external_backup(&config, external_backup_confirmed)?;
     let done = with_store(&window_label, |s| applied(s))?;
     let last = done
         .last()

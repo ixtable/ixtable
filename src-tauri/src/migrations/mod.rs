@@ -5,6 +5,7 @@
 pub mod commands;
 
 use crate::archive::{check_named_ids, DocumentConfig, Issue};
+use crate::data::sqltext::transaction_control_error;
 use crate::recordstore::{sqlite::SqliteRecordStore, Bookkeeping, RecordStore, StoreError};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -89,6 +90,11 @@ pub fn validate(config: &DocumentConfig) -> Vec<Issue> {
         let err = |msg: String| Issue::error("migration", &m.id, msg);
         if m.up.trim().is_empty() {
             issues.push(err(format!("{} has no up SQL", m.name)));
+        }
+        for (direction, sql) in [("up", Some(&m.up)), ("down", m.down.as_ref())] {
+            if let Some(message) = sql.and_then(|sql| transaction_control_error(sql)) {
+                issues.push(err(format!("{} ({direction}): {message}", m.name)));
+            }
         }
         if m.reversible && m.down.as_deref().is_none_or(|d| d.trim().is_empty()) {
             issues.push(err(format!(
@@ -199,7 +205,7 @@ pub fn pending(db_path: &Path, migrations: &[Migration]) -> Result<Vec<Migration
 fn now() -> String {
     chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Nanos, true)
 }
-fn recovery(m: &Migration, error: &str, checkpoint: Option<&str>) -> String {
+fn recovery(m: &Migration, error: &str, checkpoint: Option<&str>, postgres: bool) -> String {
     let mut text = format!(
         "\"{}\" failed and its transaction was rolled back, so the database is unchanged by it. Fix the SQL (or add a new migration) and apply again.",
         m.name
@@ -207,8 +213,11 @@ fn recovery(m: &Migration, error: &str, checkpoint: Option<&str>) -> String {
     if error.contains("cannot run inside a transaction") || error.contains("CONCURRENTLY") {
         text.push_str(" Statements that cannot run in a transaction must be run manually against the database by an administrator; ixtable will not run them.");
     }
-    if let Some(c) = checkpoint {
-        text.push_str(&format!(" If records look wrong, restore the pre-migration checkpoint {c} as a copy (Settings › Problems/Recovery)."));
+    match checkpoint {
+        Some(c) if postgres => text.push_str(&format!(" Checkpoint {c} holds the application definition only: no backup of PostgreSQL records was taken, so restore record data from your external PostgreSQL backup.")),
+        Some(c) => text.push_str(&format!(" If records look wrong, restore the pre-migration checkpoint {c} as a copy (Settings › Problems/Recovery).")),
+        None if postgres => text.push_str(" No backup of PostgreSQL records was taken; restore record data from your external PostgreSQL backup."),
+        None => {}
     }
     text
 }
@@ -263,7 +272,12 @@ pub fn run_one(
         )
     };
     let lines = format!("{direction}: {}", m.name);
-    let result = store.execute_internal(TRACKING_DDL, &[]).and_then(|_| {
+    let result = match transaction_control_error(&sql) {
+        Some(message) => Err(StoreError::new("VALIDATION_ERROR", message)),
+        None => Ok(()),
+    }
+    .and_then(|_| store.execute_internal(TRACKING_DDL, &[]))
+    .and_then(|_| {
         store.run_script(
             &sql,
             &[
@@ -284,7 +298,12 @@ pub fn run_one(
             let (sql, binds) = entry("failed", &lines, &e.message);
             let _ = store.execute_internal(&sql, &binds);
             log.status = "failed".into();
-            log.recovery = Some(recovery(m, &e.message, checkpoint));
+            log.recovery = Some(recovery(
+                m,
+                &e.message,
+                checkpoint,
+                store.kind() == "postgres",
+            ));
             log.error = Some(e.message);
         }
     }

@@ -4,6 +4,7 @@
  * only while the app is open (PRD §17.3); jobs left running by a crash are
  * requeued by jobs.rs when their lease expires.
  */
+import { asTauriError } from "../lib/api";
 import type { DocumentConfig } from "../lib/types";
 import { claimNextJob, completeJob, failJob, JOBS_CHANGED_EVENT } from "./api";
 import { type ActionContext, runAction } from "./runner";
@@ -49,6 +50,7 @@ export async function runNextJob(env: WorkerEnv): Promise<Job | null> {
   const job = await claimNextJob();
   if (!job) return null;
   const messages: { text: string; tone: string }[] = [];
+  const lease = job.leaseToken ?? "";
   let ok = false;
   try {
     const config = env.getConfig();
@@ -62,14 +64,16 @@ export async function runNextJob(env: WorkerEnv): Promise<Job | null> {
     );
     const result = await runAction(action, ctx);
     const log = { steps: result.steps, messages };
-    ok = result.ok;
-    if (result.ok) await completeJob(job.id, log);
-    else await failJob(job.id, result.error ?? "Action failed", log);
+    if (result.ok) {
+      await completeJob(job.id, lease, log);
+      ok = true;
+    } else await failJob(job.id, lease, result.error ?? "Action failed", log);
   } catch (error) {
-    // A cancelled job refuses its result (INVALID_STATE); anything else is a failed attempt.
-    const message = error instanceof Error ? error.message : String(error);
-    if (!/is cancelled/.test(message))
-      await failJob(job.id, message, { messages }).catch(() => undefined);
+    // A job this worker no longer leases (cancelled, expired, re-claimed) refuses
+    // its result with STALE_LEASE; anything else is a failed attempt.
+    const { code, message } = asTauriError(error);
+    if (code !== "STALE_LEASE")
+      await failJob(job.id, lease, message, { messages }).catch(() => undefined);
   }
   env.onJob?.(job, ok);
   return job;

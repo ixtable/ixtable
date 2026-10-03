@@ -100,6 +100,8 @@ it("exports from Studio, opens runtime-only, and updates while keeping runtime r
       }),
     ),
   ).toBe("READ_ONLY");
+  for (const command of ["apply_migrations", "rollback_migration", "dry_run_migrations"])
+    expect(await code(invoke(command, { windowLabel: "main" }))).toBe("READ_ONLY");
 
   await insertRow("Customers", [{ column: "name", value: value("text", "Runtime Rita") }]);
   expect(await customerNames()).toEqual(["Ada", "Runtime Rita"]);

@@ -15,9 +15,11 @@ export interface EnqueueJobRequest {
 export const enqueueJob = (job: EnqueueJobRequest) => call<Job>("enqueue_job", { job });
 export const claimNextJob = (leaseMs?: number) =>
   call<Job | null>("claim_next_job", { leaseMs: leaseMs ?? null });
-export const completeJob = (id: string, log: unknown) => call<Job>("complete_job", { id, log });
-export const failJob = (id: string, error: string, log: unknown) =>
-  call<Job>("fail_job", { id, error, log });
+/** Reports success for the lease `leaseToken` (from the claim); a stale lease fails with STALE_LEASE. */
+export const completeJob = (id: string, leaseToken: string, log: unknown) =>
+  call<Job>("complete_job", { id, leaseToken, log });
+export const failJob = (id: string, leaseToken: string, error: string, log: unknown) =>
+  call<Job>("fail_job", { id, leaseToken, error, log });
 export const cancelJob = (id: string) => call<Job>("cancel_job", { id });
 export const retryJob = (id: string) => call<Job>("retry_job", { id });
 export const listJobs = (filter: { status?: JobStatus | null; limit?: number } = {}) =>

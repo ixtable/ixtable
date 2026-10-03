@@ -319,3 +319,20 @@ fn validate_reports_query_problems() {
     };
     assert!(validate(&clean).is_empty(), "{:?}", validate(&clean));
 }
+
+#[test]
+fn parameterized_sql_checks_without_values() {
+    let c = conn();
+    for sql in [
+        "SELECT * FROM orders WHERE customer = $who",
+        "SELECT * FROM orders LIMIT $n",
+        "SELECT * FROM orders WHERE ($who IS NULL OR customer = $who)",
+        "SELECT * FROM orders WHERE customer LIKE '%' || $q || '%'",
+        "SELECT * FROM orders WHERE placed BETWEEN $from AND $to",
+        "SELECT $label AS label, count(*) FROM orders",
+        "SELECT * FROM orders WHERE customer = $who;",
+        "SELECT * FROM orders WHERE customer <> 'Delete; me' AND id > $min",
+    ] {
+        check_on(&c, sql).unwrap_or_else(|e| panic!("{sql}: {}", e.message));
+    }
+}

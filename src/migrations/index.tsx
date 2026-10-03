@@ -38,6 +38,10 @@ export function MigrationsTab() {
   const [dryRun, setDryRun] = useState<MigrationLog | null>(null);
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
+  const [backupConfirmed, setBackupConfirmed] = useState(false);
+  // Checkpoints copy the embedded SQLite records only; PostgreSQL needs an external backup.
+  const postgres = config.datasource?.kind === "postgres";
+  const needsBackup = postgres && !backupConfirmed;
   const migrations = [...config.migrations].sort((a, b) => (a.order ?? 0) - (b.order ?? 0));
 
   const refresh = useCallback(async () => {
@@ -104,6 +108,22 @@ export function MigrationsTab() {
         Ordered SQL changes with immutable ids. Applying takes a recovery checkpoint first, runs
         each migration in one transaction, checks database health, and logs the result.
       </p>
+      {postgres && (
+        <div className="schema-note">
+          <p>
+            This document uses PostgreSQL. Recovery checkpoints save the application definition but
+            not PostgreSQL records, so take a database backup before changing the schema.
+          </p>
+          <label>
+            <input
+              type="checkbox"
+              checked={backupConfirmed}
+              onChange={(e) => setBackupConfirmed(e.target.checked)}
+            />{" "}
+            I have an external PostgreSQL backup
+          </label>
+        </div>
+      )}
       <div className="settings-actions">
         <button
           type="button"
@@ -135,15 +155,15 @@ export function MigrationsTab() {
         <button
           type="button"
           className="save"
-          disabled={busy || !pendingCount}
-          onClick={() => act(async () => afterRun(await applyMigrations()))}
+          disabled={busy || !pendingCount || needsBackup}
+          onClick={() => act(async () => afterRun(await applyMigrations(backupConfirmed)))}
         >
           Apply pending ({pendingCount})
         </button>
         <button
           type="button"
-          disabled={busy || !status.some((s) => s.applied)}
-          onClick={() => act(async () => afterRun(await rollbackMigration()))}
+          disabled={busy || !status.some((s) => s.applied) || needsBackup}
+          onClick={() => act(async () => afterRun(await rollbackMigration(backupConfirmed)))}
         >
           Roll back last
         </button>
@@ -225,7 +245,10 @@ export function MigrationsTab() {
           <h3>Last run</h3>
           <p role="status">
             {run.ok ? "All migrations succeeded." : "A migration failed; later ones did not run."}
-            {run.checkpoint && ` Checkpoint ${run.checkpoint.id} was saved first.`}
+            {run.checkpoint &&
+              (postgres
+                ? ` Checkpoint ${run.checkpoint.id} saved the definition first; no backup of PostgreSQL records was taken.`
+                : ` Checkpoint ${run.checkpoint.id} was saved first.`)}
           </p>
           <ul>
             {run.logs.map((log, i) => (

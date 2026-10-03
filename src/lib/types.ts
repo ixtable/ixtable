@@ -26,6 +26,8 @@ export interface SessionState {
   /** Opened from a runtime-only bundle: only Runtime mode, definition read-only. */
   runtimeOnly?: boolean;
   bundleVersion?: string | null;
+  /** Bumped by every backend config mutation; the config store reloads when it is ahead. */
+  configRevision?: number;
 }
 
 export interface ReleaseInfo {

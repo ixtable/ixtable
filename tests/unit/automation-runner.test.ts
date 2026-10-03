@@ -240,6 +240,63 @@ describe("failure behavior", () => {
     expect(db.calls.some((c) => c.command === "execute_write_batch")).toBe(false);
   });
 
+  it("fail: aborts with the evaluated message and, under rollback, commits nothing", async () => {
+    const a = action(
+      [
+        step({ kind: "createRecord", table: "audit", values: { message: "'temp'" } }),
+        step({ kind: "message", text: "'saved'" }),
+        step({
+          kind: "condition",
+          when: "record.total > 5",
+          then: [step({ kind: "fail", message: "'Total ' & record.total & ' is over the limit'" })],
+          else: [],
+        }),
+        step({ kind: "message", text: "'not reached'" }),
+      ],
+      { onError: "rollback" },
+    );
+    const { ctx, events } = context(baseConfig([a]), { record: { id: 1, total: 10 } });
+    const result = await runAction(a, ctx);
+    expect(result.ok).toBe(false);
+    expect(result.error).toBe("Total 10 is over the limit; no record changes were saved");
+    expect(db.rows("audit")).toEqual([]);
+    expect(events).toEqual([]);
+    expect(result.steps.map((s) => [s.path, s.kind, s.ok])).toEqual([
+      ["0", "createRecord", true],
+      ["1", "message", true],
+      ["2", "condition", false],
+      ["2.then.0", "fail", false],
+    ]);
+  });
+
+  it("fail: stops even under onError=continue, skips when `when` is false, and propagates from nested actions", async () => {
+    const child = action([step({ kind: "fail", message: "'Credit limit reached'" })], {
+      id: "child",
+    });
+    const skipped = action(
+      [
+        step({ kind: "fail", message: "'never'", when: "false" }),
+        step({ kind: "message", text: "'done'" }),
+      ],
+      { onError: "continue" },
+    );
+    const parent = action(
+      [
+        step({ kind: "runAction", actionId: "child" }),
+        step({ kind: "message", text: "'not reached'" }),
+      ],
+      { onError: "continue" },
+    );
+    const config = baseConfig([child, skipped, parent]);
+    const first = context(config);
+    expect(await runAction(skipped, first.ctx)).toMatchObject({ ok: true });
+    expect(first.events).toEqual([["notify", "done", "info"]]);
+    const second = context(config);
+    const result = await runAction(parent, second.ctx);
+    expect(result).toMatchObject({ ok: false, error: "Credit limit reached" });
+    expect(second.events).toEqual([]);
+  });
+
   it("rollback: commits all writes in one batch, then runs effects and after hooks", async () => {
     const seen: string[] = [];
     const off = registerRecordHook({

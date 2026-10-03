@@ -62,7 +62,7 @@ export function AppShell({ initial, onClosed }: { initial: SessionState; onClose
 function ShellFrame({
   doc,
   setDoc,
-  applySession,
+  applySession: applyState,
   onClosed,
   autosave,
 }: {
@@ -73,6 +73,15 @@ function ShellFrame({
   autosave: Autosave;
 }) {
   const store = useDocumentConfig();
+  const { observe } = store;
+  // States from commands outside the config store may carry backend config changes.
+  const applySession = useCallback(
+    (state: SessionState) => {
+      applyState(state);
+      observe(state);
+    },
+    [applyState, observe],
+  );
   const [pending, setPending] = useState("");
   const [error, setError] = useState<TauriError | null>(null);
   const [notice, setNotice] = useState("");

@@ -12,6 +12,7 @@ mod logical_tests;
 pub mod model;
 pub mod page;
 pub mod read;
+pub mod sqltext;
 pub mod support;
 #[cfg(test)]
 mod tests;
@@ -353,15 +354,25 @@ pub enum AlterTable {
 
 /// The read-only guard used by `ReadRuntime::query` (and saved queries): exactly one
 /// SELECT/WITH/VALUES/SHOW/DESCRIBE statement with no mutating or file-access keyword.
-/// Returns the trimmed statement.
+/// Strings, quoted identifiers and comments are ignored, and one trailing `;` is
+/// allowed. Returns the statement without that `;`. Defense in depth: the reader
+/// also runs with DuckDB external access disabled (see `ReadRuntime`).
 pub fn read_only_guard(sql: &str) -> Result<&str, String> {
     let trimmed = sql.trim();
-    if trimmed.is_empty() || trimmed.contains(';') && trimmed.trim_end_matches(';').contains(';') {
+    let masked = sqltext::mask(trimmed);
+    let code = masked.trim_end();
+    let code = code.strip_suffix(';').unwrap_or(code);
+    if code.trim().is_empty() || code.contains(';') {
         return Err("Exactly one query statement is required".into());
     }
-    let upper = trimmed.to_ascii_uppercase();
-    let first = upper.split_whitespace().next().unwrap_or("");
-    let forbidden = [
+    let statement = trimmed[..code.len()].trim_end();
+    let upper = code.to_ascii_uppercase();
+    let words: Vec<&str> = upper
+        .split(|c: char| !c.is_ascii_alphanumeric() && c != '_')
+        .filter(|t| !t.is_empty())
+        .collect();
+    let first = words.first().copied().unwrap_or("");
+    const FORBIDDEN: [&str; 43] = [
         "INSERT",
         "UPDATE",
         "DELETE",
@@ -380,27 +391,45 @@ pub fn read_only_guard(sql: &str) -> Result<&str, String> {
         "SET",
         "RESET",
         "READ_CSV",
+        "READ_CSV_AUTO",
         "READ_JSON",
+        "READ_JSON_AUTO",
+        "READ_JSON_OBJECTS",
         "READ_NDJSON",
+        "READ_NDJSON_AUTO",
         "READ_PARQUET",
         "PARQUET_SCAN",
+        "PARQUET_METADATA",
+        "PARQUET_SCHEMA",
         "SQLITE_SCAN",
+        "SQLITE_ATTACH",
         "READ_BLOB",
         "READ_TEXT",
+        "READ_XLSX",
+        "SNIFF_CSV",
         "GLOB",
         "HTTPFS",
         "POSTGRES_QUERY",
         "POSTGRES_EXECUTE",
         "POSTGRES_SCAN",
+        "POSTGRES_ATTACH",
+        "DUCKDB_DATABASES",
+        "DUCKDB_SECRETS",
+        "WHICH_SECRET",
     ];
+    // Any other file reader called as a function: read_*(...) or *_scan(...).
+    let file_function = |word: &str| {
+        (word.starts_with("READ_") || word.ends_with("_SCAN"))
+            && upper
+                .match_indices(word)
+                .any(|(i, _)| upper[i + word.len()..].trim_start().starts_with('('))
+    };
     if !matches!(first, "SELECT" | "WITH" | "VALUES" | "SHOW" | "DESCRIBE")
-        || forbidden.iter().any(|word| {
-            upper
-                .split(|c: char| !c.is_ascii_alphanumeric() && c != '_')
-                .any(|token| token == *word)
-        })
+        || words
+            .iter()
+            .any(|w| FORBIDDEN.contains(w) || file_function(w))
     {
         return Err("Only one read-only query is allowed".into());
     }
-    Ok(trimmed)
+    Ok(statement)
 }

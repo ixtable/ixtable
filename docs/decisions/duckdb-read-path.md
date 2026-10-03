@@ -22,14 +22,31 @@ that is `<workspace>/data.db` through `sqlite_scanner`. For PostgreSQL it is
 the configured schema through `postgres_scanner`, with the password redacted
 from any error text.
 
-After every write, the manager calls `mark_data_dirty`, which runs
-`ReadRuntime::refresh`. Refresh detaches and reattaches `data`, so the next
-read sees committed rows and DDL. Because writes commit before the refresh
-returns, a workflow that writes and then reads gets its own write back.
+App SQL never runs with external access. The reader opens DuckDB with external
+access on only to load the bundled extensions and attach `data`, then runs
+`SET allowed_paths=['<workspace>/data.db']`, `SET enable_external_access=false`
+and `SET lock_configuration=true`. After that DuckDB itself refuses
+`read_csv`, `read_text`, `glob`, file replacement scans (`FROM '/etc/passwd'`),
+`COPY TO`, `ATTACH`, `INSTALL`, and loading new extensions, and no `SET` can
+undo the lock. Attached databases keep working.
 
-User SQL passes `read_only_guard` first. It allows one statement and rejects
-writes, DDL, `ATTACH`, `INSTALL`, `LOAD`, `COPY`, `PRAGMA`, `SET`, and file or
-scanner table functions such as `read_csv` and `postgres_query`. Saved queries
+After every write, the manager calls `mark_data_dirty`, which runs
+`ReadRuntime::refresh`. For SQLite, refresh detaches and reattaches `data`
+in place (the file is in `allowed_paths`). DuckDB refuses a PostgreSQL
+`ATTACH` once external access is off, so a PostgreSQL refresh, a datasource
+switch, or a retry after a failed attach builds a fresh locked database
+instead. Either way the next read sees committed rows and DDL. Because writes
+commit before the refresh returns, a workflow that writes and then reads gets
+its own write back. Config edits re-attach only when `datasource` changed, and
+build the new reader outside the sessions lock.
+
+User SQL also passes `read_only_guard`, as defense in depth. It ignores string
+literals, quoted identifiers, and comments (`data::sqltext::mask`), allows one
+statement with an optional trailing `;`, and rejects writes, DDL, `ATTACH`,
+`INSTALL`, `LOAD`, `COPY`, `PRAGMA`, `SET`, and file or scanner table
+functions such as `read_csv_auto`, any `read_*(...)` or `*_scan(...)` call,
+`postgres_query`, and `duckdb_databases` (which would show the PostgreSQL
+connection string). Saved queries
 use `$name` placeholders. `queries::params` rewrites them to DuckDB
 parameters and binds the values, so values are never spliced into SQL text.
 
@@ -73,7 +90,9 @@ Linux for extensions that do.
 
 - `src-tauri/src/data/tests.rs`: autoload is rejected, values convert
   losslessly to canonical forms, `read_only_guard` rejects writes and scanner
-  functions.
+  functions but accepts keywords inside literals and identifiers, and file
+  reads, replacement scans, `COPY TO`, `ATTACH`, `INSTALL`/`LOAD`, `glob` and
+  `SET` fail on the reader even when the guard is bypassed.
 - `src-tauri/src/recordstore/conformance.rs`: every scenario reads through
   DuckDB after writing through the store, on SQLite and on PostgreSQL when
   `IXTABLE_TEST_POSTGRES_URL` is set (the `postgres` CI job).

@@ -443,7 +443,7 @@ impl DocumentManager {
         // Prepared, not run: `$name` parameters need no values to be saved.
         crate::queries::check_on(&*self.read_connection(window)?, &sql)?;
         let mut config = self.config(window)?;
-        let id = id.unwrap_or_else(|| Uuid::new_v4().to_string());
+        let id = id.unwrap_or_else(|| Uuid::now_v7().to_string());
         let previous = config.saved_queries.iter().find(|query| query.id == id);
         let query = SavedQuery {
             id: id.clone(),

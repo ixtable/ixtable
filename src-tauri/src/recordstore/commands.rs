@@ -96,7 +96,7 @@ pub fn create_table(window: &str, spec: &CreateTable) -> Result<SessionState, Ap
     update_entities(window, |entities| {
         if !entities.iter().any(|e| e.table == spec.name) {
             entities.push(EntitySettings {
-                id: uuid::Uuid::new_v4().to_string(),
+                id: uuid::Uuid::now_v7().to_string(),
                 table: spec.name.clone(),
                 ..Default::default()
             });

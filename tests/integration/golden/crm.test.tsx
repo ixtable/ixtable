@@ -32,7 +32,7 @@ it("CRM: seeded queries, activity report, and pipeline dashboard show the seed's
       journey.check("no error issues", errorsOf(await validateDocument()), []);
     });
     await journey.step("Grouped query: deals by stage", async () => {
-      journey.check("all stages", await savedQuery("crm-q-deals-by-stage"), [
+      journey.check("all stages", await savedQuery("Deals by stage"), [
         ["Lead", 2, 12000],
         ["Qualified", 2, 40000],
         ["Proposal", 2, 19000],
@@ -42,12 +42,12 @@ it("CRM: seeded queries, activity report, and pipeline dashboard show the seed's
       ]);
       journey.check(
         "stage parameter filters",
-        await savedQuery("crm-q-deals-by-stage", { stage: "Proposal" }),
+        await savedQuery("Deals by stage", { stage: "Proposal" }),
         [["Proposal", 2, 19000]],
       );
     });
     await journey.step("Filtered query: open deals over 10,000", async () => {
-      const rows = await savedQuery("crm-q-open-deals", { min_amount: 10000 });
+      const rows = await savedQuery("Open deals", { min_amount: 10000 });
       journey.check(
         "titles by amount",
         rows.map((r) => r[1]),
@@ -55,7 +55,7 @@ it("CRM: seeded queries, activity report, and pipeline dashboard show the seed's
       );
     });
     await journey.step("Open pipeline totals", async () => {
-      const rows = await savedQuery("crm-q-open-pipeline");
+      const rows = await savedQuery("Open pipeline");
       const total = rows.reduce((sum, r) => sum + Number(r[2]), 0);
       const weighted = rows.reduce((sum, r) => sum + Number(r[3]), 0);
       journey.check("open pipeline and weighted value", [total, weighted], [119000, 56700]);

@@ -782,6 +782,8 @@ For PostgreSQL applications, restoring an archive does **not** restore external 
 
 Developers define arbitrary SQL `up` and `down` migrations inside the application.
 
+Migrations apply to the embedded SQLite RecordStore. PostgreSQL schema migrations are out of MVP scope; developers manage external schema themselves.
+
 Requirements:
 
 - target RecordStore declaration;

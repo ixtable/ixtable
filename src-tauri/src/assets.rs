@@ -250,7 +250,7 @@ impl DocumentManager {
             }
             let now = Utc::now().to_rfc3339();
             let asset = Attachment {
-                id: Uuid::new_v4().to_string(),
+                id: Uuid::now_v7().to_string(),
                 display_name: name.clone(),
                 media_type: media.clone(),
                 checksum: checksum.clone(),

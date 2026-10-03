@@ -28,7 +28,7 @@ serde_yaml = "0.9.34"
 rusqlite = { version = "0.32", features = ["bundled", "hooks"] }
 zstd = "0.13"
 sha2 = "0.10"
-uuid = { version = "1", features = ["v4", "serde"] }
+uuid = { version = "1", features = ["v4", "v7", "serde"] }
 chrono = { version = "0.4", features = ["serde"] }
 thiserror = "2"
 base64 = "0.22"
@@ -47,6 +47,12 @@ rand_core = { version = "0.6", features = ["getrandom"] }
 argon2 = "0.5"
 chacha20poly1305 = "0.10"
 semver = "1"
+# ixtable Cloud client (cloud/): HTTPS through rustls with the ring provider and the
+# OS trust store (rustls-platform-verifier); blocking calls run off the UI thread.
+reqwest = { version = "0.13", default-features = false, features = ["rustls-no-provider", "json", "blocking", "stream"] }
+rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12"] }
+# Opens the browser for Google/Microsoft sign-in hand-off (PKCE).
+tauri-plugin-opener = "2"
 
 [target.'cfg(unix)'.dependencies]
 # geteuid() for the owner check on key and secret files (paths.rs).

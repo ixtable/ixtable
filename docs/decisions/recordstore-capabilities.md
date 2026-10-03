@@ -25,7 +25,7 @@ rusqlite against the session's `data.db`. `PostgresRecordStore` uses the
 - `insert`, `update`, and `delete`, plus `execute_batch` for atomic batches
 - `create_table`, `plan_alter`, `alter_table`, `drop_table`, and index DDL
 - `impact`, which previews row counts and dependents before a destructive change
-- `run_script`, for migrations, with one transaction per script
+- `run_script`, for migrations and schema scripts, with one transaction per script
 
 Every write commits in the store, then the manager refreshes the DuckDB
 reader (see [DuckDB read path](./duckdb-read-path.md)). Reads never use the
@@ -42,8 +42,8 @@ sends it to the schema designer, which labels each staged change by its mode.
 | Transactions | atomic batches, transactional DDL, savepoints | the same, at read committed |
 | Parameters | `?` | `$1` |
 | Generated values | rowid alias, default expressions | identity columns, default expressions, stored generated columns |
-| Migration dry run | run on a copy, then discard | `BEGIN … ROLLBACK` on the live database |
-| Migration health check | `foreign_key_check` and `integrity_check` | constraint validation |
+| Script dry run | run on a copy, then discard | `BEGIN … ROLLBACK` on the live database |
+| Script health check | `foreign_key_check` and `integrity_check` | constraint validation |
 | Concurrency | `optimistic`, `lastWriteWins`, or `customAction` per entity, no row locks, single user | the same policies with row locking, multi user |
 
 Native errors map to stable codes: `CONSTRAINT_VIOLATION` with the constraint
@@ -53,6 +53,23 @@ native codes behind each one.
 
 Logical types and their physical mapping per store are in the
 [type matrix](./recordstore-type-matrix.md).
+
+### Migrations target SQLite only
+
+Declared migrations (PRD §24) run on the embedded SQLite store only.
+PostgreSQL schema migrations are out of MVP scope: developers manage an
+external database's schema themselves. A migration's `targetStore` is
+`sqlite`. Older documents may say `any`, which reads as `sqlite`, or
+`postgres`, which validation reports as an error. When the datasource is
+PostgreSQL, the Migrations tab says migrations are disabled, and the dry run,
+apply, and rollback commands return `VALIDATION_ERROR` without touching the
+database. The schema designer still changes PostgreSQL tables through the
+store's DDL and `run_script`.
+
+This replaced an earlier design that ran migrations on PostgreSQL after the
+developer confirmed an external backup (`BACKUP_REQUIRED`). A checkpoint
+cannot copy PostgreSQL records, so recovery after a failed migration would
+have depended on a backup that ixtable cannot check.
 
 ### Optimistic concurrency
 
@@ -87,14 +104,16 @@ needs an explicit, recorded confirmation (PRD §21.4).
   CRUD visible to DuckDB after each commit, constraint codes and cascades,
   atomic batches with bound values, logical types round-tripping through
   DuckDB, optimistic updates rejecting stale values, store-specific schema
-  change modes that keep data, and transactional migrations with rollback.
+  change modes that keep data, and transactional scripts with rollback.
 - `src-tauri/src/recordstore/sqlite_tests.rs` and
   `src-tauri/src/migrations/tests.rs`.
 - `tests/integration/schema-designer.test.tsx`: changes labelled by store
   capability, rebuild and drop previews.
 - `tests/integration/optimistic-grid.test.tsx`: a stale grid edit is rejected.
 - `tests/integration/migrations.test.tsx`: dry run, apply with checkpoint,
-  rollback, and a failing migration.
+  rollback, a failing migration, a legacy `postgres` target flagged as an
+  error, and migrations disabled for a PostgreSQL document.
 - `tests/integration/datasource.test.tsx`: non-TLS override, concurrency
   policy per table, and, with a PostgreSQL URL, switching reads and writes to
-  PostgreSQL without storing the password in the document.
+  PostgreSQL without storing the password in the document, with migrations
+  disabled for it.

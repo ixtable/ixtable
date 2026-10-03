@@ -32,6 +32,10 @@ fn validation_enforces_order_dependencies_and_reversibility() {
             target_store: "postgres".into(),
             ..m("e", 4, "SELECT 1")
         },
+        Migration {
+            target_store: "any".into(),
+            ..m("f", 5, "SELECT 1")
+        },
     ];
     let issues = validate(&config);
     let errors: Vec<&str> = issues
@@ -51,10 +55,24 @@ fn validation_enforces_order_dependencies_and_reversibility() {
         .iter()
         .any(|e| e.contains("must be ordered after its dependency")));
     assert!(errors.iter().any(|e| e.contains("unknown store oracle")));
-    assert!(issues
-        .iter()
-        .any(|i| i.severity == Severity::Warning
-            && i.message.contains("will not run on this sqlite")));
+    assert!(
+        issues.iter().any(|i| i.object_id == "e"
+            && i.severity == Severity::Error
+            && i.message == format!("M e: {POSTGRES_UNSUPPORTED}")),
+        "{issues:?}"
+    );
+    assert!(
+        !issues.iter().any(|i| i.object_id == "f"),
+        "legacy `any` still reads as the SQLite store"
+    );
+}
+
+#[test]
+fn new_migrations_target_sqlite() {
+    let parsed: Migration =
+        serde_json::from_str(r#"{"id":"a","name":"A","up":"SELECT 1"}"#).unwrap();
+    assert_eq!(parsed.target_store, "sqlite");
+    assert_eq!(Migration::default().target_store, "sqlite");
 }
 
 #[test]
@@ -117,7 +135,12 @@ fn checksums_identify_changed_up_sql() {
         ..a.clone()
     };
     assert_ne!(a.checksum(), b.checksum());
-    assert!(a.targets("sqlite") && a.targets("postgres"));
+    assert!(a.targets("sqlite") && !a.targets("postgres"));
+    let legacy = Migration {
+        target_store: "any".into(),
+        ..a.clone()
+    };
+    assert!(legacy.targets("sqlite") && !legacy.targets("postgres"));
 }
 
 #[test]
@@ -188,28 +211,23 @@ fn transaction_control_statements_are_rejected() {
 }
 
 #[test]
-fn postgres_recovery_text_says_no_record_backup_was_taken() {
+fn recovery_text_points_to_the_checkpoint() {
     let mig = m("a", 1, "CREATE TABLE a(x)");
-    let pg = recovery(&mig, "boom", Some("cp1"), true);
+    let text = recovery(&mig, "boom", Some("cp1"));
     assert!(
-        pg.contains("no backup of PostgreSQL records was taken"),
-        "{pg}"
+        text.contains("restore the pre-migration checkpoint cp1"),
+        "{text}"
     );
-    assert!(!pg.contains("If records look wrong"), "{pg}");
-    let lite = recovery(&mig, "boom", Some("cp1"), false);
-    assert!(
-        lite.contains("restore the pre-migration checkpoint cp1"),
-        "{lite}"
-    );
+    assert!(!text.contains("PostgreSQL"), "{text}");
+    assert!(!recovery(&mig, "boom", None).contains("checkpoint"));
+}
 
+#[test]
+fn postgres_documents_cannot_run_migrations() {
     let mut config = DocumentConfig::default();
-    assert!(commands::require_external_backup(&config, None).is_ok());
+    assert!(commands::ensure_sqlite(&config).is_ok());
     config.datasource.kind = "postgres".into();
-    assert_eq!(
-        commands::require_external_backup(&config, None)
-            .unwrap_err()
-            .code,
-        "BACKUP_REQUIRED"
-    );
-    assert!(commands::require_external_backup(&config, Some(true)).is_ok());
+    let err = commands::ensure_sqlite(&config).unwrap_err();
+    assert_eq!(err.code, "VALIDATION_ERROR");
+    assert_eq!(err.message, POSTGRES_DOCUMENT);
 }

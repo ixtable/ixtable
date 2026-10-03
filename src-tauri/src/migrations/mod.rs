@@ -1,7 +1,11 @@
 //! Declared SQL migrations (PRD §24): immutable ids, explicit order,
-//! dependency validation, a target store, transactional execution with
-//! health checks, tracked in `_ixtable_migrations` (applied state) and
-//! `_ixtable_migration_log` (every run, with its log and error).
+//! dependency validation, transactional execution with health checks, tracked
+//! in `_ixtable_migrations` (applied state) and `_ixtable_migration_log` (every
+//! run, with its log and error).
+//!
+//! Migrations target the embedded SQLite RecordStore only. PostgreSQL schema
+//! migrations are out of MVP scope: developers manage an external database's
+//! schema themselves, so documents with a PostgreSQL datasource cannot run them.
 pub mod commands;
 
 use crate::archive::{check_named_ids, DocumentConfig, Issue};
@@ -18,8 +22,9 @@ pub struct Migration {
     pub name: String,
     #[serde(default)]
     pub order: u32,
-    /// `sqlite`, `postgres`, or `any`.
-    #[serde(default = "any")]
+    /// `sqlite`. Older documents may say `any` (read as `sqlite`) or `postgres`
+    /// (a validation error: PostgreSQL migrations are not supported).
+    #[serde(default = "sqlite")]
     pub target_store: String,
     #[serde(default)]
     pub up: String,
@@ -30,16 +35,22 @@ pub struct Migration {
     #[serde(default)]
     pub depends_on: Vec<String>,
 }
-fn any() -> String {
-    "any".into()
+fn sqlite() -> String {
+    "sqlite".into()
 }
+
+/// Why a migration targeting PostgreSQL is rejected.
+pub const POSTGRES_UNSUPPORTED: &str =
+    "PostgreSQL migrations are not supported in this version; manage external database schema yourself";
+/// Why migrations do not run on a document whose datasource is PostgreSQL.
+pub const POSTGRES_DOCUMENT: &str = "Migrations apply to the embedded SQLite store only and are disabled for this document because it uses PostgreSQL.";
 impl Default for Migration {
     fn default() -> Self {
         Self {
             id: String::new(),
             name: String::new(),
             order: 0,
-            target_store: any(),
+            target_store: sqlite(),
             up: String::new(),
             down: None,
             reversible: false,
@@ -51,8 +62,13 @@ impl Migration {
     pub fn checksum(&self) -> String {
         format!("{:x}", Sha256::digest(self.up.as_bytes()))
     }
+    /// Declares a supported target: `sqlite`, or its legacy spelling `any`.
+    pub fn supported(&self) -> bool {
+        matches!(self.target_store.as_str(), "sqlite" | "any")
+    }
+    /// Runs on `store`: only the embedded SQLite store runs migrations.
     pub fn targets(&self, store: &str) -> bool {
-        self.target_store == "any" || self.target_store == store
+        store == "sqlite" && self.supported()
     }
 }
 
@@ -102,20 +118,10 @@ pub fn validate(config: &DocumentConfig) -> Vec<Issue> {
                 m.name
             )));
         }
-        if !matches!(m.target_store.as_str(), "sqlite" | "postgres" | "any") {
-            issues.push(err(format!(
-                "{} targets unknown store {}",
-                m.name, m.target_store
-            )));
-        } else if !m.targets(&config.datasource.kind) {
-            issues.push(Issue::warning(
-                "migration",
-                &m.id,
-                format!(
-                    "{} targets {} and will not run on this {} datasource",
-                    m.name, m.target_store, config.datasource.kind
-                ),
-            ));
+        match m.target_store.as_str() {
+            "sqlite" | "any" => {}
+            "postgres" => issues.push(err(format!("{}: {POSTGRES_UNSUPPORTED}", m.name))),
+            other => issues.push(err(format!("{} targets unknown store {other}", m.name))),
         }
         if !orders.insert(m.order) {
             issues.push(err(format!(
@@ -181,16 +187,16 @@ pub fn history(store: &mut dyn RecordStore) -> Result<Vec<MigrationLog>, StoreEr
         .collect())
 }
 
-/// Migrations for this store that are not applied yet, in order.
+/// Supported migrations that are not applied yet, in order. Callers only pass the
+/// embedded SQLite store (commands refuse PostgreSQL documents).
 pub fn pending_in(
     store: &mut dyn RecordStore,
     migrations: &[Migration],
 ) -> Result<Vec<Migration>, StoreError> {
     let done: HashSet<String> = applied(store)?.into_iter().map(|x| x.0).collect();
-    let kind = store.kind();
     let mut out: Vec<Migration> = migrations
         .iter()
-        .filter(|m| m.targets(kind) && !done.contains(&m.id))
+        .filter(|m| m.supported() && !done.contains(&m.id))
         .cloned()
         .collect();
     out.sort_by_key(|m| m.order);
@@ -205,7 +211,7 @@ pub fn pending(db_path: &Path, migrations: &[Migration]) -> Result<Vec<Migration
 fn now() -> String {
     chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Nanos, true)
 }
-fn recovery(m: &Migration, error: &str, checkpoint: Option<&str>, postgres: bool) -> String {
+fn recovery(m: &Migration, error: &str, checkpoint: Option<&str>) -> String {
     let mut text = format!(
         "\"{}\" failed and its transaction was rolled back, so the database is unchanged by it. Fix the SQL (or add a new migration) and apply again.",
         m.name
@@ -213,11 +219,8 @@ fn recovery(m: &Migration, error: &str, checkpoint: Option<&str>, postgres: bool
     if error.contains("cannot run inside a transaction") || error.contains("CONCURRENTLY") {
         text.push_str(" Statements that cannot run in a transaction must be run manually against the database by an administrator; ixtable will not run them.");
     }
-    match checkpoint {
-        Some(c) if postgres => text.push_str(&format!(" Checkpoint {c} holds the application definition only: no backup of PostgreSQL records was taken, so restore record data from your external PostgreSQL backup.")),
-        Some(c) => text.push_str(&format!(" If records look wrong, restore the pre-migration checkpoint {c} as a copy (Settings › Problems/Recovery).")),
-        None if postgres => text.push_str(" No backup of PostgreSQL records was taken; restore record data from your external PostgreSQL backup."),
-        None => {}
+    if let Some(c) = checkpoint {
+        text.push_str(&format!(" If records look wrong, restore the pre-migration checkpoint {c} as a copy (Settings › Problems/Recovery)."));
     }
     text
 }
@@ -298,12 +301,7 @@ pub fn run_one(
             let (sql, binds) = entry("failed", &lines, &e.message);
             let _ = store.execute_internal(&sql, &binds);
             log.status = "failed".into();
-            log.recovery = Some(recovery(
-                m,
-                &e.message,
-                checkpoint,
-                store.kind() == "postgres",
-            ));
+            log.recovery = Some(recovery(m, &e.message, checkpoint));
             log.error = Some(e.message);
         }
     }

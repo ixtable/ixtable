@@ -1,4 +1,8 @@
-/** A declared SQL migration (PRD §24). `id` is immutable; `order` is explicit. */
+/**
+ * A declared SQL migration (PRD §24). `id` is immutable; `order` is explicit.
+ * Migrations target the embedded SQLite store: `any` is a legacy spelling of `sqlite`,
+ * and `postgres` is a validation error (PostgreSQL migrations are out of MVP scope).
+ */
 export interface Migration {
   id: string;
   name: string;

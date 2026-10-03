@@ -142,7 +142,7 @@ for (const id of ["crm", "inventory", "work-orders"]) {
           const required = Object.fromEntries(
             (query.parameters ?? []).filter((p) => p.required).map((p) => [p.name, 1]),
           );
-          await savedQuery(query.id, required).catch((e: unknown) =>
+          await savedQuery(query.name, required).catch((e: unknown) =>
             failures.push(`${query.name}: ${String((e as Error).message ?? e)}`),
           );
         }

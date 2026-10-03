@@ -53,14 +53,17 @@ export function MigrationEditor({
       </label>
       <label>
         Target store
+        {/* Migrations run on the embedded SQLite store; `any` is its legacy spelling and
+            `postgres` stays selectable only so an old migration can be switched to SQLite. */}
         <select
           disabled={applied}
-          value={draft.targetStore ?? "any"}
+          value={draft.targetStore === "postgres" ? "postgres" : "sqlite"}
           onChange={(e) => set({ targetStore: e.target.value })}
         >
-          <option value="any">Any store</option>
-          <option value="sqlite">SQLite only</option>
-          <option value="postgres">PostgreSQL only</option>
+          <option value="sqlite">Embedded SQLite</option>
+          {draft.targetStore === "postgres" && (
+            <option value="postgres">PostgreSQL (not supported)</option>
+          )}
         </select>
       </label>
       {!!others.length && (

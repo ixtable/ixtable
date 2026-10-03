@@ -36,6 +36,9 @@ pub struct Template {
     pub listed: bool,
     pub yaml: &'static str,
     pub seed: &'static str,
+    /// Fixed UUIDv7 of the "Seed sample data" migration. Versions of one app share it,
+    /// so an upgraded document does not run the seed again.
+    pub seed_migration_id: &'static str,
     pub assets: &'static [TemplateAsset],
 }
 
@@ -45,6 +48,7 @@ pub const TEMPLATES: &[Template] = &[
         listed: true,
         yaml: include_str!("../../../golden/crm/app.yaml"),
         seed: include_str!("../../../golden/crm/seed.sql"),
+        seed_migration_id: "01a100fd-dee3-745f-a8b0-457e9c978be5",
         assets: &[],
     },
     Template {
@@ -52,6 +56,7 @@ pub const TEMPLATES: &[Template] = &[
         listed: true,
         yaml: include_str!("../../../golden/inventory/app.yaml"),
         seed: include_str!("../../../golden/inventory/seed.sql"),
+        seed_migration_id: "01a10134-cd6e-7051-aa6f-36c560dbeb95",
         assets: &[TemplateAsset {
             file_name: "product-placeholder.png",
             media_type: "image/png",
@@ -63,6 +68,7 @@ pub const TEMPLATES: &[Template] = &[
         listed: true,
         yaml: include_str!("../../../golden/work-orders/app.yaml"),
         seed: include_str!("../../../golden/work-orders/seed.sql"),
+        seed_migration_id: "01a1016b-bbfe-76e3-84a4-2b192a072b1c",
         assets: &[],
     },
     // Version 2 of the work-order app: the application-migration fixture (PRD §26.4).
@@ -71,6 +77,7 @@ pub const TEMPLATES: &[Template] = &[
         listed: false,
         yaml: include_str!("../../../golden/work-orders/v2/app.yaml"),
         seed: include_str!("../../../golden/work-orders/seed.sql"),
+        seed_migration_id: "01a1016b-bbfe-76e3-84a4-2b192a072b1c",
         assets: &[],
     },
 ];
@@ -113,9 +120,8 @@ fn config_from_yaml(template: &Template, yaml: &str) -> Result<DocumentConfig, A
     let mut config =
         archive::document_config_from_yaml(yaml).map_err(|e| invalid(template.id, e))?;
     if !template.seed.trim().is_empty() {
-        let prefix = template.id.split('@').next().unwrap_or(template.id);
         config.migrations.push(Migration {
-            id: format!("{prefix}-seed"),
+            id: template.seed_migration_id.into(),
             name: "Seed sample data".into(),
             order: SEED_ORDER,
             target_store: "sqlite".into(),

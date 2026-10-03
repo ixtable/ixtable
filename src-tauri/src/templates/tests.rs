@@ -220,7 +220,7 @@ fn inventory_template_carries_its_asset_and_resolves_placeholders() {
         .forms
         .iter()
         .flat_map(|f| &f.controls)
-        .find(|c| c.id == "image");
+        .find(|c| c.asset_id.is_some());
     let id = image.and_then(|c| c.asset_id.clone()).unwrap();
     assert_eq!(id.len(), 36, "a real asset id");
     assert!(
@@ -263,6 +263,15 @@ fn work_order_templates_create_seeded_valid_documents() {
         .any(|m| m.up.contains("ADD COLUMN due_on")));
 }
 
+/// Id of work-orders v2's "002 Add work-order due dates" migration.
+fn due_dates_migration(v2: &DocumentConfig) -> &str {
+    v2.migrations
+        .iter()
+        .find(|m| m.name == "002 Add work-order due dates")
+        .map(|m| m.id.as_str())
+        .unwrap()
+}
+
 #[test]
 fn work_orders_v2_extends_v1_without_changing_applied_migrations() {
     let v1 = template_config("work-orders").unwrap();
@@ -280,7 +289,7 @@ fn work_orders_v2_extends_v1_without_changing_applied_migrations() {
         .filter(|m| !v1.migrations.iter().any(|x| x.id == m.id))
         .map(|m| m.id.as_str())
         .collect();
-    assert_eq!(added, ["wo-002-due-dates"]);
+    assert_eq!(added, [due_dates_migration(&v2)]);
     // Every v1 object keeps its id in v2 so references and permissions survive the upgrade.
     let forms = |c: &DocumentConfig| {
         c.design
@@ -317,7 +326,7 @@ fn upgrading_a_v1_database_applies_only_migration_002() {
     let pending = crate::migrations::pending(&db, &v2.migrations).unwrap();
     assert_eq!(
         pending.iter().map(|m| m.id.as_str()).collect::<Vec<_>>(),
-        ["wo-002-due-dates"]
+        [due_dates_migration(&v2)]
     );
     let logs = crate::migrations::apply_sqlite(&db, &v2.migrations).unwrap();
     assert_eq!(logs.len(), 1);
@@ -331,4 +340,57 @@ fn upgrading_a_v1_database_applies_only_migration_002() {
     assert_eq!((title.as_str(), due), ("Runtime record", None));
     drop(conn);
     let _ = std::fs::remove_file(db);
+}
+
+/// Collects every `id` that names a definition object. Skipped: record matches and
+/// write values (`match.id` is a column), and role permissions on tables (`id` is the
+/// table name).
+fn definition_ids(value: &serde_json::Value, path: &str, out: &mut Vec<(String, String)>) {
+    use serde_json::Value::{Array, Object, String as Str};
+    match value {
+        Object(map) => {
+            let table_permission = path.contains(".permissions.objects")
+                && map.get("kind").and_then(|k| k.as_str()) == Some("table");
+            for (key, child) in map {
+                match (key.as_str(), child) {
+                    ("match" | "values" | "params" | "settings", _) => {}
+                    ("id", Str(id)) if !table_permission => out.push((path.into(), id.clone())),
+                    _ => definition_ids(child, &format!("{path}.{key}"), out),
+                }
+            }
+        }
+        Array(items) => {
+            for (i, item) in items.iter().enumerate() {
+                definition_ids(item, &format!("{path}[{i}]"), out);
+            }
+        }
+        _ => {}
+    }
+}
+
+#[test]
+fn every_template_id_is_a_uuid_v7() {
+    for t in TEMPLATES {
+        let config = serde_json::to_value(template_config(t.id).unwrap()).unwrap();
+        let mut ids = vec![];
+        definition_ids(&config, "", &mut ids);
+        assert!(ids.len() > 50, "{}: found only {} ids", t.id, ids.len());
+        for (path, id) in ids {
+            let parsed = uuid::Uuid::parse_str(&id)
+                .unwrap_or_else(|_| panic!("{} {path}: {id} is not a UUID", t.id));
+            assert_eq!(parsed.get_version_num(), 7, "{} {path}: {id}", t.id);
+            assert_eq!(
+                parsed.get_variant(),
+                uuid::Variant::RFC4122,
+                "{} {path}: {id}",
+                t.id
+            );
+            assert_eq!(
+                parsed.hyphenated().to_string(),
+                id,
+                "{} {path}: lowercase hyphenated",
+                t.id
+            );
+        }
+    }
 }

@@ -148,11 +148,24 @@ export const errorsOf = (issues: Issue[]) =>
     .map((i) => `${i.objectKind} ${i.objectId}: ${i.message}`);
 
 type QueryResult = { columns: string[]; rows: DataValue[][] };
-/** Runs a saved query through the public Queries command and returns plain rows. */
-export async function savedQuery(id: string, params: Record<string, unknown> = {}) {
+type Named = { id: string; name: string };
+type Definitions = { savedQueries: Named[]; triggers: Named[]; migrations: Named[] };
+/** The open document's definitions (ids are UUIDv7; tests find objects by name). */
+export const definitions = () =>
+  invoke<Definitions>("read_document_config", { windowLabel: "main" });
+
+/** Id of the definition named `name` in one of the config's lists. */
+export async function idOf(list: keyof Definitions, name: string) {
+  const found = (await definitions())[list].find((o) => o.name === name);
+  if (!found) throw new Error(`No ${list} entry named ${name}`);
+  return found.id;
+}
+
+/** Runs a saved query (by name) through the public Queries command and returns plain rows. */
+export async function savedQuery(name: string, params: Record<string, unknown> = {}) {
   const result = await invoke<QueryResult>("run_saved_query", {
     windowLabel: "main",
-    id,
+    id: await idOf("savedQueries", name),
     params: Object.entries(params).map(([column, value]) => ({
       column,
       value: toValue(value),

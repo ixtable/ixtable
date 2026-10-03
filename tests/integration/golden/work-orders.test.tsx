@@ -7,6 +7,7 @@ import {
   chooseRelated,
   errorsOf,
   eventually,
+  idOf,
   expectAlert,
   LONG,
   openPage,
@@ -26,11 +27,12 @@ const APP = "work-orders";
 type Job = { triggerId: string; status: string; attempts: number };
 const jobs = () => invoke<Job[]>("list_jobs", { windowLabel: "main", filter: null });
 const jobDone = () =>
-  eventually(async () =>
-    expect((await jobs()).filter((j) => j.triggerId === "wo-trigger-order-created")).toEqual([
+  eventually(async () => {
+    const triggerId = await idOf("triggers", "Log new work orders in the background");
+    expect((await jobs()).filter((j) => j.triggerId === triggerId)).toEqual([
       expect.objectContaining({ status: "succeeded", attempts: 1 }),
-    ]),
-  );
+    ]);
+  });
 
 it("Work orders: nested navigation, queries, printable sheet, and operations dashboard", async () => {
   await withJourney(APP, "reads", async (journey) => {
@@ -52,7 +54,7 @@ it("Work orders: nested navigation, queries, printable sheet, and operations das
       journey.check("nesting depth", reference.parentElement?.closest("details") === setup, true);
     });
     await journey.step("Grouped and filtered queries", async () => {
-      journey.check("by status", await savedQuery("wo-q-by-status"), [
+      journey.check("by status", await savedQuery("Work orders by status"), [
         ["Open", 3],
         ["In progress", 1],
         ["Done", 1],
@@ -60,7 +62,7 @@ it("Work orders: nested navigation, queries, printable sheet, and operations das
       ]);
       journey.check(
         "open orders by priority",
-        (await savedQuery("wo-q-open-orders")).map((r) => [r[0], r[3], r[6]]),
+        (await savedQuery("Open work orders")).map((r) => [r[0], r[3], r[6]]),
         [
           ["WO-1004", "Urgent", 0],
           ["WO-1001", "High", 50],
@@ -70,7 +72,7 @@ it("Work orders: nested navigation, queries, printable sheet, and operations das
       );
       journey.check(
         "priority parameter",
-        (await savedQuery("wo-q-open-orders", { priority: "High" })).map((r) => r[0]),
+        (await savedQuery("Open work orders", { priority: "High" })).map((r) => r[0]),
         ["WO-1001"],
       );
     });
@@ -423,13 +425,13 @@ it("Work orders: v1 bundle, Runtime record, then update to v2 keeps the record a
         );
         journey.check(
           "migration 002 applied once on the installation",
-          await invoke<Array<{ id: string; applied: boolean }>>("migration_status", {
+          await invoke<Array<{ name: string; applied: boolean }>>("migration_status", {
             windowLabel: "main",
-          }).then((s) => s.map((m) => [m.id, m.applied])),
+          }).then((s) => s.map((m) => [m.name, m.applied])),
           [
-            ["wo-001-schema", true],
-            ["wo-002-due-dates", true],
-            ["work-orders-seed", true],
+            ["001 Create work-order schema", true],
+            ["002 Add work-order due dates", true],
+            ["Seed sample data", true],
           ],
         );
         await showList(user, "Work orders");

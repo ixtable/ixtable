@@ -101,7 +101,7 @@ it("sets a concurrency policy per table and flags tables without one", async () 
       ],
     },
   });
-  await invoke("apply_migrations", { windowLabel: "main", externalBackupConfirmed: null });
+  await invoke("apply_migrations", { windowLabel: "main" });
   await refreshDatabase();
   const issues = await invoke<Array<{ objectId: string; message: string }>>("validate_document", {
     windowLabel: "main",
@@ -215,18 +215,16 @@ it.skipIf(!postgresUrl)(
         () => "applied",
         (e: unknown) => String((e as Error).message ?? e),
       ),
-    ).resolves.toMatch(/BACKUP_REQUIRED/);
+    ).resolves.toMatch(/VALIDATION_ERROR.*Migrations apply to the embedded SQLite store only/);
     await openTab(user, "Migrations");
-    const apply = await screen.findByRole("button", { name: "Apply pending (1)" }, LONG);
-    expect(apply).toBeDisabled();
-    await user.click(
-      screen.getByRole("checkbox", { name: "I have an external PostgreSQL backup" }),
+    expect(await screen.findByRole("note", { name: "Migrations disabled" }, LONG)).toHaveTextContent(
+      "disabled for this document because it uses PostgreSQL",
     );
-    await waitFor(() => expect(apply).toBeEnabled());
-    await user.click(apply);
-    expect(
-      await screen.findByText(/no backup of PostgreSQL records was taken/, {}, LONG),
-    ).toBeInTheDocument();
-    await invoke("drop_database_table", { windowLabel: "main", table: `${table}_m` });
+    expect(await screen.findByRole("button", { name: "Apply pending (0)" }, LONG)).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Roll back last" })).toBeDisabled();
+    const objects = await invoke<Array<{ name: string }>>("list_database_objects", {
+      windowLabel: "main",
+    });
+    expect(objects.map((o) => o.name)).not.toContain(`${table}_m`);
   },
 );

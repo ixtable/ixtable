@@ -126,3 +126,71 @@ it("stops on a failing migration, rolls it back, and shows recovery instructions
   expect(rows.total).toBe(0);
   expect(await screen.findByRole("button", { name: "Apply pending (1)" }, LONG)).toBeEnabled();
 });
+
+const readConfig = () =>
+  invoke<Record<string, unknown>>("read_document_config", { windowLabel: "main" });
+async function setConfig(
+  user: Awaited<ReturnType<typeof renderNewDocument>>,
+  patch: Record<string, unknown>,
+) {
+  await openMigrations(user);
+  await invoke("update_document_config", {
+    windowLabel: "main",
+    config: { ...(await readConfig()), ...patch },
+  });
+  await user.click(screen.getByRole("tab", { name: "Datasource" }));
+  await user.click(screen.getByRole("tab", { name: "Migrations" }));
+  await screen.findByRole("heading", { name: "Migrations" }, LONG);
+}
+const failureOf = (command: string) =>
+  invoke(command, { windowLabel: "main" }).then(
+    () => "succeeded",
+    (e: unknown) => String((e as Error).message ?? e),
+  );
+
+it("flags a legacy PostgreSQL-target migration and refuses to apply it", async () => {
+  const user = await renderNewDocument();
+  await setConfig(user, {
+    migrations: [
+      { id: "m-pg", name: "Old PG change", order: 1, targetStore: "postgres", up: "SELECT 1" },
+    ],
+  });
+  expect(
+    await screen.findByText(
+      "Old PG change: PostgreSQL migrations are not supported in this version; manage external database schema yourself",
+      {},
+      LONG,
+    ),
+  ).toBeInTheDocument();
+  expect(screen.getByRole("cell", { name: "PostgreSQL (not supported)" })).toBeInTheDocument();
+  expect(screen.getByRole("cell", { name: "Not supported" })).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "Apply pending (0)" })).toBeDisabled();
+  await expect(failureOf("apply_migrations")).resolves.toMatch(/PostgreSQL migrations are not/);
+
+  await user.click(screen.getByRole("button", { name: "Edit Old PG change" }));
+  const editor = await screen.findByRole("region", { name: /Edit migration/ }, LONG);
+  await user.selectOptions(within(editor).getByRole("combobox", { name: "Target store" }), "sqlite");
+  await user.click(within(editor).getByRole("button", { name: "Save migration" }));
+  await clickWhenEnabled(user, "Apply pending (1)");
+  expect(await screen.findByText(/All migrations succeeded\./, {}, LONG)).toBeInTheDocument();
+});
+
+it("disables migrations for a document whose datasource is PostgreSQL", async () => {
+  const user = await renderNewDocument();
+  await setConfig(user, {
+    datasource: { kind: "postgres", host: "127.0.0.1", port: 1, database: "x", user: "x" },
+    migrations: [{ id: "m1", name: "Create things", order: 1, up: "CREATE TABLE things (x)" }],
+  });
+  const note = await screen.findByRole("note", { name: "Migrations disabled" }, LONG);
+  expect(note).toHaveTextContent(
+    "Migrations apply to the embedded SQLite store only and are disabled for this document",
+  );
+  expect(await screen.findByRole("cell", { name: "Disabled" }, LONG)).toBeInTheDocument();
+  for (const name of ["Dry run pending", "Apply pending (0)", "Roll back last"])
+    expect(screen.getByRole("button", { name })).toBeDisabled();
+  expect(screen.queryByRole("checkbox", { name: /PostgreSQL backup/ })).toBeNull();
+  for (const command of ["apply_migrations", "rollback_migration", "dry_run_migrations"])
+    await expect(failureOf(command)).resolves.toMatch(
+      /VALIDATION_ERROR.*Migrations apply to the embedded SQLite store only/,
+    );
+});

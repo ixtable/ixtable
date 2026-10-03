@@ -70,6 +70,9 @@ pub struct DocumentConfig {
     pub roles: Vec<roles::Role>,
     #[serde(default)]
     pub release: ReleaseInfo,
+    /// The ixtable Cloud application this document publishes to.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cloud: Option<crate::cloud::CloudLink>,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
@@ -142,6 +145,7 @@ impl Default for DocumentConfig {
             entities: vec![],
             roles: vec![],
             release: ReleaseInfo::default(),
+            cloud: None,
         }
     }
 }
@@ -221,7 +225,7 @@ pub fn add_attachment(
     media_type: String,
     contents: Vec<u8>,
 ) -> String {
-    let id = Uuid::new_v4().to_string();
+    let id = Uuid::now_v7().to_string();
     let now = Utc::now().to_rfc3339();
     doc.attachments.push(Attachment {
         id: id.clone(),

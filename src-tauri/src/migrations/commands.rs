@@ -1,6 +1,11 @@
 //! Migration commands: status, preview, dry run, apply pending (after a
 //! mandatory checkpoint), rollback of the last reversible migration, history.
-use super::{applied, history, pending_in, run_one, validate, Migration, MigrationLog};
+//! They act on the embedded SQLite store only; a document whose datasource is
+//! PostgreSQL gets a `VALIDATION_ERROR` from dry run, apply, and rollback.
+use super::{
+    applied, history, pending_in, run_one, validate, Migration, MigrationLog, POSTGRES_DOCUMENT,
+    POSTGRES_UNSUPPORTED,
+};
 use crate::archive::DocumentConfig;
 use crate::checkpoints::CheckpointInfo;
 use crate::manager::AppError;
@@ -41,12 +46,12 @@ pub struct MigrationPreview {
 fn config(window: &str) -> Result<DocumentConfig, AppError> {
     crate::manager()?.config(window)
 }
-fn store_kind(config: &DocumentConfig) -> &'static str {
+/// Migrations run on the embedded SQLite store only (PostgreSQL is out of MVP scope).
+pub(crate) fn ensure_sqlite(config: &DocumentConfig) -> Result<(), AppError> {
     if config.datasource.is_postgres() {
-        "postgres"
-    } else {
-        "sqlite"
+        return Err(AppError::new("VALIDATION_ERROR", POSTGRES_DOCUMENT));
     }
+    Ok(())
 }
 fn blocking_issues(config: &DocumentConfig) -> Result<(), AppError> {
     let errors: Vec<String> = validate(config)
@@ -71,8 +76,12 @@ fn find<'a>(config: &'a DocumentConfig, id: &str) -> Result<&'a Migration, AppEr
 #[tauri::command]
 pub fn migration_status(window_label: String) -> Result<Vec<MigrationStatus>, AppError> {
     let config = config(&window_label)?;
-    let kind = store_kind(&config);
-    let done = with_store(&window_label, |s| applied(s))?;
+    // A PostgreSQL document never runs migrations, so its store is not touched.
+    let done = if config.datasource.is_postgres() {
+        vec![]
+    } else {
+        with_store(&window_label, |s| applied(s))?
+    };
     let mut out: Vec<MigrationStatus> = config
         .migrations
         .iter()
@@ -83,7 +92,7 @@ pub fn migration_status(window_label: String) -> Result<Vec<MigrationStatus>, Ap
                 name: m.name.clone(),
                 order: m.order,
                 applied: hit.is_some(),
-                applies_to_store: m.targets(kind),
+                applies_to_store: !config.datasource.is_postgres() && m.targets("sqlite"),
                 modified: hit
                     .and_then(|h| h.1.as_ref())
                     .is_some_and(|c| c != &m.checksum()),
@@ -96,6 +105,9 @@ pub fn migration_status(window_label: String) -> Result<Vec<MigrationStatus>, Ap
 
 #[tauri::command]
 pub fn migration_history(window_label: String) -> Result<Vec<MigrationLog>, AppError> {
+    if config(&window_label)?.datasource.is_postgres() {
+        return Ok(vec![]);
+    }
     with_store(&window_label, |s| history(s))
 }
 
@@ -107,10 +119,6 @@ pub fn preview_migration(
     direction: Option<String>,
 ) -> Result<MigrationPreview, AppError> {
     let config = config(&window_label)?;
-    let kind = store_kind(&config);
-    let transactional = with_store(&window_label, |s| {
-        Ok(s.capabilities().migrations.transactional_ddl)
-    })?;
     let m = find(&config, &id)?;
     let down = direction.as_deref() == Some("down");
     let sql = if down {
@@ -145,11 +153,10 @@ pub fn preview_migration(
             warnings.push(format!("{word}: {why}"));
         }
     }
-    if !m.targets(kind) {
-        warnings.push(format!(
-            "Targets {} and will not run on this {kind} store",
-            m.target_store
-        ));
+    if config.datasource.is_postgres() {
+        warnings.push(POSTGRES_DOCUMENT.into());
+    } else if m.target_store == "postgres" {
+        warnings.push(POSTGRES_UNSUPPORTED.into());
     }
     if down && !m.reversible {
         warnings.push("This migration is not marked reversible".into());
@@ -160,13 +167,14 @@ pub fn preview_migration(
         sql,
         statements,
         warnings,
-        store: kind.into(),
-        transactional,
+        store: "sqlite".into(),
+        // SQLite runs DDL inside the migration's transaction.
+        transactional: true,
     })
 }
 
-/// Validates migrations without keeping changes: SQLite runs them on a copy,
-/// PostgreSQL inside BEGIN … ROLLBACK. `ids` defaults to every pending migration.
+/// Validates migrations without keeping changes by running them on a copy of the
+/// SQLite database. `ids` defaults to every pending migration.
 #[tauri::command]
 pub fn dry_run_migrations(
     window_label: String,
@@ -174,6 +182,7 @@ pub fn dry_run_migrations(
 ) -> Result<MigrationLog, AppError> {
     crate::installation::ensure_studio(&window_label)?;
     let config = config(&window_label)?;
+    ensure_sqlite(&config)?;
     blocking_issues(&config)?;
     let selected: Vec<Migration> = match ids {
         Some(ids) => {
@@ -244,33 +253,14 @@ fn checkpoint(window: &str, reason: String) -> Result<CheckpointInfo, AppError> 
         })
 }
 
-/// A checkpoint copies the embedded SQLite records but not PostgreSQL ones, so
-/// changing a PostgreSQL store needs the caller to confirm an external backup.
-pub(crate) fn require_external_backup(
-    config: &DocumentConfig,
-    confirmed: Option<bool>,
-) -> Result<(), AppError> {
-    if config.datasource.is_postgres() && confirmed != Some(true) {
-        return Err(AppError::new(
-            "BACKUP_REQUIRED",
-            "Recovery checkpoints do not back up PostgreSQL records. Confirm that you have an external PostgreSQL backup before running migrations.",
-        ));
-    }
-    Ok(())
-}
-
 /// Applies every pending migration in order after a mandatory checkpoint.
 /// Stops at the first failure; the failed migration's transaction is rolled back.
-/// PostgreSQL datasources require `external_backup_confirmed`.
 #[tauri::command]
-pub fn apply_migrations(
-    window_label: String,
-    external_backup_confirmed: Option<bool>,
-) -> Result<MigrationRun, AppError> {
+pub fn apply_migrations(window_label: String) -> Result<MigrationRun, AppError> {
     crate::installation::ensure_studio(&window_label)?;
     let config = config(&window_label)?;
+    ensure_sqlite(&config)?;
     blocking_issues(&config)?;
-    require_external_backup(&config, external_backup_confirmed)?;
     let (done, pending) = with_store(&window_label, |s| {
         Ok((applied(s)?, pending_in(s, &config.migrations)?))
     })?;
@@ -336,13 +326,10 @@ fn run_pending(
 
 /// Runs the `down` SQL of the most recently applied migration (reversible only).
 #[tauri::command]
-pub fn rollback_migration(
-    window_label: String,
-    external_backup_confirmed: Option<bool>,
-) -> Result<MigrationRun, AppError> {
+pub fn rollback_migration(window_label: String) -> Result<MigrationRun, AppError> {
     crate::installation::ensure_studio(&window_label)?;
     let config = config(&window_label)?;
-    require_external_backup(&config, external_backup_confirmed)?;
+    ensure_sqlite(&config)?;
     let done = with_store(&window_label, |s| applied(s))?;
     let last = done
         .last()

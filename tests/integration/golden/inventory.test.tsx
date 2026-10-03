@@ -37,7 +37,7 @@ it("Inventory: aggregation queries, valuation report, and low-stock dashboard", 
       journey.check("no error issues", errorsOf(await validateDocument()), []);
     });
     await journey.step("Stock on hand by product", async () => {
-      journey.check("totals", await savedQuery("inv-q-by-product"), [
+      journey.check("totals", await savedQuery("Stock by product"), [
         ["BOLT-M8", "Hex bolt M8", 1050],
         ["DRILL-18V", "Cordless drill 18V", 22],
         ["GLOVE-L", "Work gloves (L)", 233],
@@ -47,20 +47,20 @@ it("Inventory: aggregation queries, valuation report, and low-stock dashboard", 
       ]);
     });
     await journey.step("Stock on hand by product and location (parameter)", async () => {
-      journey.check("ST1 only", await savedQuery("inv-q-on-hand", { location: "ST1" }), [
+      journey.check("ST1 only", await savedQuery("Stock on hand", { location: "ST1" }), [
         ["BOLT-M8", "Hex bolt M8", "ST1", 50],
         ["DRILL-18V", "Cordless drill 18V", "ST1", 2],
         ["GLOVE-L", "Work gloves (L)", "ST1", 30],
         ["TAPE-25", "Measuring tape 25ft", "ST1", 1],
       ]);
-      journey.check("by location", await savedQuery("inv-q-by-location"), [
+      journey.check("by location", await savedQuery("Stock by location"), [
         ["ST1", 83, 337.5],
         ["ST2", 9, 85.5],
         ["WH1", 2462, 3660],
       ]);
     });
     await journey.step("Valuation and low stock", async () => {
-      const valuation = await savedQuery("inv-q-valuation");
+      const valuation = await savedQuery("Inventory valuation");
       journey.check(
         "valuation total",
         valuation.reduce((sum, r) => sum + Number(r[5]), 0),
@@ -68,7 +68,7 @@ it("Inventory: aggregation queries, valuation report, and low-stock dashboard", 
       );
       journey.check(
         "low stock",
-        (await savedQuery("inv-q-low-stock")).map((r) => `${r[0]}@${r[2]}:${r[3]}<${r[4]}`),
+        (await savedQuery("Low stock")).map((r) => `${r[0]}@${r[2]}:${r[3]}<${r[4]}`),
         ["BOLT-M8@ST1:50<100", "DRILL-18V@ST1:2<3", "GLOVE-L@ST2:3<5", "TAPE-25@ST1:1<2"],
       );
     });
@@ -236,7 +236,7 @@ it("Inventory: constraints, transactional transfers, and concurrency policies", 
       );
       journey.check(
         "BOLT-M8 is no longer low at ST1",
-        (await savedQuery("inv-q-low-stock")).map((r) => `${r[0]}@${r[2]}`),
+        (await savedQuery("Low stock")).map((r) => `${r[0]}@${r[2]}`),
         ["DRILL-18V@ST1", "GLOVE-L@ST2", "TAPE-25@ST1"],
       );
     });

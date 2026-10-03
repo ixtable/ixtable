@@ -2,7 +2,13 @@ import { useEffect, useId, useState } from "react";
 import type { DesignControl } from "../design/schema";
 import { useDocumentConfig } from "../lib/config-store";
 import { readAssetDataUrl } from "./api";
-import { type Choice, queryChoices, relationshipChoices, relationshipLabel } from "./data";
+import {
+  cachedRelationshipLabel,
+  type Choice,
+  queryChoices,
+  relationshipChoices,
+  relationshipLabel,
+} from "./data";
 import { formatted } from "./formState";
 import { sameValue } from "./values";
 
@@ -194,7 +200,10 @@ function RelationshipInput({
   const relationship = control.relationship;
   const [search, setSearch] = useState("");
   const [choices, setChoices] = useState<Choice[]>([]);
-  const [current, setCurrent] = useState("");
+  // Starts from the last label shown for this key, so a reload never blanks the field.
+  const [current, setCurrent] = useState(() =>
+    relationship ? (cachedRelationshipLabel(relationship, value) ?? "") : "",
+  );
   useEffect(() => {
     if (!relationship || readOnly) return;
     let live = true;
@@ -214,6 +223,8 @@ function RelationshipInput({
   useEffect(() => {
     if (!relationship) return;
     let live = true;
+    const cached = cachedRelationshipLabel(relationship, value);
+    if (cached !== undefined) setCurrent(cached);
     relationshipLabel(relationship, value)
       .then((label) => live && setCurrent(label))
       .catch(() => live && setCurrent(String(value ?? "")));

@@ -128,11 +128,15 @@ mod tests {
     #[test]
     fn valid_role_has_no_issues() {
         let mut config = DocumentConfig::default();
+        let (nav, form) = (
+            config.design.navigation[0].id.clone(),
+            config.design.forms[0].id.clone(),
+        );
         config.roles.push(role(Permissions {
-            navigation: vec!["main".into()],
+            navigation: vec![nav],
             objects: vec![ObjectPermission {
                 kind: "form".into(),
-                id: "main".into(),
+                id: form,
                 read: true,
                 ..Default::default()
             }],

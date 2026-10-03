@@ -13,10 +13,12 @@ import {
   tableSchema,
 } from "./data";
 import { cellText } from "./formState";
+import { BooleanCell } from "./BooleanCell";
 import { useLookupLabels } from "./lookups";
 import { useRuntimeNavigation } from "./navigation";
 import { can } from "./rbac";
 import { isDesignedForm, resolveForm } from "./registry";
+import { isBooleanColumn } from "./values";
 
 type Props = {
   form: DesignForm;
@@ -97,8 +99,20 @@ export function ListView({ form, onOpen, onCreate }: Props) {
       : (page?.columns ?? []);
   const label = (column: string) => controlFor(column)?.label ?? humanize(column);
   const lookup = useLookupLabels(table, columns, controlFor, page?.rows);
+  const booleans = new Set(
+    columns.filter((column) =>
+      isBooleanColumn(
+        [...form.controls, ...detail.controls].filter((c) => c.binding?.column === column),
+        schema?.columns.find((c) => c.name === column),
+      ),
+    ),
+  );
   const cell = (record: Record<string, unknown>, column: string) =>
-    lookup(column, record[column]) ?? cellText(record[column], controlFor(column));
+    booleans.has(column) ? (
+      <BooleanCell value={record[column]} />
+    ) : (
+      (lookup(column, record[column]) ?? cellText(record[column], controlFor(column)))
+    );
   const subject = isDesignedForm(config, detail)
     ? { kind: "form", id: detail.id }
     : { kind: "table", id: table ?? "" };

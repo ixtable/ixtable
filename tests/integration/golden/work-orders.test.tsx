@@ -163,7 +163,9 @@ async function markTaskDone(user: User, row: number) {
 
 async function press(user: User, label: string) {
   const form = await within(runtimePage()).findByRole("form", { name: "Work order" }, LONG);
-  await user.click(await within(form).findByRole("button", { name: label }, LONG));
+  const button = await within(form).findByRole("button", { name: label }, LONG);
+  await waitFor(() => expect(button).toBeEnabled(), LONG);
+  await user.click(button);
   return form;
 }
 
@@ -201,7 +203,7 @@ it("Work orders: lifecycle with status actions, sync and async triggers, and rol
       await jobDone();
       journey.check("new order", await order("WO-1006"), [["open", 0, false, false]]);
       journey.check("audit row written by the job", await events("WO-1006"), [["created"]]);
-      await user.click(within(page).getByRole("button", { name: "Back" }));
+      await user.click(within(page).getByRole("button", { name: "Back to Work orders" }));
       await user.click(await within(page).findByRole("row", { name: "Open WO-1006" }, LONG));
       await within(page).findByRole("form", { name: "Work order" }, LONG);
     });
@@ -297,7 +299,7 @@ it("Work orders: lifecycle with status actions, sync and async triggers, and rol
       const form = await within(page).findByRole("form", { name: "Work order" }, LONG);
       expect(await within(form).findByRole("button", { name: "Edit" }, LONG)).toBeVisible();
       journey.check("delete hidden", within(form).queryByRole("button", { name: "Delete" }), null);
-      await user.click(within(form).getByRole("button", { name: "Back" }));
+      await user.click(within(page).getByRole("button", { name: "Back to Work orders" }));
       await within(page).findByRole("row", { name: "Open WO-1001" }, LONG);
       journey.check(
         "no create",

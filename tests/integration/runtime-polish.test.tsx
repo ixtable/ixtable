@@ -36,7 +36,7 @@ it("Runtime: re-choosing the open page returns to its list; images and relations
   await openPage(user, "Products");
   await within(runtimePage()).findByRole("region", { name: "Products" }, LONG);
   expect(within(runtimePage()).queryByRole("form", { name: "Product" })).toBeNull();
-  expect(within(runtimePage()).queryByRole("button", { name: "Back" })).toBeNull();
+  expect(within(runtimePage()).queryByRole("button", { name: /^Back to/ })).toBeNull();
 
   await openPage(user, "Reorder thresholds");
   const list = await within(runtimePage()).findByRole(

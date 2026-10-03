@@ -80,6 +80,17 @@ would drop the pinned signer. An installation folder with no `bundle.json` at
 all is moved aside to `<bundleId>.corrupt-<timestamp>` before a fresh install,
 never deleted.
 
+### Runtime window
+
+A runtime-only window shows the application, not Studio. Its title is the
+application name. It has no ribbon (view switch, undo, redo), no mode switch,
+no Save buttons, no `PROJECT /` breadcrumb, and no "Preview as role" switch.
+A manual bundle runs with full access, because the document config has no
+default runtime role. A cloud installation runs as the role in its signed
+manifest and shows it as `Role: <name>`. Runtime sessions keep the ids the
+bundle was published with; only Studio rewrites the legacy `main` form id
+(`design/upgrade.rs`, `rekey_legacy_ids`).
+
 ## Threat model limits
 
 The release tab shows the first limit next to the password option, in the
@@ -124,6 +135,6 @@ words of PRD §4.1.
   different signer is rejected, migrations on update, a failing migration or
   health check reverts, restore of the previous version, reset, and unsafe
   bundle ids.
-- `tests/integration/bundle.test.tsx`: export from Studio, open runtime-only,
-  update while keeping records, password prompt, and a tampered bundle
+- `tests/integration/bundle.test.tsx`: export from Studio, open runtime-only
+  without Studio chrome, update while keeping records, password prompt, and a tampered bundle
   rejected before opening.

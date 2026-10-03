@@ -1,5 +1,6 @@
 import { fromDataValue } from "../automation/values";
 import type { DataValue, DbColumn, NamedValue } from "../lib/types";
+import { parseLogical } from "../schema/logical";
 
 export { fromDataValue };
 
@@ -62,3 +63,26 @@ export function displayText(value: unknown): string {
 /** Loose equality for record values coming from different sources (1 vs "1"). */
 export const sameValue = (a: unknown, b: unknown) =>
   a === b || (a != null && b != null && String(a) === String(b));
+
+/**
+ * True when a column holds yes/no values: a bound boolean control, or a boolean logical or
+ * declared type. Decided from definitions, never from the values (0/1 integers stay numbers).
+ */
+export function isBooleanColumn(
+  controls: ({ kind: string } | undefined)[],
+  column?: Pick<DbColumn, "declaredType" | "logicalType">,
+): boolean {
+  if (controls.some((control) => control?.kind === "boolean")) return true;
+  if (!column) return false;
+  return (
+    parseLogical(column.logicalType).base === "boolean" ||
+    column.declaredType.toUpperCase().includes("BOOL")
+  );
+}
+
+/** Yes/no of a stored boolean (SQLite keeps 0/1); null for an empty value. */
+export function booleanValue(value: unknown): boolean | null {
+  if (value === null || value === undefined || value === "") return null;
+  if (typeof value === "string") return !["0", "false", "no"].includes(value.trim().toLowerCase());
+  return Boolean(value);
+}

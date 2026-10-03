@@ -13,7 +13,15 @@ import { recordIdFor, tableSchema } from "./data";
 import { useRuntimeNavigation } from "./navigation";
 import { can } from "./rbac";
 import { isDesignedForm, resolveForm, tableForms } from "./registry";
-import { displayText, namedValues, type RecordValues, rowObject, toColumnValue } from "./values";
+import { BooleanCell } from "./BooleanCell";
+import {
+  displayText,
+  isBooleanColumn,
+  namedValues,
+  type RecordValues,
+  rowObject,
+  toColumnValue,
+} from "./values";
 
 type Rows = { records: RecordValues[]; identities: DataValue[][] };
 type Editing = { mode: FormMode; recordId?: unknown } | null;
@@ -22,11 +30,13 @@ type Editing = { mode: FormMode; recordId?: unknown } | null;
 export function RelatedRecords({ ctx, control }: { ctx: BodyContext; control: DesignControl }) {
   const related = control.related;
   const { config } = useDocumentConfig();
-  const { roleId, notify } = useRuntimeNavigation();
+  const { roleId } = useRuntimeNavigation();
   const [schema, setSchema] = useState<TableSchema | null>(null);
   const [rows, setRows] = useState<Rows | null>(null);
   const [editing, setEditing] = useState<Editing>(null);
   const [error, setError] = useState("");
+  // Messages of the embedded child form, shown here because that form closes on save.
+  const [message, setMessage] = useState("");
   const [dialog, confirm] = useConfirm();
   const parentValue = related ? ctx.scope.record[related.parentColumn] : null;
   const childForm: DesignForm | null = !related
@@ -93,6 +103,11 @@ export function RelatedRecords({ ctx, control }: { ctx: BodyContext; control: De
       : { kind: "table", id: related.table };
   const allowed = (op: "create" | "update" | "delete") =>
     can(config, roleId, subject.kind, subject.id, op);
+  const booleanColumn = (column: string) =>
+    isBooleanColumn(
+      childForm?.controls.filter((c) => c.binding?.column === column) ?? [],
+      schema?.columns.find((c) => c.name === column),
+    );
   const columnLabel = (column: string) =>
     childForm?.controls.find((c) => c.binding?.column === column)?.label ?? humanize(column);
 
@@ -108,7 +123,6 @@ export function RelatedRecords({ ctx, control }: { ctx: BodyContext; control: De
       });
       await load();
     } catch (reason) {
-      notify(reason instanceof Error ? reason.message : String(reason), "error");
       setError(reason instanceof Error ? reason.message : String(reason));
     }
   };
@@ -118,7 +132,13 @@ export function RelatedRecords({ ctx, control }: { ctx: BodyContext; control: De
       <div className="rt-related-head">
         <h3>{label}</h3>
         {allowed("create") && childForm && !editing && (
-          <button type="button" onClick={() => setEditing({ mode: "create" })}>
+          <button
+            type="button"
+            onClick={() => {
+              setMessage("");
+              setEditing({ mode: "create" });
+            }}
+          >
             Add {label.toLowerCase()}
           </button>
         )}
@@ -126,6 +146,11 @@ export function RelatedRecords({ ctx, control }: { ctx: BodyContext; control: De
       {error && (
         <p className="rt-error" role="alert">
           {error}
+        </p>
+      )}
+      {message && (
+        <p className="rt-status" role="status">
+          {message}
         </p>
       )}
       <table className="rt-table">
@@ -146,7 +171,11 @@ export function RelatedRecords({ ctx, control }: { ctx: BodyContext; control: De
             <tr key={index}>
               {columns.map((column) => (
                 <td key={column}>
-                  {lookup(column, record[column]) ?? displayText(record[column])}
+                  {booleanColumn(column) ? (
+                    <BooleanCell value={record[column]} />
+                  ) : (
+                    (lookup(column, record[column]) ?? displayText(record[column]))
+                  )}
                 </td>
               ))}
               <td className="rt-row-actions">
@@ -195,6 +224,10 @@ export function RelatedRecords({ ctx, control }: { ctx: BodyContext; control: De
             recordId={editing.recordId}
             link={{ column: related.foreignKey, value: parentValue }}
             embedded
+            onNotify={(text, tone) => {
+              if (tone === "error") setError(text);
+              else setMessage(`${label}: ${text}`);
+            }}
             onDone={() => {
               setEditing(null);
               load().catch(() => undefined);

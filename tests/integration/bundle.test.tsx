@@ -70,13 +70,15 @@ it("exports from Studio, opens runtime-only, and updates while keeping runtime r
   await user.click(screen.getByRole("button", { name: /Open runtime bundle/ }));
   const runtime = await screen.findByRole("region", { name: "Runtime bundle" }, LONG);
   expect(within(runtime).getByText("Version 1.0.0")).toBeInTheDocument();
-  const modes = screen.getByRole("group", { name: "Document mode" });
-  expect(
-    within(modes)
-      .getAllByRole("button")
-      .map((button) => button.textContent),
-  ).toEqual(["Runtime"]);
+  expect(screen.queryByRole("group", { name: "Document mode" })).not.toBeInTheDocument();
   expect(screen.queryByRole("button", { name: "Save project" })).not.toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: "Undo" })).not.toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: "Redo" })).not.toBeInTheDocument();
+  expect(screen.queryByRole("combobox", { name: "Preview as role" })).not.toBeInTheDocument();
+  expect(screen.queryByText(/PROJECT \//)).not.toBeInTheDocument();
+  expect(
+    await screen.findByRole("heading", { level: 1, name: "Untitled" }, LONG),
+  ).toBeInTheDocument();
 
   const state = await invoke<{ runtimeOnly: boolean; bundleVersion: string }>("document_state", {
     windowLabel: "main",

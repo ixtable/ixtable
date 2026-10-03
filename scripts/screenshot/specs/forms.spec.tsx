@@ -107,11 +107,24 @@ it("generates a CRUD form, designs it on the grid, and runs it with validation a
   await user.type(within(child).getByRole("spinbutton", { name: "Quantity" }), "4");
   await user.click(within(child).getByRole("button", { name: "Create" }));
   expect(await within(items).findByRole("cell", { name: "Stoneware mug" }, LONG)).toBeVisible();
+  // Each message shows once, next to what it is about: the order, then its new item.
+  expect(
+    within(detail)
+      .getAllByRole("status")
+      .map((status) => status.textContent),
+  ).toEqual(["Record created.", "Order items: Record created."]);
+  expect(screen.getAllByText("Record created.")).toHaveLength(1);
+  expect(
+    within(page)
+      .getAllByRole("button", { name: /back|previous page/i })
+      .map((b) => b.getAttribute("aria-label")),
+  ).toEqual(["Back to Orders list"]);
   await captureDocument(document, {
     name: "runtime-03-master-detail",
     expectations: [
-      "The saved order's detail view shows Juniper Supply, amount 99, and Edit/Delete actions.",
-      "The Order items related list shows the new Stoneware mug row with edit and delete buttons.",
+      "The order detail shows Juniper Supply, amount 99, and only Edit/Delete in its header.",
+      "One '← Orders list' back link sits above the card; 'Record created.' shows once inside it.",
+      "The Order items list shows the new Stoneware mug row and its own 'Order items: Record created.'.",
     ],
   });
 

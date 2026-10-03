@@ -1,4 +1,5 @@
 import { createContext, useCallback, useContext, useMemo, useState } from "react";
+import { humanize } from "../design/generate";
 import type { FormMode, NavigationItem } from "../design/schema";
 import type { DocumentConfig } from "../lib/types";
 import { assignedRuntimeRole, can, findRole } from "./rbac";
@@ -20,6 +21,8 @@ export interface RuntimeNavigation {
   navigate: (page: RuntimePage) => void;
   back: () => void;
   canGoBack: boolean;
+  /** The page `back` returns to (for its label); null when there is none. */
+  previous?: RuntimePage | null;
   /** Role being previewed; null is the developer (full access). */
   roleId: string | null;
   setRoleId: (roleId: string | null) => void;
@@ -41,6 +44,7 @@ const detached: RuntimeNavigation = {
   navigate: () => undefined,
   back: () => undefined,
   canGoBack: false,
+  previous: null,
   roleId: null,
   setRoleId: () => undefined,
   app: { user: { name: "Developer" }, role: null },
@@ -99,10 +103,11 @@ export function useRuntimeState(config: DocumentConfig): RuntimeNavigation {
   const [state, setState] = useState<Record<string, unknown>>({});
   const [notice, setNotice] = useState<Notice | null>(null);
   const [visit, setVisit] = useState(0);
+  // Choosing a navigation item starts a new trail; pages opened from content (actions) stack on it.
   const navigate = useCallback((page: RuntimePage) => {
     setNotice(null);
     setVisit((n) => n + 1);
-    setHistory((items) => [...items.slice(-49), page]);
+    setHistory((items) => (page.navId ? [page] : [...items.slice(-49), page]));
   }, []);
   const back = useCallback(() => {
     setVisit((n) => n + 1);
@@ -124,6 +129,13 @@ export function useRuntimeState(config: DocumentConfig): RuntimeNavigation {
     [],
   );
   const roleName = findRole(config, roleId)?.name ?? null;
+  // A trail rooted at a navigation item goes back no further than that item.
+  const canGoBack = history.length > 1 || (history.length === 1 && !history[0].navId);
+  const previous = !canGoBack
+    ? null
+    : history.length > 1
+      ? history[history.length - 2]
+      : startPage(config, roleId);
   const app = useMemo(
     () => ({
       ...state,
@@ -136,7 +148,8 @@ export function useRuntimeState(config: DocumentConfig): RuntimeNavigation {
     page: history.at(-1) ?? null,
     navigate,
     back,
-    canGoBack: history.length > 0,
+    canGoBack,
+    previous,
     roleId,
     setRoleId,
     app,
@@ -160,3 +173,22 @@ export function startPage(config: DocumentConfig, roleId: string | null): Runtim
 
 const flattenVisible = (items: NavigationItem[]): NavigationItem[] =>
   items.flatMap((item) => [item, ...flattenVisible(item.children ?? [])]);
+
+/** A page's title for back links: its navigation label, else the target's name. */
+export function pageTitle(config: DocumentConfig, page: RuntimePage): string {
+  const item = page.navId
+    ? flattenVisible(config.design?.navigation ?? []).find((entry) => entry.id === page.navId)
+    : undefined;
+  if (item?.label) return item.label;
+  const named = (items: { id: string; name: string }[] | undefined) =>
+    items?.find((entry) => entry.id === page.id)?.name;
+  const name =
+    page.kind === "form"
+      ? named(config.design?.forms)
+      : page.kind === "report"
+        ? named(config.reports)
+        : page.kind === "dashboard"
+          ? named(config.dashboards)
+          : humanize(page.id);
+  return name || "previous page";
+}

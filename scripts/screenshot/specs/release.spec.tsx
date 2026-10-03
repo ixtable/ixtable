@@ -72,12 +72,19 @@ it("exports a protected runtime bundle, opens it runtime-only, and installs an u
   const nav = screen.getByRole("navigation", { name: "Application navigation" });
   await user.click(within(nav).getByRole("button", { name: "Customers" }));
   await screen.findByRole("cell", { name: "Runtime Rita" }, LONG);
+  // Runtime-only: no Studio ribbon (view, undo/redo), modes, role preview, or project breadcrumb.
+  expect(screen.queryByRole("button", { name: "Undo" })).not.toBeInTheDocument();
+  expect(screen.queryByRole("group", { name: "Document mode" })).not.toBeInTheDocument();
+  expect(screen.queryByRole("combobox", { name: "Preview as role" })).not.toBeInTheDocument();
+  expect(screen.queryByText(/PROJECT \//)).not.toBeInTheDocument();
+  expect(screen.getByRole("heading", { level: 1, name: "Untitled" })).toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: /^Back to/ })).not.toBeInTheDocument();
   await captureDocument(document, {
     name: "release-03-runtime-only",
     expectations: [
-      "The runtime-only window shows only the Runtime mode and a Runtime bundle bar with Version 1.0.0.",
+      "The runtime-only window shows the app name as its title and a Runtime bundle bar with Version 1.0.0.",
       "The Customers list shows the bundled records plus the recipient's own Runtime Rita.",
-      "Studio actions such as Save project and the other modes are absent.",
+      "No ribbon (Undo/Redo), mode switch, Preview as role, PROJECT breadcrumb, or Save buttons.",
     ],
   });
 

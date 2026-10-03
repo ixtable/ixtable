@@ -82,11 +82,20 @@ it("runs action buttons, sync and async triggers, and role previews in the Work 
   await relatedLabels("Asset", "Rooftop HVAC unit");
   await relatedLabels("Assignee", "Tom Chen");
   await relatedLabels("Status", "In progress");
+  // The action's message shows once, inside the form; one back link leads to the list.
+  expect(screen.getAllByText("Work order started.")).toHaveLength(1);
+  expect(within(form).getByRole("status")).toHaveTextContent("Work order started.");
+  expect(
+    within(page)
+      .getAllByRole("button", { name: /back|previous page/i })
+      .map((b) => b.getAttribute("aria-label")),
+  ).toEqual(["Back to Work orders"]);
   await captureDocument(document, {
     name: "automation-02-action-applied",
     expectations: [
       "After Start work the status reads In progress and Start work is disabled.",
-      "Complete work is now enabled.",
+      "'Work order started.' appears once, inside the Work order card; no page-level copy.",
+      "A single '← Work orders' back link sits above the card; the header has only Edit and Delete.",
     ],
   });
 
@@ -157,11 +166,16 @@ it("runs action buttons, sync and async triggers, and role previews in the Work 
     LONG,
   );
   expect(within(technician).queryByRole("button", { name: "Delete" })).toBeNull();
+  // Task "Done" (INTEGER 0/1 behind a boolean control) reads Yes/No, not 1/0.
+  const tasks = within(technician).getByRole("region", { name: "Tasks" });
+  expect(await within(tasks).findAllByRole("cell", { name: "Yes" }, LONG)).toHaveLength(2);
+  expect(within(tasks).getAllByRole("cell", { name: "No" })).toHaveLength(2);
   await captureDocument(document, {
     name: "roles-02-runtime-preview",
     expectations: [
       "Preview as role reads Technician and the Setup navigation group is hidden.",
       "The work order offers Edit but no Delete button.",
+      "The Tasks Done column shows checkmarks for done tasks and dashes for open ones, not 1/0.",
     ],
   });
 });

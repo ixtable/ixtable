@@ -172,6 +172,6 @@ it("generates CRUD forms, validates, creates, edits, and manages related records
   await user.click(await screen.findByRole("button", { name: "Confirm" }));
   expect(await within(items).findByText("No order items yet.", {}, LONG)).toBeInTheDocument();
   expect((await readPage("order_items")).total).toBe(0);
-  await user.click(within(page).getByRole("button", { name: "← Back" }));
+  await user.click(within(page).getByRole("button", { name: "Back to Orders list" }));
   expect(await within(page).findByRole("row", { name: "Open 1" }, LONG)).toBeInTheDocument();
 });

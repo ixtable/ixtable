@@ -23,6 +23,7 @@ import { useIsCloudSession } from "../cloud/session";
 import { RuntimeBar } from "../release";
 import type { OpenRequest } from "../lib/launch";
 import { useOpenRequestInShell } from "./openRequests";
+import { UpdateNotice } from "../updates";
 
 const fromSession = (state: SessionState): Doc => ({
   name: state.name,
@@ -295,77 +296,77 @@ function ShellFrame({
               <span>{doc.path ? "Saved archive" : "Not saved yet"}</span>
             </div>
           )}
-          <ModeSwitch
-            active={doc.mode}
-            disabled={!!pending}
-            onChange={changeMode}
-            only={doc.runtimeOnly ? ["run"] : undefined}
-          />
+          {!doc.runtimeOnly && (
+            <ModeSwitch active={doc.mode} disabled={!!pending} onChange={changeMode} />
+          )}
           {mode.Sidebar && <mode.Sidebar />}
           <SaveStatus autosave={autosave} hasPath={!!doc.path} />
         </aside>
         <main className={`workspace ${mode.workspaceClassName ?? ""}`}>
-          <div className="ribbon-tabs">
-            <button className="active">Home</button>
-          </div>
-          <section className="ribbon" aria-label="Workspace">
-            <div className="ribbon-group view-group">
-              <DropdownMenu.Root>
-                <DropdownMenu.Trigger asChild>
-                  <button className="ribbon-big">
-                    <Grid3X3 />
-                    <span>{mode.label} view</span>
-                    <ChevronDown />
-                  </button>
-                </DropdownMenu.Trigger>
-                <DropdownMenu.Portal>
-                  <DropdownMenu.Content className="view-menu" sideOffset={6}>
-                    <DropdownMenu.Label>Switch view</DropdownMenu.Label>
-                    {modes
-                      .filter((item) => !doc.runtimeOnly || item.id === "run")
-                      .map((item) => (
-                        <DropdownMenu.Item
-                          key={item.id}
-                          onSelect={() => run(() => changeMode(item.id))}
-                          className={doc.mode === item.id ? "checked" : ""}
-                        >
-                          {item.label} view
-                          <span>{doc.mode === item.id ? "✓" : ""}</span>
-                        </DropdownMenu.Item>
-                      ))}
-                  </DropdownMenu.Content>
-                </DropdownMenu.Portal>
-              </DropdownMenu.Root>
-              <small>View</small>
-            </div>
-            <div className="ribbon-group">
-              <div className="ribbon-tools">
-                <button
-                  aria-label="Undo"
-                  title={store.undoLabel ? `Undo ${store.undoLabel} (Ctrl+Z)` : "Undo (Ctrl+Z)"}
-                  disabled={!store.canUndo}
-                  onClick={() => run(store.undo)}
-                >
-                  <Undo2 />
-                  <span>Undo</span>
-                </button>
-                <button
-                  aria-label="Redo"
-                  title={
-                    store.redoLabel
-                      ? `Redo ${store.redoLabel} (Ctrl+Shift+Z)`
-                      : "Redo (Ctrl+Shift+Z)"
-                  }
-                  disabled={!store.canRedo}
-                  onClick={() => run(store.redo)}
-                >
-                  <Redo2 />
-                  <span>Redo</span>
-                </button>
+          {/* Runtime-only windows have one view and no definition history: no ribbon. */}
+          {!doc.runtimeOnly && (
+            <>
+              <div className="ribbon-tabs">
+                <button className="active">Home</button>
               </div>
-              <small>History</small>
-            </div>
-          </section>
+              <section className="ribbon" aria-label="Workspace">
+                <div className="ribbon-group view-group">
+                  <DropdownMenu.Root>
+                    <DropdownMenu.Trigger asChild>
+                      <button className="ribbon-big">
+                        <Grid3X3 />
+                        <span>{mode.label} view</span>
+                        <ChevronDown />
+                      </button>
+                    </DropdownMenu.Trigger>
+                    <DropdownMenu.Portal>
+                      <DropdownMenu.Content className="view-menu" sideOffset={6}>
+                        <DropdownMenu.Label>Switch view</DropdownMenu.Label>
+                        {modes.map((item) => (
+                          <DropdownMenu.Item
+                            key={item.id}
+                            onSelect={() => run(() => changeMode(item.id))}
+                            className={doc.mode === item.id ? "checked" : ""}
+                          >
+                            {item.label} view
+                            <span>{doc.mode === item.id ? "✓" : ""}</span>
+                          </DropdownMenu.Item>
+                        ))}
+                      </DropdownMenu.Content>
+                    </DropdownMenu.Portal>
+                  </DropdownMenu.Root>
+                  <small>View</small>
+                </div>
+                <div className="ribbon-group">
+                  <div className="ribbon-tools">
+                    <button
+                      aria-label="Undo"
+                      title={store.undoLabel ? `Undo ${store.undoLabel} (Ctrl+Z)` : "Undo (Ctrl+Z)"}
+                      disabled={!store.canUndo}
+                      onClick={() => run(store.undo)}
+                    >
+                      <Undo2 />
+                      <span>Undo</span>
+                    </button>
+                    <button
+                      aria-label="Redo"
+                      title={
+                        store.redoLabel
+                          ? `Redo ${store.redoLabel} (Ctrl+Shift+Z)`
+                          : "Redo (Ctrl+Shift+Z)"
+                      }
+                      disabled={!store.canRedo}
+                      onClick={() => run(store.redo)}
+                    >
+                      <Redo2 />
+                      <span>Redo</span>
+                    </button>
+                  </div>
+                  <small>History</small>
+                </div>
+              </section>
+            </>
+          )}
           {pending && (
             <div className="progress" role="status">
               {pending}
@@ -395,6 +396,7 @@ function ShellFrame({
             </div>
           )}
           <mode.Component />
+          <UpdateNotice />
         </main>
       </div>
     </ShellContext.Provider>

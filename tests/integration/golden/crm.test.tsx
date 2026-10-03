@@ -196,7 +196,7 @@ it("CRM: Runtime CRUD with master/detail, validation, trigger, action, roles, co
     });
 
     await journey.step("Duplicate company name surfaces the unique constraint", async () => {
-      await user.click(within(page).getByRole("button", { name: "Back" }));
+      await user.click(within(page).getByRole("button", { name: "Back to Companies" }));
       await user.click(await within(page).findByRole("button", { name: "New company" }, LONG));
       const form = await within(page).findByRole("form", { name: "New Company" }, LONG);
       await user.type(within(form).getByRole("textbox", { name: "Name" }), "Acme Corp");

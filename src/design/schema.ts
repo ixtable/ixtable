@@ -305,6 +305,7 @@ function upgradeNav(raw: unknown): NavigationItem {
 /**
  * Brings any stored design (v1/v2/v3) to the current TS shape with defaults filled.
  * Mirrors `design/upgrade.rs`; Rust upgrades on load, this guards hand-written values.
+ * The legacy `main` id rewrite needs the whole config: see `upgradeLegacyIds` (legacyIds.ts).
  */
 export function upgradeDesign(raw: unknown): DesignSchema {
   const design = rec(raw);

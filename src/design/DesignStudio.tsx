@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import type { Placement } from "../grid/types";
 import type { DbObject } from "../lib/types";
 import { ControlProperties } from "./ControlProperties";
@@ -7,6 +7,7 @@ import { DesignPreview } from "./DesignPreview";
 import "./design.css";
 import { FormList } from "./FormList";
 import { FormProperties } from "./FormProperties";
+import { hasLegacyIds, upgradeLegacyIds } from "./legacyIds";
 import { LayoutSettings } from "./LayoutSettings";
 import { NavigationEditor } from "./NavigationEditor";
 import { addControl, setLayout, targetContainer } from "./operations";
@@ -24,7 +25,14 @@ type View = "form" | "navigation" | "preview";
 
 /** Form designer: form list, palette, editable grid canvas, properties, navigation, and preview. */
 export function DesignStudio({ objects }: { objects: DbObject[] }) {
-  const { design, editForm } = useDesignEditor();
+  const { config, design, editForm, update } = useDesignEditor();
+  // A legacy `main` form/navigation id (Rust rewrites it on open; this covers YAML edits).
+  useEffect(() => {
+    if (hasLegacyIds(config))
+      update((draft) => upgradeLegacyIds(draft), "Upgrade form ids", { undoable: false }).catch(
+        () => undefined,
+      );
+  }, [config, update]);
   const [formId, setFormId] = useState<string | undefined>(design.forms[0]?.id);
   const [selected, setSelected] = useState<string>();
   const [activeTabs, setActiveTabs] = useState<Record<string, string>>({});

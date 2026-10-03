@@ -131,6 +131,9 @@ describe.skipIf(!!skip)("ixtable Cloud distribution", () => {
     expect(within(nav).queryByRole("button", { name: "Deal stages" })).not.toBeInTheDocument();
     expect(screen.queryByRole("combobox", { name: "Preview as role" })).not.toBeInTheDocument();
     expect(screen.getAllByText("Role: Sales rep", { exact: false }).length).toBeGreaterThan(0);
+    expect(screen.queryByRole("button", { name: "Undo" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Save project" })).not.toBeInTheDocument();
+    expect(screen.queryByText(/PROJECT \//)).not.toBeInTheDocument();
     await invoke("insert_row", {
       windowLabel: "main",
       table: "companies",

@@ -93,8 +93,6 @@
 .rt-actions button,
 .rt-pager button,
 .rt-related button,
-.rt-back,
-.rt-crumbs button,
 .rt-button,
 .rt-roles button {
   border: 1px solid #d9dce1;
@@ -319,8 +317,23 @@
 .rt-crumbs {
   margin-bottom: 10px;
 }
-.rt-back {
-  margin-bottom: 10px;
+/* Breadcrumb-style back link: text, not a third bordered button. */
+.rt-crumbs button {
+  border: 0;
+  background: transparent;
+  padding: 4px 2px;
+  border-radius: 4px;
+  color: #2f6b3a;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.rt-crumbs button:hover {
+  text-decoration: underline;
+}
+.rt-crumbs button:focus-visible {
+  outline: 2px solid #2f6b3a;
+  outline-offset: 2px;
 }
 /* Disabled runtime buttons (e.g. an action whose enabled-when is false) must look inactive. */
 .rt-actions button:disabled,
@@ -339,4 +352,25 @@
 .rt-roles button svg {
   width: 14px;
   height: 14px;
+}
+/* Yes/no list cells: logical booleans render as a checkmark or a dash, not 1/0. */
+.rt-bool {
+  display: inline-flex;
+  align-items: center;
+}
+.rt-bool-yes {
+  color: #2f6b3a;
+}
+.rt-bool-yes svg {
+  width: 16px;
+  height: 16px;
+}
+.rt-bool-no {
+  color: #8a8f98;
+}
+/* Messages inside a record or related list sit above the fields they are about. */
+.rt-record > .rt-status,
+.rt-record > .rt-error,
+.rt-related > .rt-status {
+  margin: 0 0 12px;
 }

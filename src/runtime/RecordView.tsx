@@ -37,6 +37,7 @@ type Props = {
   onMode: (mode: FormMode, recordId?: unknown) => void;
   onClose: () => void;
   onNavigate: (target: { kind: string; id: string; mode?: string; recordId?: unknown }) => void;
+  onNotify?: (text: string, tone: Notice["tone"]) => void;
 };
 
 const message = (reason: unknown) => {
@@ -55,6 +56,7 @@ export function RecordView({
   onMode,
   onClose,
   onNavigate,
+  onNotify,
 }: Props) {
   const { config } = useDocumentConfig();
   const runtime = useRuntimeNavigation();
@@ -80,6 +82,17 @@ export function RecordView({
   const loadKey = JSON.stringify([form.id, mode, table, recordId ?? null, reload]);
   const [loadedKey, setLoadedKey] = useState<string | null>(null);
   const loading = loadedKey !== loadKey;
+  // A reload of the record already shown keeps it on screen (stale-while-revalidate).
+  const viewKey = JSON.stringify([form.id, mode, table, recordId ?? null]);
+  const [shownView, setShownView] = useState<string | null>(null);
+  const placeholder = loading && shownView !== viewKey;
+  const mounted = useRef(true);
+  useEffect(() => {
+    mounted.current = true;
+    return () => {
+      mounted.current = false;
+    };
+  }, []);
   const [dialog, confirm] = useConfirm();
   const heading = useRef<HTMLHeadingElement>(null);
 
@@ -100,7 +113,11 @@ export function RecordView({
   useEffect(() => {
     let live = true;
     const { app, link, recordId, form } = inputs.current;
-    const done = () => live && setLoadedKey(loadKey);
+    const done = () => {
+      if (!live) return;
+      setLoadedKey(loadKey);
+      setShownView(viewKey);
+    };
     setStatus(null);
     setErrors({ fields: {}, form: [] });
     if (table)
@@ -143,8 +160,8 @@ export function RecordView({
   }, [loadKey]);
 
   useEffect(() => {
-    if (!loading) heading.current?.focus();
-  }, [loading, mode]);
+    if (shownView) heading.current?.focus();
+  }, [shownView]);
 
   const scope: FormScope = useMemo(
     () => ({ record, form: formState, app }),
@@ -195,6 +212,16 @@ export function RecordView({
         )
       : [];
 
+  /**
+   * Shows a message once: next to the form while it stays open, else with the related
+   * list an embedded form closes into, else on the page (an action navigated away).
+   */
+  const announce = (text: string, tone: Notice["tone"] = "info") => {
+    if (mounted.current && !embedded) setNotice({ text, tone });
+    else if (onNotify) onNotify(text, tone);
+    else runtime.notify(text, tone);
+  };
+
   const save = async () => {
     const result = validateForm(form, scope);
     setErrors(result);
@@ -223,7 +250,7 @@ export function RecordView({
         keyNames.forEach((name, i) => {
           if (saved[name] == null) saved[name] = fromDataValue(id[i]);
         });
-        runtime.notify("Record created.");
+        announce("Record created.");
         if (embedded) onClose();
         else onMode("detail", recordIdFor(schema, saved, id));
       } else {
@@ -237,7 +264,7 @@ export function RecordView({
             expected: expectedValues(),
             old: original,
           });
-        runtime.notify("Changes saved.");
+        announce("Changes saved.");
         if (embedded) onClose();
         else onMode("detail", recordId);
       }
@@ -276,10 +303,7 @@ export function RecordView({
           ? setFormState((s) => ({ ...s, [key]: value }))
           : runtime.setAppState(key, value),
       confirm,
-      notify: (text, tone = "info") => {
-        setNotice({ text, tone });
-        runtime.notify(text, tone);
-      },
+      notify: (text, tone = "info") => announce(text, tone),
       authorize: (kind, id, op) => can(config, roleId, kind, id, op as "read"),
       refresh: () => (mode === "detail" ? setReload((n) => n + 1) : onMode(mode, recordId)),
     })
@@ -351,9 +375,9 @@ export function RecordView({
               Delete
             </button>
           )}
-          {mode === "detail" && (
+          {mode === "detail" && embedded && (
             <button type="button" onClick={onClose}>
-              {embedded ? "Close" : "Back"}
+              Close
             </button>
           )}
         </div>
@@ -379,7 +403,7 @@ export function RecordView({
           ))}
         </ul>
       )}
-      {loading ? (
+      {placeholder ? (
         <p className="rt-muted">Loading record…</p>
       ) : (
         <ControlGrid ctx={ctx} parent={null} />

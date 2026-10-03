@@ -36,5 +36,5 @@ export function useDesignEditor() {
       ),
     [editForm],
   );
-  return { config, design, editDesign, editForm, editControl };
+  return { config, design, update, editDesign, editForm, editControl };
 }

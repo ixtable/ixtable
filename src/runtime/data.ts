@@ -212,7 +212,28 @@ export async function relationshipLabel(
   const hit = await loadRecord(relationship.table, { [relationship.valueColumn]: value }).catch(
     () => null,
   );
-  return hit ? String(hit.record[relationship.displayColumn] ?? value) : String(value);
+  const label = hit ? String(hit.record[relationship.displayColumn] ?? value) : String(value);
+  shownLabels.set(labelKey(relationship, value), label);
+  return label;
+}
+
+/** Last label shown per relationship key, so a reloaded field shows it while it revalidates. */
+const shownLabels = new Map<string, string>();
+const labelKey = (relationship: Relationship, value: unknown) =>
+  JSON.stringify([
+    relationship.table,
+    relationship.valueColumn,
+    relationship.displayColumn,
+    String(value),
+  ]);
+
+/** The label `relationshipLabel` last returned for this key, if any (stale-while-revalidate). */
+export function cachedRelationshipLabel(
+  relationship: Relationship,
+  value: unknown,
+): string | undefined {
+  if (value == null || value === "") return "";
+  return shownLabels.get(labelKey(relationship, value));
 }
 
 /** Choices from a saved query: first column is the value, second (optional) the label. */

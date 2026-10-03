@@ -1,15 +1,19 @@
-import { type ComponentType, createElement, useEffect, useState } from "react";
+import { type ComponentType, createElement, useContext, useEffect, useState } from "react";
 import * as dashboardsModule from "../dashboards";
 import type { NavigationItem } from "../design/schema";
 import { useDocumentConfig } from "../lib/config-store";
 import type { TableSchema } from "../lib/types";
 import { ReportPreview } from "../reports";
+import { ShellContext } from "../shell/context";
+import { type BackLink, BackCrumb } from "./BackCrumb";
 import { tableSchema } from "./data";
 import { FormRenderer } from "./FormRenderer";
 import {
   canOpen,
   pageFor,
+  pageTitle,
   RuntimeContext,
+  type RuntimeNavigation,
   type RuntimePage,
   startPage,
   useRuntimeNavigation,
@@ -39,34 +43,40 @@ function Embedded({
 export function RunMode() {
   const { config } = useDocumentConfig();
   const runtime = useRuntimeState(config);
+  // Runtime-only windows (bundles, cloud installations) show the app, not Studio chrome.
+  const runtimeOnly = useContext(ShellContext)?.doc.runtimeOnly ?? false;
   const page = runtime.page ?? startPage(config, runtime.roleId);
   const navigation = visibleNavigation(config.design?.navigation ?? [], config, runtime.roleId);
   const roles = config.roles ?? [];
+  const assigned = assignedRuntimeRole();
+  const back = usePageBack(runtime);
   return (
     <RuntimeContext.Provider value={runtime}>
       <header className="titlebar">
         <div>
-          <p>PROJECT / RUNTIME · {config.name}</p>
-          <h1>Runtime</h1>
+          {!runtimeOnly && <p>PROJECT / RUNTIME · {config.name}</p>}
+          <h1>{runtimeOnly ? config.name : "Runtime"}</h1>
         </div>
         <div className="header-actions">
-          {assignedRuntimeRole() ? (
-            <span className="rt-role">Role: {assignedRuntimeRole()?.name}</span>
+          {assigned ? (
+            <span className="rt-role">Role: {assigned.name}</span>
           ) : (
-            <label className="rt-role">
-              Preview as role
-              <select
-                value={runtime.roleId ?? ""}
-                onChange={(e) => runtime.setRoleId(e.target.value || null)}
-              >
-                <option value="">Developer (full access)</option>
-                {roles.map((role) => (
-                  <option key={role.id} value={role.id}>
-                    {role.name}
-                  </option>
-                ))}
-              </select>
-            </label>
+            !runtimeOnly && (
+              <label className="rt-role">
+                Preview as role
+                <select
+                  value={runtime.roleId ?? ""}
+                  onChange={(e) => runtime.setRoleId(e.target.value || null)}
+                >
+                  <option value="">Developer (full access)</option>
+                  {roles.map((role) => (
+                    <option key={role.id} value={role.id}>
+                      {role.name}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            )
           )}
         </div>
       </header>
@@ -87,15 +97,11 @@ export function RunMode() {
               {runtime.notice.message}
             </p>
           )}
-          {runtime.canGoBack && (
-            <button type="button" className="rt-back" onClick={runtime.back}>
-              ← Previous page
-            </button>
-          )}
           {page ? (
             <PageView
               key={`${runtime.roleId ?? ""}:${runtime.visit}:${JSON.stringify(page)}`}
               page={page}
+              back={back}
             />
           ) : (
             <p className="rt-muted">This application has no pages yet.</p>
@@ -104,6 +110,13 @@ export function RunMode() {
       </div>
     </RuntimeContext.Provider>
   );
+}
+
+/** The page trail's back link target, or null at the root of a trail. */
+function usePageBack(runtime: RuntimeNavigation): BackLink | null {
+  const { config } = useDocumentConfig();
+  if (!runtime.canGoBack || !runtime.previous) return null;
+  return { label: pageTitle(config, runtime.previous), onBack: runtime.back };
 }
 
 function NavList({ items, active }: { items: NavigationItem[]; active?: string }) {
@@ -136,7 +149,7 @@ function NavList({ items, active }: { items: NavigationItem[]; active?: string }
 }
 
 /** One runtime page; RBAC is re-checked here so direct navigation (actions) is enforced too. */
-export function PageView({ page }: { page: RuntimePage }) {
+export function PageView({ page, back = null }: { page: RuntimePage; back?: BackLink | null }) {
   const { config } = useDocumentConfig();
   const { roleId } = useRuntimeNavigation();
   if (!canOpen(config, roleId, page))
@@ -152,20 +165,29 @@ export function PageView({ page }: { page: RuntimePage }) {
           formId={page.id}
           mode={page.mode as "list" | undefined}
           recordId={page.recordId}
+          back={back}
         />
       );
     case "table":
-      return <TablePage table={page.id} />;
+      return <TablePage table={page.id} back={back} />;
     case "report":
-      return <ReportPreview reportId={page.id} params={page.params} />;
+      return (
+        <>
+          {back && <BackCrumb back={back} />}
+          <ReportPreview reportId={page.id} params={page.params} />
+        </>
+      );
     case "dashboard":
       return (
-        <Embedded
-          module={dashboardsModule}
-          name="DashboardView"
-          missing="Dashboards are not available in this build."
-          dashboardId={page.id}
-        />
+        <>
+          {back && <BackCrumb back={back} />}
+          <Embedded
+            module={dashboardsModule}
+            name="DashboardView"
+            missing="Dashboards are not available in this build."
+            dashboardId={page.id}
+          />
+        </>
       );
     default:
       return null;
@@ -173,7 +195,7 @@ export function PageView({ page }: { page: RuntimePage }) {
 }
 
 /** A table navigation item: the generated CRUD forms for the table, built in memory. */
-function TablePage({ table }: { table: string }) {
+function TablePage({ table, back }: { table: string; back: BackLink | null }) {
   const [schema, setSchema] = useState<TableSchema | null>(null);
   const [error, setError] = useState("");
   useEffect(() => {
@@ -188,5 +210,5 @@ function TablePage({ table }: { table: string }) {
       </p>
     );
   if (!schema) return <p className="rt-muted">Loading…</p>;
-  return <FormRenderer formId={tableForms(schema).list.id} mode="list" />;
+  return <FormRenderer formId={tableForms(schema).list.id} mode="list" back={back} />;
 }

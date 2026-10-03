@@ -4,7 +4,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 mod checks;
-mod upgrade;
+pub mod upgrade;
 pub use checks::{table_issues, validate, validate_tables};
 /// Grid rules shared with dashboards (PRD §13: one grid system for forms and dashboards).
 pub(crate) use checks::{
@@ -423,24 +423,27 @@ pub struct NavigationItem {
 }
 
 impl Default for DesignSchema {
+    /// A new document's design: one empty form and its navigation item, with UUIDv7 ids.
     fn default() -> Self {
+        let form_id = uuid::Uuid::now_v7().to_string();
+        let nav_id = uuid::Uuid::now_v7().to_string();
         Self {
             version: DESIGN_SCHEMA_VERSION,
             forms: vec![Form {
-                id: "main".into(),
+                id: form_id.clone(),
                 name: "Main form".into(),
                 modes: default_modes(),
                 page_size: default_page_size(),
                 ..Default::default()
             }],
             navigation: vec![NavigationItem {
-                id: "main".into(),
+                id: nav_id.clone(),
                 label: "Main form".into(),
                 kind: NavKind::Form,
-                target_id: Some("main".into()),
+                target_id: Some(form_id),
                 ..Default::default()
             }],
-            start_page: Some("main".into()),
+            start_page: Some(nav_id),
         }
     }
 }

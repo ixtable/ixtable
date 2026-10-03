@@ -116,6 +116,7 @@ it("models a table with keys, a relationship, constraints, and an index", async 
     expectations: [
       "All four tables appear with their key and foreign-key fields marked.",
       "Edges connect orders to customers, order_items to orders, and shipments to orders.",
+      "Tables sit in dependency columns (customers, then orders, then order_items and shipments), so no edge runs behind a table.",
     ],
   });
 });

@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { type BackLink, BackCrumb } from "./BackCrumb";
 import type { FormMode } from "../design/schema";
 import { useDocumentConfig } from "../lib/config-store";
 import { ListView } from "./ListView";
@@ -18,20 +19,33 @@ export type FormRendererProps = {
   embedded?: boolean;
   /** Called when the form is closed from its first view (embedded or after delete). */
   onDone?: () => void;
+  /** Back link to the previous runtime page, shown while the form is on its first view. */
+  back?: BackLink | null;
+  /** Receives an embedded form's messages (it closes after saving), to show near the list. */
+  onNotify?: (text: string, tone: "info" | "error") => void;
 };
 
 type View = { formId: string; mode: FormMode; recordId?: unknown };
 
 /**
  * Renders a form in list, detail, create, or edit mode. Navigation between list and
- * detail stays inside the renderer (with Back), so it also works embedded in dashboards.
+ * detail stays inside the renderer (with a back link), so it also works embedded in dashboards.
  */
 export function FormRenderer(props: FormRendererProps) {
   const key = JSON.stringify([props.formId, props.mode ?? null, props.recordId ?? null]);
   return <FormStack key={key} {...props} />;
 }
 
-function FormStack({ formId, mode, recordId, link, embedded = false, onDone }: FormRendererProps) {
+function FormStack({
+  formId,
+  mode,
+  recordId,
+  link,
+  embedded = false,
+  onDone,
+  back = null,
+  onNotify,
+}: FormRendererProps) {
   const { config } = useDocumentConfig();
   const runtime = useRuntimeNavigation();
   const initial = resolveForm(config, formId);
@@ -60,8 +74,15 @@ function FormStack({ formId, mode, recordId, link, embedded = false, onDone }: F
   const replace = (next: View) => setStack((items) => [...items.slice(0, -1), next]);
   const close = () => {
     if (stack.length > 1) setStack((items) => items.slice(0, -1));
-    else onDone?.();
+    else (onDone ?? back?.onBack)?.();
   };
+  // One back affordance: to the view this one was opened from, else to the previous page.
+  const previous = stack.length > 1 ? stack[stack.length - 2] : null;
+  const crumb: BackLink | null = embedded
+    ? null
+    : previous
+      ? { label: resolveForm(config, previous.formId)?.name ?? "previous view", onBack: close }
+      : back;
   const navigate = (target: { kind: string; id: string; mode?: string; recordId?: unknown }) => {
     if (runtime.attached && !embedded) {
       runtime.navigate({ ...target, kind: target.kind as PageKind });
@@ -78,22 +99,19 @@ function FormStack({ formId, mode, recordId, link, embedded = false, onDone }: F
   if (view.mode === "list") {
     const detailId = form.detailFormId || form.id;
     return (
-      <ListView
-        form={form}
-        onOpen={(id) => push({ formId: detailId, mode: "detail", recordId: id })}
-        onCreate={() => push({ formId: detailId, mode: "create" })}
-      />
+      <div className="rt-form">
+        {crumb && <BackCrumb back={crumb} />}
+        <ListView
+          form={form}
+          onOpen={(id) => push({ formId: detailId, mode: "detail", recordId: id })}
+          onCreate={() => push({ formId: detailId, mode: "create" })}
+        />
+      </div>
     );
   }
   return (
     <div className="rt-form">
-      {stack.length > 1 && !embedded && (
-        <nav aria-label="Form history" className="rt-crumbs">
-          <button type="button" onClick={close}>
-            ← Back
-          </button>
-        </nav>
-      )}
+      {crumb && <BackCrumb back={crumb} />}
       <RecordView
         form={form}
         mode={view.mode}
@@ -103,6 +121,7 @@ function FormStack({ formId, mode, recordId, link, embedded = false, onDone }: F
         onMode={(next, id) => replace({ formId: form.id, mode: next, recordId: id })}
         onClose={close}
         onNavigate={navigate}
+        onNotify={onNotify}
       />
     </div>
   );

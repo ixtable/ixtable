@@ -189,11 +189,20 @@ impl DocumentManager {
     pub fn open(&self, window: &str, path: &Path) -> Result<SessionState, AppError> {
         let id = Uuid::new_v4().to_string();
         let workspace = self.recovery_root.join(&id);
-        let doc = archive_io::extract_to(path, &workspace).map_err(|e| {
+        let mut doc = archive_io::extract_to(path, &workspace).map_err(|e| {
             let _ = fs::remove_dir_all(&workspace);
             logging::warn("open", &format!("could not open {}: {e}", path.display()));
             AppError::from(e)
         })?;
+        // Studio upgrade: the old default form/navigation id `main` becomes a UUIDv7.
+        match crate::design::upgrade::rekey_legacy_ids(&mut doc.config) {
+            Ok(ids) if ids != Default::default() => {
+                archive_io::write_config_files(&workspace, &doc.config)?;
+                logging::info("open", "replaced legacy `main` design ids with UUIDv7 ids");
+            }
+            Ok(_) => {}
+            Err(e) => logging::warn("open", &format!("could not upgrade legacy ids: {e}")),
+        }
         self.global
             .add_recent(path)
             .map_err(|e| AppError::new("IO_ERROR", e))?;

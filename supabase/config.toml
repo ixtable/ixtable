@@ -142,3 +142,69 @@ verify_jwt = false
 # authentication.
 [functions.desktop-auth-exchange]
 verify_jwt = false
+
+# Credentials and desktop sign-in (C1b). These authenticate the caller in code
+# as well; the gateway check is defense in depth.
+[functions.credential-envelope]
+verify_jwt = true
+
+[functions.credential-delete]
+verify_jwt = true
+
+[functions.key-grant]
+verify_jwt = true
+
+[functions.devices-revoke]
+verify_jwt = true
+
+[functions.desktop-auth-approve]
+verify_jwt = true
+
+# Distribution (apps, roles, invitations, members, archives, versions,
+# bundles, sync, backups). Each also authenticates the caller in code.
+[functions.apps-create]
+verify_jwt = true
+
+[functions.apps-delete]
+verify_jwt = true
+
+[functions.apps-transfer]
+verify_jwt = true
+
+[functions.roles-sync]
+verify_jwt = true
+
+[functions.invitations-create]
+verify_jwt = true
+
+[functions.invitations-accept]
+verify_jwt = true
+
+[functions.members-update]
+verify_jwt = true
+
+[functions.archive-upload-url]
+verify_jwt = true
+
+[functions.publish-checkpoint]
+verify_jwt = true
+
+[functions.versions-resolve]
+verify_jwt = true
+
+[functions.restore-url]
+verify_jwt = true
+
+[functions.bundle-manifest]
+verify_jwt = true
+
+[functions.sync-check]
+verify_jwt = true
+
+[functions.backup-commit]
+verify_jwt = true
+
+# Scheduler only: the service role key (Bearer) or the CRON_SECRET header is
+# checked in code, so a non-JWT scheduler secret also works.
+[functions.retention-sweep]
+verify_jwt = false

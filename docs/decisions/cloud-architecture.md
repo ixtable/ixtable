@@ -150,6 +150,26 @@ download, key grant and backup upload. `stripe-webhook` verifies the
 `BILLING_PROVIDER=fake` (local/QA) returns website URLs; the flow completes
 with a Stripe-shaped event signed by the same secret.
 
+Webhook ordering (`_shared/billing.ts` `decideSubscriptionEvent`): the
+subscription row keeps `provider_event_at` (the newest applied
+`event.created`); older events are recorded as `stale` and not applied, and
+the update is a compare-and-set on that column. Events about a subscription
+other than the app's current one are ignored, except a new purchase, which
+replaces it (the old one is canceled with the provider). `invoice.payment_failed`
+moves active to `past_due` (grace), `invoice.paid` recovers it. Each event's
+`outcome` (applied, ignored, stale, failed) is stored on `billing_events`;
+a failed one returns 500 so Stripe retries, and a processed one is
+acknowledged as a duplicate. Access-relevant changes are audited as
+`billing.subscription_activated|past_due|canceled|inactive`,
+`billing.payment_recovered`, `billing.plan_changed`, `billing.cancel_scheduled|reverted`.
+A downgrade below the active Runtime Users is allowed and reported as
+`over_allowance` until members are revoked. The fake checkout records a
+`billing_checkout_sessions` row that `billing-fake-complete` consumes once.
+Account deletion purges the caller's apps (soft delete and audit first,
+then the rows, since `cloud_apps.owner_id` is `ON DELETE RESTRICT`).
+Per-endpoint limits live in `RATE_LIMITS` (`_shared/rateLimit.ts`).
+Operations: `docs/ops/`.
+
 ### Local stack and secrets
 
 `node scripts/cloud/up.mjs` (`npm run service-qa:up`) starts the stack with
@@ -185,3 +205,94 @@ variable. Google and Microsoft sign-in are configured but disabled locally;
 - `supabase/functions/_shared/*_test.ts` (`npm run service-qa:deno`): crypto
   vectors and Node interoperability, Stripe signatures, CORS, error mapping,
   validators.
+
+## Distribution functions
+
+Status: accepted. Functions `apps-create`, `apps-delete`, `apps-transfer`,
+`roles-sync`, `invitations-create`, `invitations-accept`, `members-update`,
+`archive-upload-url`, `publish-checkpoint`, `versions-resolve`,
+`restore-url`, `bundle-manifest`, `sync-check`, `backup-commit`,
+`retention-sweep`. Shared code: `supabase/functions/_shared/distribution.ts`
+(pure helpers unit tested in `distribution_test.ts`). Migrations
+`20261003100000_distribution_functions.sql` and
+`20261003100100_distribution_withdraw.sql` add service-role-only SQL
+functions that run each check and write in one transaction under a row lock
+on the app: `distribution_commit_version`, `distribution_commit_backup`,
+`distribution_accept_invitation`, `distribution_activate_member`,
+`distribution_update_member`, `distribution_withdraw_version`. They raise
+`IXnnn` SQLSTATEs that `mapDbError` turns into the error contract (IX404
+NOT_FOUND, IX409 VERSION_CONFLICT with `details.headVersionId`, IX402
+ENTITLEMENT_REQUIRED with `details.reason`, IX403 FORBIDDEN, IX410/IX422
+VALIDATION, IX423 VALIDATION with `details {requiresConfirm, installations}`).
+
+### Rules
+
+| Function | Who | Gates | Audit |
+|---|---|---|---|
+| apps-create `{orgId, name, documentId, datasourceKind?}` → `{app}` | org owner/admin/member (billing 403, outsider 404) | one live app per (org, documentId), else 422 with `details.appId` | app.create |
+| apps-delete `{appId, confirm}` → `{appId, deletedAt, subscriptionStatus}` | app owner or org owner | `confirm` = app name; soft delete; revokes members, installations, key grants, pending invitations | app.delete (`billingCancellationRequired`) |
+| apps-transfer `{appId, newOwnerId, confirm}` → `{app}` | current owner | new owner is an org owner/admin/member; their Runtime User row is removed | app.transfer |
+| roles-sync `{appId, roles:[{id,name,permissions}]}` → `{roles, kept}` | owner | upsert by desktop id; absent roles deleted unless a member or pending invitation uses them (`kept`) | role.sync |
+| invitations-create `{kind:"app", appId, email, roleId}` \| `{kind:"org", orgId, email, role}` → `{invitation, acceptUrl, delivery}` | app admin / org owner-admin | revokes older pending invitations for the same email and target | invitation.create |
+| invitations-accept `{token}` → `{membership}` | invitee with the verified invited email | single use, 7 days; app: entitlement with room for one more (402) | invitation.accept + member.add / org_member.add |
+| members-update `{appId, userId, roleId?, status?}` → `{member}` | app admin | re-activation needs allowance (402) | member.role_change / member.revoke / member.activate |
+| archive-upload-url `{appId, kind, size, sha256, installationId?}` → `{uploadId, path, signedUrl, token, expiresAt}` | version: owner; backup: owner or active member, backups enabled | ≤ 500 MB (413), entitlement; backup registers the installation | archive.upload |
+| publish-checkpoint (contract fields) → `{version}` | owner | entitlement, head precondition (409), version > head (422), security summary, stored object size | version.publish |
+| versions-resolve overwrite / fork / withdraw | owner | see below | version.overwrite / version.fork (+ app.create) / version.withdraw |
+| restore-url `{appId, versionId \| backupId}` → `{signedUrl, sha256, size, isPostgres, warning, kind, id, expiresAt}` | versions: owner; backups: owner or the backup's user | 15-minute URL | version.restore / backup.restore |
+| bundle-manifest `{appId, installationId, deviceName?}` → `{manifest, signature, archiveUrl, archiveUrlExpiresAt}` | owner or active member (403 FORBIDDEN / REVOKED) | entitlement, installation not revoked or foreign | bundle.generate |
+| sync-check `{appId, installedVersionId, installationId}` → `{upToDate, latest}` | same as bundle | records `installed_version_id`, `last_seen_at` | none |
+| backup-commit `{appId, uploadId, installationId}` → `{backup}` | owner or active member | backups enabled, entitlement, the caller's own installation and upload | backup.upload |
+| retention-sweep `{appId?}` → `{deleted, versions, backups, uploads, desktopAuthRequests}` | service role key (Bearer) or `x-cron-secret` = `CRON_SECRET` | `verify_jwt = false` | retention.sweep |
+
+- **Uploads.** The upload id is also the version or backup id, so the
+  storage path is fixed when the URL is minted. Commits check the stored
+  object's size (Storage list metadata) against the declared size and mark
+  the upload `committed`; a consumed, expired or mismatched upload is 422.
+  The signed upload URL refuses a second PUT (no upsert). The server does not
+  re-hash archives; the desktop verifies sha256 against the signed manifest.
+- **Security summary.** Stored normalized on the version: `{store,
+  credentialMode, tls, sslmode, insecureTransportConfirmed(At),
+  sharedCredentialAcknowledged, concurrencyPoliciesResolved,
+  unresolvedEntities}`. Desktop preflight names are accepted as aliases
+  (`insecureOverrideConfirmed`, `sharedCredentialWarningAcknowledged`,
+  `entityPoliciesResolved`). A PostgreSQL summary without `credentialMode
+  "perUser"` counts as shared. Concurrency policies are required when the
+  app has more than one active Runtime User or the plan allows more than one.
+  Publishing sets `cloud_apps.datasource_kind` from `store`.
+- **versions-resolve.** `overwrite` takes the publish fields plus
+  `fromVersionId` (the head from the 409) and publishes with resolution
+  `overwrite`. `fork` creates a new app in the same org owned by the caller
+  (roles copied; no members or subscription; `documentId` defaults to
+  `<documentId>:fork:<newAppId>` because one document links to one live app
+  per org) from either the caller's pending upload (moved to the new app's
+  path) or a copy of a published `fromVersionId`; returns `{app, version}`.
+  `withdraw {versionId, confirm?}` marks a published version withdrawn and,
+  when it was the head, moves the head to the most recently published
+  remaining version (null when none); withdrawing the last published version
+  that installations run needs `confirm: true`. Returns `{version,
+  headVersionId, dependentInstallations}`. Withdraw is not entitlement-gated.
+- **Manifest.** Exactly the PLAN fields plus `roleName`; the owner gets
+  `roleId`, `roleName` and `rolePermissions` null. `expiresAt` is issue time
+  plus 24 hours; the archive URL lives 15 minutes.
+- **Invitation delivery.** An email with no account gets a Supabase Auth
+  invitation (`inviteUserByEmail`, redirect to the accept link); an existing
+  account gets a sign-in link (`signInWithOtp`, `shouldCreateUser: false`)
+  to the accept link. `delivery` is `invite`, `magic_link` or `none`.
+- **Signed URLs** minted inside the Edge runtime use its internal API host
+  locally (`http://kong:8000`); `publicUrl` rewrites them to
+  `SUPABASE_PUBLIC_URL` when set, else the request's forwarded host.
+- **Retention.** Per app: versions beyond `retention_versions` or older than
+  `retention_days` are deleted (storage object first, then the row), never
+  the head or a version an installation reports as installed. Each
+  installation's backup stream follows the same rule but always keeps its
+  newest backup. Pending uploads past expiry become `expired`. A full sweep
+  also deletes `desktop_auth_requests` expired over an hour ago.
+- **Rate limits** (per user, fixed window): apps-create 20/h, apps-delete and
+  apps-transfer 10/h, roles-sync 60/h, invitations-create 30/h,
+  invitations-accept 20/10 min, members-update 120/h, archive-upload-url
+  60/h, publish-checkpoint 30/h, versions-resolve 20/h, restore-url 60/h,
+  bundle-manifest 60/h, sync-check 240/h, backup-commit 60/h.
+
+Evidence: `web/e2e/service-qa/specs/{apps-journey,apps,invitations,members,publish,versions,bundle,backup,retention}.spec.ts`
+(helpers in `distribution-fixtures.ts`).

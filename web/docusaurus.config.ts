@@ -61,20 +61,23 @@ const config: Config = {
   ],
 
   themeConfig: {
-    image: "img/social-card.svg",
+    image: "img/social-card.png",
     colorMode: {
       respectPrefersColorScheme: true,
     },
     navbar: {
       title: "ixtable",
       logo: {
-        alt: "ixtable logo",
-        src: "img/favicon.svg",
+        alt: "ixtable",
+        src: "img/logo.svg",
+        srcDark: "img/logo-dark.svg",
+        width: 28,
+        height: 28,
       },
       items: [
         {
           type: "docSidebar",
-          sidebarId: "tutorialSidebar",
+          sidebarId: "docsSidebar",
           position: "left",
           label: "Docs",
         },

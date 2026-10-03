@@ -5,6 +5,8 @@ import styles from "./index.module.css";
 import dataViewImage from "../../docs/assets/data-view.png";
 import formBuilderImage from "../../docs/assets/design-view.png";
 import appPreviewImage from "../../docs/assets/app-preview.png";
+// Self-hosted copy of an Unsplash photo, so the landing page makes no third-party requests.
+import workspacePhoto from "@site/static/img/workspace.jpg";
 
 const features = [
   {
@@ -147,7 +149,7 @@ export default function Home(): ReactNode {
         <section className={styles.splitSection}>
           <div className={styles.photoWrap}>
             <img
-              src="https://images.unsplash.com/photo-1680963551392-f17f6d9eca71?auto=format&fit=crop&w=1400&q=85"
+              src={workspacePhoto}
               alt="A tidy workspace with a notebook, keyboard, and monitor"
               loading="eager"
             />

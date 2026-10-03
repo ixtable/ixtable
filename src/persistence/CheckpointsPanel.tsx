@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { asTauriError, type TauriError } from "../lib/api";
 import { useShell } from "../shell/context";
 import { createCheckpoint, listCheckpoints, restoreCheckpointAsCopy } from "./api";
@@ -13,7 +13,14 @@ export function CheckpointsPanel() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<TauriError | null>(null);
   const [status, setStatus] = useState("");
-  const refresh = useCallback(async () => setCheckpoints(await listCheckpoints()), []);
+  // Only the newest listing may land: a slow initial load must not overwrite
+  // the list fetched after a create.
+  const latest = useRef(0);
+  const refresh = useCallback(async () => {
+    const request = ++latest.current;
+    const next = await listCheckpoints();
+    if (request === latest.current) setCheckpoints(next);
+  }, []);
   useEffect(() => {
     refresh().catch((reason: unknown) => setError(asTauriError(reason)));
   }, [refresh]);
@@ -23,8 +30,10 @@ export function CheckpointsPanel() {
     setError(null);
     setStatus("");
     try {
-      setStatus(await action());
+      const message = await action();
+      // Refresh before announcing, so the status never contradicts the list.
       await refresh();
+      setStatus(message);
     } catch (reason) {
       setError(asTauriError(reason));
     } finally {

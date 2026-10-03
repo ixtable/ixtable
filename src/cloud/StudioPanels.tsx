@@ -103,7 +103,13 @@ export function LinkPanel() {
         private: nobody can find or download it without an invitation.
       </p>
       <form className="cloud-form" onSubmit={create}>
-        {orgs && orgs.length > 0 ? (
+        {orgs === null ? (
+          // The organization field depends on the list, so it appears only once
+          // the list is in: typing into a field that then swaps out loses input.
+          <p className="cloud-muted" role="status">
+            Loading organizations…
+          </p>
+        ) : orgs.length > 0 ? (
           <label>
             Organization
             <select value={orgId} onChange={(e) => setOrgId(e.target.value)}>

@@ -11,7 +11,9 @@
       "!**/.generated",
       "!src-tauri/resources",
       "!src-tauri/gen",
-      "!**/.evidence"
+      "!**/.evidence",
+      "!**/test-results",
+      "!**/playwright-report"
     ]
   },
   "formatter": {

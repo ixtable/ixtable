@@ -15,8 +15,10 @@ async function capture(
     for (const image of images) image.loading = "eager";
     await Promise.all(
       images.map((image) =>
-        image.complete && image.naturalWidth > 0
-          ? Promise.resolve()
+        image.complete
+          ? image.naturalWidth > 0
+            ? Promise.resolve()
+            : Promise.reject(new Error(`Failed to load ${image.src}`))
           : new Promise<void>((resolve, reject) => {
               image.addEventListener("load", () => resolve(), { once: true });
               image.addEventListener(
@@ -34,6 +36,12 @@ async function capture(
     `${JSON.stringify({ name, capturedAt: new Date().toISOString(), expectations }, null, 2)}\n`,
   );
 }
+
+// An empty React Flow canvas (background dots, zoom controls, minimap) scores
+// under 200 dark pixels; the generated 1280x800 screenshots with four table
+// nodes score about 1,700. The bound sits well clear of both, so it catches a
+// blank canvas without tracking font or contrast changes in the app.
+const MIN_FLOW_DARK_PIXELS = 1_000;
 
 async function darkPixelsInFlowCanvas(page: Page, imageName: RegExp): Promise<number> {
   const image = page.getByRole("img", { name: imageName });
@@ -71,7 +79,10 @@ async function darkPixelsInFlowCanvas(page: Page, imageName: RegExp): Promise<nu
 }
 
 test.describe("web QA", () => {
-  test.beforeAll(async () => {
+  test("documentation screenshots show current generated assets", async ({ page }) => {
+    // Drop old captures first so a failed run cannot leave stale proof behind.
+    // This lives in the test, not beforeAll: fullyParallel runs beforeAll once
+    // per worker, and another worker would delete this test's fresh captures.
     await Promise.all(
       ["docs-01-overview-desktop", "docs-02-data-view-desktop", "docs-03-overview-mobile"].flatMap(
         (name) => [
@@ -80,9 +91,6 @@ test.describe("web QA", () => {
         ],
       ),
     );
-  });
-
-  test("documentation screenshots show current generated assets", async ({ page }) => {
     await page.setViewportSize({ width: 1440, height: 1000 });
     await page.goto("/docs/");
     await expect(page.getByRole("heading", { level: 1, name: "Overview" })).toBeVisible();
@@ -94,8 +102,12 @@ test.describe("web QA", () => {
 
     await page.goto("/docs/concepts/data-view");
     await expect(page.getByRole("heading", { level: 1, name: "Data view" })).toBeVisible();
-    expect(await darkPixelsInFlowCanvas(page, /full Data view workspace/i)).toBeGreaterThan(2_000);
-    expect(await darkPixelsInFlowCanvas(page, /new order entered/i)).toBeGreaterThan(2_000);
+    expect(await darkPixelsInFlowCanvas(page, /full Data view workspace/i)).toBeGreaterThan(
+      MIN_FLOW_DARK_PIXELS,
+    );
+    expect(await darkPixelsInFlowCanvas(page, /new order entered/i)).toBeGreaterThan(
+      MIN_FLOW_DARK_PIXELS,
+    );
     const flowImage = page.getByRole("img", { name: /Customers, Products, Orders/i });
     await expect(flowImage).toBeVisible();
     await flowImage.evaluate(async (image: HTMLImageElement) => {
@@ -139,7 +151,9 @@ test.describe("web QA", () => {
       page.getByRole("heading", { name: /More capable than a spreadsheet/i }),
     ).toBeVisible();
     await expect(page.getByRole("img", { name: /DataView TableView/i })).toBeVisible();
-    expect(await darkPixelsInFlowCanvas(page, /DataView TableView/i)).toBeGreaterThan(2_000);
+    expect(await darkPixelsInFlowCanvas(page, /DataView TableView/i)).toBeGreaterThan(
+      MIN_FLOW_DARK_PIXELS,
+    );
     await expect(page.getByRole("img", { name: /production form builder/i })).toBeVisible();
     await expect(page.getByRole("img", { name: /Published inventory app/i })).toBeVisible();
     const workspacePhoto = page.getByRole("img", { name: /tidy workspace/i });
@@ -154,6 +168,38 @@ test.describe("web QA", () => {
       "Feature sections form a clear editorial rhythm without clipped or overlapping content.",
       "The final call to action is visible at the bottom of the page.",
     ]);
+  });
+
+  test("navbar shows the ixtable mark in light and dark themes", async ({ page }) => {
+    for (const [colorScheme, file] of [
+      ["light", "logo.svg"],
+      ["dark", "logo-dark.svg"],
+    ] as const) {
+      await page.emulateMedia({ colorScheme });
+      await page.setViewportSize({ width: 1440, height: 1000 });
+      await page.goto("/");
+      const logo = page
+        .getByRole("navigation", { name: "Main" })
+        .getByRole("img", { name: "ixtable" })
+        .filter({ visible: true });
+      await expect(logo).toHaveAttribute("src", new RegExp(`/img/${file}$`));
+      await expect
+        .poll(() => logo.evaluate((image: HTMLImageElement) => image.naturalWidth))
+        .toBeGreaterThan(0);
+      await expect(page.locator('link[rel="icon"]')).toHaveAttribute(
+        "href",
+        /\/img\/favicon\.svg$/,
+      );
+      await capture(
+        page,
+        `landing-03-navbar-${colorScheme}`,
+        [
+          `The navbar shows the ixtable "ix" tile in the ${colorScheme} theme, next to the ixtable title.`,
+          "The mark is crisp, centered, and contrasts with the navbar background.",
+        ],
+        false,
+      );
+    }
   });
 
   test("landing page remains usable on mobile", async ({ page }) => {

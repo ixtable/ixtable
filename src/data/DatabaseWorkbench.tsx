@@ -63,6 +63,10 @@ export function DatabaseWorkbench() {
     previewTableChanges(drawn.childTable, relationOp(drawn))
       .then((plan) => setRelating({ drawn, plan, error: "" }))
       .catch((e) => setError(asTauriError(e).message));
+  // `schemasFor` is the object list the schemas were inspected for. The designer
+  // waits until they match, so it never opens on (and is not then remounted
+  // from) a schema that a DDL change has just made stale.
+  const [schemasFor, setSchemasFor] = useState<typeof objects | null>(null);
   const [schemas, setSchemas] = useState<TableSchema[]>([]),
     [page, setPage] = useState<DbPage | null>(null),
     [, setLoading] = useState(false),
@@ -79,12 +83,20 @@ export function DatabaseWorkbench() {
     [draftError, setDraftError] = useState("");
   const refresh = () => setRevision((x) => x + 1);
   useEffect(() => {
+    let live = true;
     Promise.all(objects.filter((x) => x.objectType === "table").map((x) => inspectTable(x.name)))
-      .then(setSchemas)
+      .then((next) => {
+        if (!live) return;
+        setSchemas(next);
+        setSchemasFor(objects);
+      })
       .catch((e) => setError(asTauriError(e).message));
     storeCapabilities()
       .then(setCapabilities)
       .catch(() => setCapabilities(null));
+    return () => {
+      live = false;
+    };
   }, [objects]);
   useEffect(() => {
     if (!selected) {
@@ -232,7 +244,9 @@ export function DatabaseWorkbench() {
             <span>•••</span>
           </div>
           <div className="pane data-pane">
-            {designingSelected && selectedSchema ? (
+            {designingSelected && schemasFor !== objects ? (
+              <p role="status">Loading table design…</p>
+            ) : designingSelected && selectedSchema ? (
               <TableSchemaDesigner
                 key={JSON.stringify(selectedSchema)}
                 schema={selectedSchema}

@@ -1,4 +1,16 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" width="32" height="32">
-  <rect width="32" height="32" rx="6" fill="#3b9cff"/>
-  <text x="16" y="22" font-family="sans-serif" font-size="16" font-weight="700" text-anchor="middle" fill="#ffffff">W</text>
+  <title>ixtable</title>
+  <style>
+    .tile { fill: #202126; }
+    .mark { stroke: #ffffff; }
+    .dot { fill: #ffffff; }
+    @media (prefers-color-scheme: dark) {
+      .tile { fill: #e8eee6; }
+      .mark { stroke: #253126; }
+      .dot { fill: #253126; }
+    }
+  </style>
+  <rect class="tile" width="32" height="32" rx="8"/>
+  <path class="mark" d="M10.25 14.5v8.25M14.75 14.5l7 8.25M21.75 14.5l-7 8.25" fill="none" stroke-width="3" stroke-linecap="round"/>
+  <circle class="dot" cx="10.25" cy="9.5" r="1.9"/>
 </svg>

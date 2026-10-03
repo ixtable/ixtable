@@ -94,7 +94,9 @@ describe.skipIf(!!skip)("ixtable Cloud distribution", () => {
     await screen.findByText(devEmail, {}, LONG);
     const link = await screen.findByRole("region", { name: "Create a cloud application" }, LONG);
     await user.type(await within(link).findByLabelText("New organization name", {}, LONG), "Acme");
-    await user.click(within(link).getByRole("button", { name: "Create cloud application" }));
+    const create = within(link).getByRole("button", { name: "Create cloud application" });
+    await waitFor(() => expect(create).toBeEnabled(), LONG);
+    await user.click(create);
     await screen.findByRole("region", { name: "Publish checkpoint" }, LONG);
     const config = await invoke<{ cloud: { appId: string } }>("read_document_config", {
       windowLabel: "main",

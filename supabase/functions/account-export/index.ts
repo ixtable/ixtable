@@ -214,7 +214,7 @@ Deno.serve(
         if (!url || signed?.[index]?.error) continue;
         const { path: _path, ...meta } = entry;
         indexed.push({ ...meta, urlIndex: archives.length, expiresAt });
-        archives.push(publicUrl(url, req));
+        archives.push(publicUrl(url));
       }
     }
 

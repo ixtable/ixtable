@@ -34,9 +34,11 @@ bash scripts/prepare-duckdb-artifacts.sh linux-x64   # or macos-universal, windo
 The script downloads the DuckDB `sqlite_scanner` and `postgres_scanner`
 extensions that match the pinned DuckDB version. It checks each file against
 a SHA-256 in the script and writes them to
-`src-tauri/resources/duckdb/<platform>/`. The app checks the hash again
+`src-tauri/resources/duckdb/<platform>/`, both compressed (what the app
+bundles) and unpacked (what dev builds load). The app checks the hash again
 before loading an extension and refuses to start reads on a mismatch. The
-files are gitignored, so run the script once per checkout.
+files are gitignored, so run the script once per checkout. Builds fail until
+it has run, because `tauri.conf.json` bundles the compressed files.
 
 ## Develop
 

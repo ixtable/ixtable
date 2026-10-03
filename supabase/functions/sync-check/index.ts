@@ -15,7 +15,7 @@ import {
   requireRuntimeAccess,
 } from "../_shared/distribution.ts";
 import { handler, HttpError, readJson, requireUser } from "../_shared/http.ts";
-import { enforceRateLimit, incrementMetric } from "../_shared/rateLimit.ts";
+import { enforceNamedRateLimit, incrementMetric } from "../_shared/rateLimit.ts";
 import { uuid } from "../_shared/validate.ts";
 
 Deno.serve(
@@ -26,7 +26,7 @@ Deno.serve(
     const installationId = uuid(body, "installationId");
     const installedVersionId = uuid(body, "installedVersionId", { optional: true }) ?? null;
 
-    await enforceRateLimit(`sync-check:${user.id}`, 240, 3600);
+    await enforceNamedRateLimit("sync-check", user.id);
     const app = await loadApp(appId);
     await requireRuntimeAccess(app, user.id);
     const db = serviceClient();

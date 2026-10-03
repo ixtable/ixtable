@@ -531,3 +531,31 @@ fn cloud_ids_and_auth_storage_keys_are_restricted() {
     }
     assert!(install::app_root("../../etc").is_err());
 }
+
+#[test]
+fn a_cloud_archive_with_a_traversal_document_id_is_refused_before_any_path_is_built() {
+    use crate::bundle::{archive_bytes, sha256_hex};
+    let root = std::env::temp_dir().join(format!("ixtable-cloud-traversal-{}", uuid::Uuid::new_v4()));
+    std::fs::create_dir_all(&root).unwrap();
+    let doc = crate::archive::create_document("CRM").unwrap();
+    let archive = root.join("hostile.ixt");
+    std::fs::write(&archive, archive_bytes(&doc, &root.join(".tmp")).unwrap()).unwrap();
+    // A hostile archive: its header names a directory outside the app root.
+    let conn = rusqlite::Connection::open(&archive).unwrap();
+    conn.execute("UPDATE archive_metadata SET document_id='../../escaped'", [])
+        .unwrap();
+    drop(conn);
+    let bytes = std::fs::read(&archive).unwrap();
+    let key_b64 = config::base64_key(&SigningKey::generate(&mut OsRng).verifying_key());
+    let mut m: manifest::Manifest = serde_json::from_value(manifest_json(Utc::now())).unwrap();
+    m.archive_sha256 = sha256_hex(&bytes);
+    m.archive_size = bytes.len() as u64;
+    let err = install::install_verified("main", &m, "sig", "a@example.com", &archive, &key_b64)
+        .unwrap_err();
+    assert!(
+        ["VALIDATION", "INVALID_ARCHIVE"].contains(&err.code.as_str()) || err.message.contains("document id"),
+        "{err:?}"
+    );
+    assert!(!root.join("escaped").exists() && !std::env::temp_dir().join("escaped").exists());
+    let _ = std::fs::remove_dir_all(root);
+}

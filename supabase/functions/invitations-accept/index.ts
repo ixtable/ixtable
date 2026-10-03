@@ -11,7 +11,8 @@ import { audit } from "../_shared/audit.ts";
 import { sha256Hex } from "../_shared/crypto.ts";
 import { rpc } from "../_shared/distribution.ts";
 import { handler, HttpError, readJson, requireUser } from "../_shared/http.ts";
-import { enforceRateLimit, incrementMetric } from "../_shared/rateLimit.ts";
+import { requireEmailConfirmations } from "../_shared/production.ts";
+import { enforceNamedRateLimit, incrementMetric } from "../_shared/rateLimit.ts";
 import { str } from "../_shared/validate.ts";
 
 interface Membership {
@@ -31,7 +32,9 @@ Deno.serve(
     const body = await readJson(req);
     const token = str(body, "token", { min: 16, max: 200 });
 
-    await enforceRateLimit(`invitations-accept:${user.id}`, 20, 600);
+    await enforceNamedRateLimit("invitations-accept", user.id);
+    // The email binding below proves ownership only with confirmations on.
+    await requireEmailConfirmations();
     if (!user.email || !user.email_confirmed_at)
       throw new HttpError("FORBIDDEN", "Verify your email address before accepting an invitation");
 

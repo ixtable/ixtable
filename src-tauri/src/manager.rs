@@ -822,65 +822,7 @@ pub(crate) fn vacuum_into(db: &Path, dest: &Path) -> Result<(), AppError> {
 }
 
 fn sqlite_extension_path() -> Result<PathBuf, AppError> {
-    if let Some(path) = std::env::var_os("IXTABLE_DUCKDB_SQLITE_EXTENSION").map(PathBuf::from) {
-        return validate_extension(path);
-    }
-    #[cfg(all(target_os = "macos", target_arch = "aarch64"))]
-    const TARGET: &str = "macos-arm64";
-    #[cfg(all(target_os = "macos", target_arch = "x86_64"))]
-    const TARGET: &str = "macos-x64";
-    #[cfg(all(target_os = "windows", target_arch = "x86_64"))]
-    const TARGET: &str = "windows-x64";
-    #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
-    const TARGET: &str = "linux-x64";
-    let relative = PathBuf::from("resources")
-        .join("duckdb")
-        .join(TARGET)
-        .join("sqlite_scanner.duckdb_extension");
-    let mut candidates = vec![PathBuf::from(env!("CARGO_MANIFEST_DIR")).join(&relative)];
-    if let Ok(exe) = std::env::current_exe() {
-        if let Some(parent) = exe.parent() {
-            candidates.push(parent.join(&relative));
-            candidates.push(parent.join("../Resources").join(&relative));
-        }
-    }
-    candidates
-        .into_iter()
-        .find(|p| p.is_file())
-        .map(validate_extension)
-        .transpose()?
-        .ok_or_else(|| {
-            AppError::new(
-                "EXTENSION_STARTUP",
-                format!("Missing bundled DuckDB SQLite extension for {TARGET}"),
-            )
-        })
-}
-fn validate_extension(path: PathBuf) -> Result<PathBuf, AppError> {
-    use sha2::{Digest, Sha256};
-    let bytes = fs::read(&path).map_err(|e| AppError::new("EXTENSION_STARTUP", e))?;
-    if bytes.is_empty() {
-        return Err(AppError::new(
-            "EXTENSION_STARTUP",
-            "DuckDB SQLite extension is empty",
-        ));
-    }
-    #[cfg(all(target_os = "macos", target_arch = "aarch64"))]
-    const EXPECTED: &str = "a3548846bd643cb717265a0a11352af2e830a466ca068f4cae2552af658879f2";
-    #[cfg(all(target_os = "macos", target_arch = "x86_64"))]
-    const EXPECTED: &str = "fb287ea61bff87ad91b700491d44d584fb6e0b5926a4bf186f9d052ff6e976f7";
-    #[cfg(all(target_os = "windows", target_arch = "x86_64"))]
-    const EXPECTED: &str = "488c99012a2bd842dcc1d525441a7bd5c0427bb83236cbc01497615be167ac18";
-    #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
-    const EXPECTED: &str = "693d2bf90779df23ca5ebe0688639b9adfc11c2d55ae3466b33e28be16afaa5e";
-    let actual = format!("{:x}", Sha256::digest(&bytes));
-    if actual != EXPECTED {
-        return Err(AppError::new(
-            "EXTENSION_STARTUP",
-            format!("DuckDB SQLite extension checksum mismatch: {actual}"),
-        ));
-    }
-    Ok(path)
+    crate::data::sqlite_extension_path().map_err(|e| AppError::new("EXTENSION_STARTUP", e))
 }
 
 /// Saves the document when it is dirty, has a path, and is not conflicted; otherwise

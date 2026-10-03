@@ -2,16 +2,21 @@
 // organization owner may delete. Every Runtime User is revoked, every
 // installation and live key grant is revoked, and pending invitations are
 // cancelled, so no further bundle, sync, key grant or backup succeeds.
-// Billing is not cancelled here (billing functions own subscriptions); the
-// audit event records whether a subscription is still active.
+// Billing mirrors account-delete: while the app has a subscription that
+// still bills, the call is refused with 403 FORBIDDEN details
+// {reason:"active_subscription", subscriptionStatus} unless
+// cancelSubscription:true, which cancels it with the provider at once
+// (audited billing.subscription_canceled) before the app is deleted.
 //
-// POST {appId, confirm:<app name>} → {appId, deletedAt, subscriptionStatus}
+// POST {appId, confirm:<app name>, cancelSubscription?}
+//   → {appId, deletedAt, subscriptionStatus, subscriptionCanceled}
 import { audit } from "../_shared/audit.ts";
 import { serviceClient } from "../_shared/db.ts";
+import { cancelSubscriptionNow, isBilling } from "../_shared/commercial.ts";
 import { loadApp, orgRole } from "../_shared/distribution.ts";
 import { handler, HttpError, readJson, requireUser } from "../_shared/http.ts";
-import { enforceRateLimit, incrementMetric } from "../_shared/rateLimit.ts";
-import { str, uuid } from "../_shared/validate.ts";
+import { enforceNamedRateLimit, incrementMetric } from "../_shared/rateLimit.ts";
+import { bool, str, uuid } from "../_shared/validate.ts";
 
 Deno.serve(
   handler(async (req) => {
@@ -19,8 +24,9 @@ Deno.serve(
     const body = await readJson(req);
     const appId = uuid(body, "appId");
     const confirm = str(body, "confirm", { max: 200 });
+    const cancelSubscription = bool(body, "cancelSubscription", { optional: true }) ?? false;
 
-    await enforceRateLimit(`apps-delete:${user.id}`, 10, 3600);
+    await enforceNamedRateLimit("apps-delete", user.id);
     const app = await loadApp(appId);
     if (app.owner_id !== user.id && (await orgRole(app.org_id, user.id)) !== "owner")
       throw new HttpError(
@@ -33,6 +39,28 @@ Deno.serve(
       });
 
     const db = serviceClient();
+    const { data: subscription, error: subError } = await db
+      .from("subscriptions")
+      .select("app_id, status, plan_id, stripe_subscription_id")
+      .eq("app_id", appId)
+      .maybeSingle();
+    if (subError) throw new Error(`load subscription: ${subError.message}`);
+    const billing = isBilling(subscription?.status as string | undefined);
+    if (billing && !cancelSubscription)
+      throw new HttpError(
+        "FORBIDDEN",
+        "This app has an active subscription. Cancel it first, or confirm cancelSubscription.",
+        { reason: "active_subscription", subscriptionStatus: subscription!.status },
+      );
+    // Cancel billing first: if the provider refuses, nothing was deleted.
+    if (billing)
+      await cancelSubscriptionNow(subscription!, {
+        actorId: user.id,
+        orgId: app.org_id,
+        reason: "app_delete",
+        req,
+      });
+
     const now = new Date().toISOString();
     const deleted = await db
       .from("cloud_apps")
@@ -67,11 +95,6 @@ Deno.serve(
       .eq("app_id", appId)
       .is("accepted_at", null)
       .is("revoked_at", null);
-    const { data: subscription } = await db
-      .from("subscriptions")
-      .select("status, cancel_at_period_end")
-      .eq("app_id", appId)
-      .maybeSingle();
     const subscriptionStatus = (subscription?.status as string | undefined) ?? null;
 
     await audit({
@@ -85,14 +108,16 @@ Deno.serve(
         revokedMembers: (members.data ?? []).length,
         revokedInstallations: (installations.data ?? []).length,
         subscriptionStatus,
-        billingCancellationRequired:
-          subscriptionStatus !== null &&
-          ["active", "trialing", "past_due"].includes(subscriptionStatus) &&
-          !subscription?.cancel_at_period_end,
+        subscriptionCanceled: billing,
       },
       req,
     });
     await incrementMetric("apps.delete");
-    return { appId, deletedAt: now, subscriptionStatus };
+    return {
+      appId,
+      deletedAt: now,
+      subscriptionStatus: billing ? "canceled" : subscriptionStatus,
+      subscriptionCanceled: billing,
+    };
   }),
 );

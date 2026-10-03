@@ -41,4 +41,4 @@ const entrypoints = readdirSync(functionsDir, { withFileTypes: true })
   .filter((entry) => entry.isDirectory() && existsSync(join(functionsDir, entry.name, "index.ts")))
   .map((entry) => `${entry.name}/index.ts`);
 deno(["check", "_shared/", ...entrypoints]);
-deno(["test", "--allow-env", "--no-prompt", ...process.argv.slice(2)]);
+deno(["test", "--allow-env", "--allow-read=.", "--no-prompt", ...process.argv.slice(2)]);

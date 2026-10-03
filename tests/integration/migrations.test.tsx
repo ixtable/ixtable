@@ -169,7 +169,10 @@ it("flags a legacy PostgreSQL-target migration and refuses to apply it", async (
 
   await user.click(screen.getByRole("button", { name: "Edit Old PG change" }));
   const editor = await screen.findByRole("region", { name: /Edit migration/ }, LONG);
-  await user.selectOptions(within(editor).getByRole("combobox", { name: "Target store" }), "sqlite");
+  await user.selectOptions(
+    within(editor).getByRole("combobox", { name: "Target store" }),
+    "sqlite",
+  );
   await user.click(within(editor).getByRole("button", { name: "Save migration" }));
   await clickWhenEnabled(user, "Apply pending (1)");
   expect(await screen.findByText(/All migrations succeeded\./, {}, LONG)).toBeInTheDocument();

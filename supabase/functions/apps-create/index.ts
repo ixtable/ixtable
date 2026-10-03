@@ -7,7 +7,7 @@ import { audit } from "../_shared/audit.ts";
 import { serviceClient } from "../_shared/db.ts";
 import { orgRole } from "../_shared/distribution.ts";
 import { handler, HttpError, readJson, requireUser } from "../_shared/http.ts";
-import { enforceRateLimit, incrementMetric } from "../_shared/rateLimit.ts";
+import { enforceNamedRateLimit, incrementMetric } from "../_shared/rateLimit.ts";
 import { oneOf, str, uuid } from "../_shared/validate.ts";
 
 Deno.serve(
@@ -22,7 +22,7 @@ Deno.serve(
       oneOf(body, "datasourceKind", ["sqlite", "postgres"] as const, { optional: true }) ??
       "sqlite";
 
-    await enforceRateLimit(`apps-create:${user.id}`, 20, 3600);
+    await enforceNamedRateLimit("apps-create", user.id);
     const role = await orgRole(orgId, user.id);
     if (!role) throw new HttpError("NOT_FOUND", "Organization not found");
     if (role === "billing")

@@ -7,20 +7,22 @@
 // Delivery: a new email address gets a Supabase Auth invitation (sign-up
 // link that lands on the accept page); an existing account gets a sign-in
 // link (magic link) to the accept page. Both arrive in Mailpit locally.
-// Delivery failures do not fail the request: `delivery` says what was sent
-// and `acceptUrl` can be shared by other means.
+// Delivery failures do not fail the request, and the reply never says which
+// kind of email went out: `delivery` is always "sent", so the response does
+// not reveal whether the address has an account. `acceptUrl` can be shared
+// by other means.
 //
 // App invitations: app owner or org owner/admin, `roleId` must be an app role.
 // Org invitations: org owner/admin, `role` admin|billing|member.
 //
 // POST {kind:"app", appId, email, roleId} | {kind:"org", orgId, email, role}
-//   → {invitation, acceptUrl, delivery:"invite"|"magic_link"|"none"}
+//   → {invitation, acceptUrl, delivery:"sent"}
 import { audit } from "../_shared/audit.ts";
 import { randomToken, sha256Hex } from "../_shared/crypto.ts";
 import { anonClient, optionalEnv, serviceClient } from "../_shared/db.ts";
 import { isAppAdmin, loadApp, orgRole } from "../_shared/distribution.ts";
 import { handler, HttpError, readJson, requireUser } from "../_shared/http.ts";
-import { enforceRateLimit, incrementMetric } from "../_shared/rateLimit.ts";
+import { enforceNamedRateLimit, incrementMetric } from "../_shared/rateLimit.ts";
 import { email as readEmail, oneOf, uuid } from "../_shared/validate.ts";
 
 const PUBLIC_COLUMNS =
@@ -63,7 +65,7 @@ Deno.serve(
     const kind = oneOf(body, "kind", ["org", "app"] as const);
     const email = readEmail(body, "email");
 
-    await enforceRateLimit(`invitations-create:${user.id}`, 30, 3600);
+    await enforceNamedRateLimit("invitations-create", user.id);
     const db = serviceClient();
     let row: Record<string, unknown>;
     let orgId: string;
@@ -146,11 +148,12 @@ Deno.serve(
         email,
         roleId: row.role_id ?? null,
         orgRole: row.org_role ?? null,
-        delivery,
+        // Not the delivery kind: audit readers must not learn whether the account exists.
+        emailSent: delivery !== "none",
       },
       req,
     });
     await incrementMetric("invitations.create");
-    return { invitation, acceptUrl, delivery };
+    return { invitation, acceptUrl, delivery: "sent" as const };
   }),
 );

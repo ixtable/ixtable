@@ -281,29 +281,25 @@ test("clients cannot write cloud tables or call privileged functions", async ({ 
   record(
     "insert cloud_apps",
     (
-      await owner
-        .from("cloud_apps")
-        .insert({
-          org_id: world.org.id,
-          owner_id: world.owner.user.id,
-          name: "x",
-          document_id: "d",
-        })
+      await owner.from("cloud_apps").insert({
+        org_id: world.org.id,
+        owner_id: world.owner.user.id,
+        name: "x",
+        document_id: "d",
+      })
     ).error,
   );
   record(
     "insert app_versions",
     (
-      await owner
-        .from("app_versions")
-        .insert({
-          app_id: world.app.id,
-          version: "9.9.9",
-          developer_id: world.owner.user.id,
-          archive_sha256: "a".repeat(64),
-          archive_size: 1,
-          storage_path: "x",
-        })
+      await owner.from("app_versions").insert({
+        app_id: world.app.id,
+        version: "9.9.9",
+        developer_id: world.owner.user.id,
+        archive_sha256: "a".repeat(64),
+        archive_size: 1,
+        storage_path: "x",
+      })
     ).error,
   );
   record(

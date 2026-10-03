@@ -13,6 +13,7 @@ export type CloudErrorCode =
   | "CLOUD_OFFLINE"
   | "CLOUD_UNAVAILABLE"
   | "CLOUD_NOT_CONFIGURED"
+  | "CLOUD_CONTRACT"
   | "CLOUD_ERROR"
   | (string & {});
 
@@ -168,6 +169,7 @@ const friendly: Record<string, string> = {
   CLOUD_OFFLINE: "ixtable Cloud is not reachable. Check your connection.",
   CLOUD_UNAVAILABLE: "ixtable Cloud is temporarily unavailable.",
   CLOUD_NOT_CONFIGURED: "ixtable Cloud is not configured in this build.",
+  CLOUD_CONTRACT: "ixtable Cloud sent a reply this version of ixtable does not understand.",
   MANIFEST_SIGNATURE:
     "The application bundle is not signed by ixtable Cloud. It was not installed.",
   MANIFEST_EXPIRED: "The download authorization expired. Sync again.",

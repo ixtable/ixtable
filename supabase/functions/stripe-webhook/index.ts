@@ -5,6 +5,8 @@
 // _shared/billing.ts decideSubscriptionEvent (no regression from late or
 // out-of-order events). Access-relevant changes are audited as billing.*.
 // Real Stripe and the fake provider's signed events take this same path.
+//
+// POST <Stripe event> (Stripe-Signature header) → {received, outcome} | {received, duplicate}
 import { audit } from "../_shared/audit.ts";
 import {
   accessChangeAction,

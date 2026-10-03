@@ -6,6 +6,7 @@ import {
   cloudConfig,
   signOutLocal,
 } from "./api";
+import { type DesktopFunction, type DesktopReplies, decoders } from "./contract";
 import { CloudError, toCloudError } from "./errors";
 import type { AppVersion, CloudApp, MemberApp, Organization } from "./types";
 
@@ -114,13 +115,19 @@ export async function signOut() {
   }
 }
 
-/** Calls an Edge Function with the user's JWT; errors become CloudErrors. */
-export async function invokeFunction<T>(name: string, body: Record<string, unknown>): Promise<T> {
+/**
+ * Calls an Edge Function with the user's JWT and decodes the reply
+ * (contract.ts); errors become CloudErrors.
+ */
+export async function invokeFunction<K extends DesktopFunction>(
+  name: K,
+  body: Record<string, unknown>,
+): Promise<DesktopReplies[K]> {
   const client = await cloudClient();
   await requireSession();
   const { data, error } = await client.functions.invoke(name, { body });
   if (error) throw await toCloudError(error);
-  return data as T;
+  return decoders[name](data);
 }
 
 async function rows<T>(query: PromiseLike<{ data: unknown; error: unknown }>): Promise<T> {

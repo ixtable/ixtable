@@ -46,7 +46,7 @@ export function VersionsPanel({ app, revision }: { app: CloudApp | null; revisio
   };
   const prepareRestore = (version: AppVersion) =>
     run(async () => {
-      const target = await invokeFunction<RestoreTarget>("restore-url", {
+      const target = await invokeFunction("restore-url", {
         appId,
         versionId: version.id,
       });

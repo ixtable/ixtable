@@ -49,22 +49,27 @@ export async function incrementMetric(name: string, by = 1): Promise<void> {
 export const RATE_LIMITS = {
   // Distribution
   "apps-create": { max: 20, windowSeconds: 3600 },
-  "invitations-create": { max: 50, windowSeconds: 3600 },
-  "invitations-accept": { max: 20, windowSeconds: 3600 },
+  "apps-delete": { max: 10, windowSeconds: 3600 },
+  "apps-transfer": { max: 10, windowSeconds: 3600 },
+  "roles-sync": { max: 60, windowSeconds: 3600 },
+  "invitations-create": { max: 30, windowSeconds: 3600 },
+  "invitations-accept": { max: 20, windowSeconds: 600 },
   "members-update": { max: 120, windowSeconds: 3600 },
   "archive-upload-url": { max: 60, windowSeconds: 3600 },
   "publish-checkpoint": { max: 30, windowSeconds: 3600 },
-  "versions-resolve": { max: 30, windowSeconds: 3600 },
+  "versions-resolve": { max: 20, windowSeconds: 3600 },
   "bundle-manifest": { max: 60, windowSeconds: 3600 },
-  "restore-url": { max: 30, windowSeconds: 3600 },
+  "restore-url": { max: 60, windowSeconds: 3600 },
   "sync-check": { max: 240, windowSeconds: 3600 },
   "backup-commit": { max: 60, windowSeconds: 3600 },
-  // Credentials and desktop sign-in
+  // Credentials and desktop sign-in. key-grant's subject is `<userId>:<appId>`;
+  // desktop-auth-exchange's is `ip:<ipHash>` (no caller JWT).
   "credential-envelope": { max: 60, windowSeconds: 3600 },
-  "key-grant": { max: 120, windowSeconds: 3600 },
-  "devices-revoke": { max: 60, windowSeconds: 3600 },
+  "credential-delete": { max: 60, windowSeconds: 3600 },
+  "key-grant": { max: 30, windowSeconds: 3600 },
+  "devices-revoke": { max: 120, windowSeconds: 3600 },
   "desktop-auth-approve": { max: 20, windowSeconds: 600 },
-  "desktop-auth-exchange": { max: 120, windowSeconds: 600 },
+  "desktop-auth-exchange": { max: 120, windowSeconds: 60 },
   // Commercial
   "billing-checkout": { max: 10, windowSeconds: 600 },
   "billing-fake-complete": { max: 10, windowSeconds: 600 },

@@ -23,7 +23,7 @@ import {
 } from "../_shared/distribution.ts";
 import { requireEntitlement } from "../_shared/entitlements.ts";
 import { handler, HttpError, readJson, requireUser } from "../_shared/http.ts";
-import { enforceRateLimit, incrementMetric } from "../_shared/rateLimit.ts";
+import { enforceNamedRateLimit, incrementMetric } from "../_shared/rateLimit.ts";
 import { str, uuid } from "../_shared/validate.ts";
 
 Deno.serve(
@@ -34,7 +34,7 @@ Deno.serve(
     const installationId = uuid(body, "installationId");
     const deviceName = (str(body, "deviceName", { optional: true, min: 0, max: 200 }) ?? "").trim();
 
-    await enforceRateLimit(`bundle-manifest:${user.id}`, 60, 3600);
+    await enforceNamedRateLimit("bundle-manifest", user.id);
     const app = await loadApp(appId);
     const access = await requireRuntimeAccess(app, user.id);
     await requireEntitlement(appId);
@@ -64,6 +64,7 @@ Deno.serve(
       version,
       userId: user.id,
       role,
+      owner: !access.member,
       installationId,
       fingerprint,
       issuedAt,

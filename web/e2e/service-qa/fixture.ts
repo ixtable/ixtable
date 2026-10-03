@@ -54,6 +54,11 @@ export class CloudFixture {
     this.orgs.push(org);
   }
 
+  /** Track a user created outside the fixture (e.g. signed up on the website). */
+  trackUser(user: TestUser): void {
+    this.users.push(user);
+  }
+
   async teardown(): Promise<void> {
     const errors: string[] = [];
     const appIds = this.apps.map((app) => app.id);

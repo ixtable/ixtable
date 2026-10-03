@@ -91,12 +91,23 @@ export interface Invitation {
   created_at: string;
 }
 
+/**
+ * The security summary stored on a published version, as normalized by
+ * publish-checkpoint (_shared/distribution.ts normalizeSecurity): camelCase.
+ */
 export interface SecuritySummary {
-  credential_mode?: "shared" | "per_user" | "none" | string;
-  tls?: boolean;
-  insecure_override_confirmed?: boolean;
-  shared_credential_warning_acknowledged?: boolean;
-  [key: string]: unknown;
+  store: "sqlite" | "postgres";
+  /** Only for PostgreSQL apps: one shared database login, or one per user. */
+  credentialMode: "shared" | "perUser" | null;
+  tls: boolean;
+  sslmode: string | null;
+  /** The Developer confirmed publishing a datasource without TLS. */
+  insecureTransportConfirmed: boolean;
+  insecureTransportConfirmedAt: string | null;
+  /** The Developer acknowledged the shared PostgreSQL credential warning. */
+  sharedCredentialAcknowledged: boolean;
+  concurrencyPoliciesResolved: boolean;
+  unresolvedEntities: string[];
 }
 
 export interface MigrationRef {
@@ -235,7 +246,17 @@ export interface FunctionMap {
     in: { orgId: string; name: string; documentId: string };
     out: { app: CloudApp };
   };
-  "apps-delete": { in: { appId: string; confirm: string }; out: Record<string, never> };
+  "apps-delete": {
+    // While the subscription bills, the call is refused (403, details.reason
+    // "active_subscription") unless cancelSubscription is true.
+    in: { appId: string; confirm: string; cancelSubscription?: boolean };
+    out: {
+      appId: string;
+      deletedAt: string;
+      subscriptionStatus: string | null;
+      subscriptionCanceled: boolean;
+    };
+  };
   "apps-transfer": {
     in: { appId: string; newOwnerId: string; confirm: string };
     out: { app: CloudApp };
@@ -249,7 +270,8 @@ export interface FunctionMap {
       role?: Exclude<OrgRole, "owner">;
       roleId?: string;
     };
-    out: { invitation: Invitation; acceptUrl: string };
+    // `delivery` is always "sent": the reply never reveals whether the email has an account.
+    out: { invitation: Invitation; acceptUrl: string; delivery: "sent" };
   };
   "invitations-accept": {
     in: { token: string };
@@ -271,14 +293,32 @@ export interface FunctionMap {
     out: { member: AppMember };
   };
   "versions-resolve": {
-    // The website only forks from a published version. Overwrite needs the pending upload
-    // from Studio, so it is resolved in the desktop app.
-    in: { appId: string; action: "fork"; fromVersionId: string; name?: string };
-    out: { version?: AppVersion; app?: CloudApp };
+    // The website forks a published version and withdraws versions. Overwrite needs the
+    // pending upload from Studio, so it is resolved in the desktop app.
+    in:
+      | { appId: string; action: "fork"; fromVersionId: string; name?: string }
+      // Withdrawing the last published version while installations run it is refused
+      // (422, details {requiresConfirm, installations}) unless confirm is true.
+      | { appId: string; action: "withdraw"; versionId: string; confirm?: boolean };
+    out: {
+      version?: AppVersion;
+      app?: CloudApp;
+      headVersionId?: string | null;
+      dependentInstallations?: number;
+    };
   };
   "restore-url": {
     in: { appId: string; versionId?: string; backupId?: string };
-    out: { signedUrl: string; sha256: string; size: number; isPostgres: boolean; warning?: string };
+    out: {
+      signedUrl: string;
+      sha256: string;
+      size: number;
+      isPostgres: boolean;
+      warning: string | null;
+      kind: "version" | "backup";
+      id: string;
+      expiresAt: string;
+    };
   };
   "credential-delete": {
     in: { appId: string; datasourceId: string; scope?: CredentialScope; userId?: string };
@@ -286,18 +326,25 @@ export interface FunctionMap {
   };
   "devices-revoke": {
     in: { appId: string; userId: string; installationId: string };
-    out: Record<string, never>;
+    out: {
+      installation: { id: string; revokedAt: string };
+      revokedGrants: number;
+      alreadyRevoked: boolean;
+    };
   };
-  "billing-checkout": { in: { appId: string; planId: string }; out: { url: string } };
+  "billing-checkout": {
+    in: { appId: string; planId: string };
+    out: { url: string; overAllowance: boolean };
+  };
   "billing-portal": { in: { appId: string }; out: { url: string } };
   "billing-invoices": { in: { appId: string }; out: { invoices: Invoice[] } };
   "billing-cancel": {
     in: { appId: string; atPeriodEnd: boolean };
-    out: { subscription?: Subscription };
+    out: { subscription: Subscription | null };
   };
   "billing-fake-complete": {
     in: { sessionId: string; appId: string; planId: string };
-    out: { ok: boolean };
+    out: { ok: boolean; status: string | null };
   };
   "desktop-auth-approve": {
     in: { codeChallenge: string; state: string };

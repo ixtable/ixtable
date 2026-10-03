@@ -80,6 +80,8 @@ does not prove the website page wires it up; capture the page too. Never use
 | `seed.ts` | `createTestUser()`, `signIn()`, `deleteTestUser()`, `createOrg()`, `createApp()`, `createRole()`, `addMember()`, `grantSubscription()`, `createVersion()`, `createInstallation()`, `sha256Hex()` |
 | `fixture.ts` | Playwright `test` with a `cloud` fixture: `cloud.user()`, `cloud.org(owner)`, `cloud.app(org, owner)`, `cloud.trackApp()`, guaranteed teardown; `withCloudFixture(fn)` |
 | `record.ts` | `recordOutcome(name, {expectations, details})` → `.generated/<name>.json`; `captureOutcome(page, name, {...})` → `.generated/<name>.png` + JSON |
+| `contract.ts` + `specs/contract.spec.ts` | recorded client-facing replies in `fixtures/contract/*.json`: the spec fails when a live reply changes shape; `CONTRACT_RECORD=1` re-records after an intended change (then fix the clients: `src/cloud/contract.ts`, `src-tauri/src/cloud/contract.rs`, `web/src/lib/cloud/types.ts`, and run `node scripts/cloud/contract-doc.mjs`) |
+| `fixtures/crm.ixt` | a real CRM archive from the desktop's Rust code (`node scripts/cloud/make-qa-archive.mjs` after `npm run pretest`) for UI journeys |
 | `health.ts` / `global-setup.ts` | health gate (Auth, PostgREST, `functions/v1/health`) before any spec, then the deterministic e2e user for UI specs |
 
 Specs: contract specs (no browser) in `web/e2e/service-qa/specs/*.spec.ts`

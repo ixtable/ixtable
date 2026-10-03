@@ -111,11 +111,15 @@ test("apps-delete: typed confirmation, soft delete, every member cut off", async
     appId: app.id,
     confirm: "work order",
   });
-  const deleted = await call<{ deletedAt: string; subscriptionStatus: string }>(
-    "apps-delete",
-    owner,
-    { appId: app.id, confirm: "Work orders" },
-  );
+  const billed = await call<ErrorBody>("apps-delete", owner, {
+    appId: app.id,
+    confirm: "Work orders",
+  });
+  const deleted = await call<{
+    deletedAt: string;
+    subscriptionStatus: string;
+    subscriptionCanceled: boolean;
+  }>("apps-delete", owner, { appId: app.id, confirm: "Work orders", cancelSubscription: true });
   const bundle = await call<ErrorBody>("bundle-manifest", member, {
     appId: app.id,
     installationId,
@@ -141,12 +145,29 @@ test("apps-delete: typed confirmation, soft delete, every member cut off", async
     .select("revoked_at")
     .eq("id", installationId)
     .single();
-  const event = (await auditTrail(app.id)).find((e) => e.action === "app.delete");
+  const { data: subscription } = await admin
+    .from("subscriptions")
+    .select("status")
+    .eq("app_id", app.id)
+    .single();
+  const trail = await auditTrail(app.id);
+  const event = trail.find((e) => e.action === "app.delete");
+  const canceled = trail.find((e) => e.action === "billing.subscription_canceled");
 
   expect(byMember.status).toBe(403);
   expect(wrongName.status).toBe(422);
+  expect(billed.status).toBe(403);
+  expect(billed.body.error.details).toEqual({
+    reason: "active_subscription",
+    subscriptionStatus: "active",
+  });
   expect(deleted.status).toBe(200);
-  expect(deleted.body.subscriptionStatus).toBe("active");
+  expect(deleted.body).toMatchObject({
+    subscriptionStatus: "canceled",
+    subscriptionCanceled: true,
+  });
+  expect(subscription?.status).toBe("canceled");
+  expect(canceled?.details).toMatchObject({ reason: "app_delete", previousStatus: "active" });
   expect(row?.deleted_at).not.toBeNull();
   expect(memberRow?.status).toBe("revoked");
   expect(inst?.revoked_at).not.toBeNull();
@@ -155,23 +176,37 @@ test("apps-delete: typed confirmation, soft delete, every member cut off", async
   expect(event?.details).toMatchObject({
     revokedMembers: 1,
     revokedInstallations: 1,
-    billingCancellationRequired: true,
+    subscriptionStatus: "active",
+    subscriptionCanceled: true,
   });
 
   recordOutcome("apps-02-delete", {
     expectations: [
       "A Runtime User cannot delete (403) and a mistyped name is 422; with the exact name the app is soft-deleted (deleted_at set, row kept).",
       "Deletion revokes the member and their installation, and bundle-manifest then returns 404.",
-      "app.delete is audited with the revoked counts and billingCancellationRequired true for the still-active subscription.",
+      "app.delete is audited with the revoked counts and subscriptionCanceled true.",
     ],
     details: {
       byMember: byMember.body,
       wrongName: wrongName.body,
+      billed: billed.body,
       deleted: deleted.body,
       memberRow,
       installation: inst,
       bundle: bundle.body,
       audit: event?.details,
+    },
+  });
+  recordOutcome("apps-05-delete-cancels-billing", {
+    expectations: [
+      "While the subscription bills, apps-delete without cancelSubscription is 403 FORBIDDEN with details.reason active_subscription and deletes nothing.",
+      "With cancelSubscription:true the subscription row becomes canceled and billing.subscription_canceled is audited with reason app_delete.",
+    ],
+    details: {
+      billed: billed.body,
+      deleted: deleted.body,
+      subscription,
+      canceled: canceled?.details,
     },
   });
 });

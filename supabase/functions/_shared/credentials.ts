@@ -1,6 +1,7 @@
 // Pure helpers for credential envelopes, key grants and the desktop sign-in
 // hand-off (PRD §21.3). No I/O here, so everything is unit tested in
 // credentials_test.ts. Formats: docs/decisions/cloud-security-model.md.
+import { ipHash } from "./audit.ts";
 import { b64decode } from "./crypto.ts";
 import { HttpError } from "./http.ts";
 
@@ -105,4 +106,16 @@ export function desktopAuthState(
   if (row.consumed_at) return "consumed";
   if (new Date(row.expires_at).getTime() <= now.getTime()) return "expired";
   return "ready";
+}
+
+/**
+ * Rate-limit subjects for desktop-auth-exchange (no caller JWT): the hashed
+ * client IP and the sign-in request's state, so neither rotating addresses
+ * nor rotating states escapes the limit. Without IXTABLE_FINGERPRINT_SECRET
+ * every caller would share one IP bucket, so it fails closed (500).
+ */
+export async function exchangeLimitSubjects(req: Request, state: string): Promise<string[]> {
+  if (!Deno.env.get("IXTABLE_FINGERPRINT_SECRET"))
+    throw new HttpError("INTERNAL", "Desktop sign-in is misconfigured");
+  return [`ip:${(await ipHash(req)) ?? "unknown"}`, `state:${state}`];
 }

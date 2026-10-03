@@ -6,6 +6,7 @@ model in `docs/decisions/cloud-security-model.md`.
 
 | Document | Use it for |
 |---|---|
+| [production-config.md](production-config.md) | settings and secrets a production project needs, rotation, go-live checklist |
 | [monitoring.md](monitoring.md) | health probe, service metrics, alert rules and thresholds, rate limits |
 | [backups.md](backups.md) | database PITR, archive storage versioning, restore drills |
 | [incidents.md](incidents.md) | severity levels, first response, playbooks per failure |

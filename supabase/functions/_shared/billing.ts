@@ -45,10 +45,23 @@ export interface BillingProvider {
   cancelSubscription(input: { subscriptionId: string; atPeriodEnd: boolean }): Promise<void>;
 }
 
-/** The provider named by BILLING_PROVIDER (required; "stripe" or "fake"). */
+/** True only where the fake provider was explicitly allowed (local/QA stacks). */
+export function fakeBillingAllowed(): boolean {
+  return Deno.env.get("IXTABLE_ALLOW_FAKE_BILLING") === "1";
+}
+
+/**
+ * The provider named by BILLING_PROVIDER (required; "stripe" or "fake").
+ * "fake" also needs IXTABLE_ALLOW_FAKE_BILLING=1, so a production project
+ * left on the default cannot hand out free subscriptions.
+ */
 export function billingProvider(): BillingProvider {
   const name = Deno.env.get("BILLING_PROVIDER");
-  if (name === "fake") return fakeProvider(Deno.env.get("SITE_URL") ?? "http://127.0.0.1:3001");
+  if (name === "fake") {
+    if (!fakeBillingAllowed())
+      throw new Error("BILLING_PROVIDER=fake needs IXTABLE_ALLOW_FAKE_BILLING=1 (local/QA only)");
+    return fakeProvider(Deno.env.get("SITE_URL") ?? "http://127.0.0.1:3001");
+  }
   if (name === "stripe") {
     const key = Deno.env.get("STRIPE_SECRET_KEY");
     if (!key) throw new Error("Missing required environment variable STRIPE_SECRET_KEY");

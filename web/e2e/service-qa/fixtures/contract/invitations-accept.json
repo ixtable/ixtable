@@ -1,0 +1,18 @@
+{
+  "function": "invitations-accept",
+  "status": 200,
+  "request": {
+    "token": "[redacted]"
+  },
+  "response": {
+    "membership": {
+      "kind": "app",
+      "appId": "d5c5216b-2a16-48b4-86c4-488a9074a42d",
+      "orgId": "6baa48c5-3687-468d-952c-34e41d117128",
+      "roleId": "bec9f701-f53f-431c-8ad5-4d4caf520c6b",
+      "status": "active",
+      "userId": "1523108e-c39c-40cb-ba4f-a9956f003949",
+      "invitationId": "10d702c2-d14e-4316-98cf-34b18f8834a3"
+    }
+  }
+}

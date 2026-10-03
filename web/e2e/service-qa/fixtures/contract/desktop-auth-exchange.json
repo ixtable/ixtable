@@ -1,0 +1,21 @@
+{
+  "function": "desktop-auth-exchange",
+  "status": 200,
+  "request": {
+    "state": "[redacted]",
+    "codeVerifier": "[redacted]"
+  },
+  "response": {
+    "session": {
+      "access_token": "[redacted]",
+      "refresh_token": "[redacted]",
+      "expires_at": 1791072876,
+      "expires_in": 3600,
+      "token_type": "bearer",
+      "user": {
+        "id": "b55a0145-e352-4790-a67c-b55fec436618",
+        "email": "service-qa-03e99e7bc554@example.com"
+      }
+    }
+  }
+}

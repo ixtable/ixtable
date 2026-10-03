@@ -186,6 +186,10 @@ test("restore-url: owner-only versions, PostgreSQL warning", async ({ cloud }) =
       concurrencyPoliciesResolved: true,
     },
   });
+  // Fail here, with the server's answer, if the setup publish did not succeed
+  // (a failed PUT or publish otherwise surfaces later as "version is null").
+  expect(upload.putStatus, "archive PUT to the signed upload URL").toBe(200);
+  expect(result.status, JSON.stringify(result.body)).toBe(200);
   const version = result.body.version;
 
   const restore = await call<{

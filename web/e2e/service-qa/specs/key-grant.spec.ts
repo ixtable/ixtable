@@ -172,13 +172,11 @@ test("key-grant enforces entitlement and the rate limit", async ({ cloud }) => {
   const inactive = await requestGrant(member, app.id, installationId);
   await admin.from("subscriptions").update({ status: "active" }).eq("app_id", app.id);
 
-  await admin
-    .from("rate_limits")
-    .upsert({
-      bucket: `key-grant:${member.user.id}:${app.id}`,
-      window_start: new Date().toISOString(),
-      count: 30,
-    });
+  await admin.from("rate_limits").upsert({
+    bucket: `key-grant:${member.user.id}:${app.id}`,
+    window_start: new Date().toISOString(),
+    count: 30,
+  });
   const limited = await requestGrant(member, app.id, installationId);
 
   expect(overAllowance.status).toBe(402);

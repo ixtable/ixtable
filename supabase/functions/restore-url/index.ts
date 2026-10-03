@@ -18,7 +18,7 @@ import {
   type VersionRow,
 } from "../_shared/distribution.ts";
 import { handler, HttpError, readJson, requireUser } from "../_shared/http.ts";
-import { enforceRateLimit, incrementMetric } from "../_shared/rateLimit.ts";
+import { enforceNamedRateLimit, incrementMetric } from "../_shared/rateLimit.ts";
 import { uuid } from "../_shared/validate.ts";
 
 interface BackupRow {
@@ -43,7 +43,7 @@ Deno.serve(
         field: "versionId",
       });
 
-    await enforceRateLimit(`restore-url:${user.id}`, 60, 3600);
+    await enforceNamedRateLimit("restore-url", user.id);
     const app = await loadApp(appId);
     const db = serviceClient();
     let target: { path: string; sha256: string; size: number; postgres: boolean };

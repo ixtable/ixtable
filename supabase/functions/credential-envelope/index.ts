@@ -21,7 +21,7 @@ import {
 import { wrapDek } from "../_shared/crypto.ts";
 import { serviceClient } from "../_shared/db.ts";
 import { handler, HttpError, readJson, requireUser } from "../_shared/http.ts";
-import { enforceRateLimit, incrementMetric } from "../_shared/rateLimit.ts";
+import { enforceNamedRateLimit, incrementMetric } from "../_shared/rateLimit.ts";
 import { oneOf, uuid } from "../_shared/validate.ts";
 
 Deno.serve(
@@ -46,7 +46,7 @@ Deno.serve(
     const aad = base64Field(body, "aad", { min: 0, max: MAX_AAD_BYTES });
     const dek = base64Field(body, "dek", { exact: DEK_BYTES });
 
-    await enforceRateLimit(`credential-envelope:${user.id}`, 60, 3600);
+    await enforceNamedRateLimit("credential-envelope", user.id);
     const app = await loadLiveApp(appId);
     await requireAppOwner(app, user.id);
 

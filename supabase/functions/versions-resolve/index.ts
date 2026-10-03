@@ -43,7 +43,7 @@ import {
 } from "../_shared/distribution.ts";
 import { requireEntitlement } from "../_shared/entitlements.ts";
 import { handler, HttpError, readJson, requireUser } from "../_shared/http.ts";
-import { enforceRateLimit, incrementMetric } from "../_shared/rateLimit.ts";
+import { enforceNamedRateLimit, incrementMetric } from "../_shared/rateLimit.ts";
 import { bool, oneOf, str, uuid } from "../_shared/validate.ts";
 
 type Body = Record<string, unknown>;
@@ -291,7 +291,7 @@ Deno.serve(
     const appId = uuid(body, "appId");
     const action = oneOf(body, "action", ["overwrite", "fork", "withdraw"] as const);
 
-    await enforceRateLimit(`versions-resolve:${user.id}`, 20, 3600);
+    await enforceNamedRateLimit("versions-resolve", user.id);
     const app = await loadApp(appId);
     requireAppOwner(app, user.id);
     if (action === "withdraw") return withdraw(req, body, app, user.id);

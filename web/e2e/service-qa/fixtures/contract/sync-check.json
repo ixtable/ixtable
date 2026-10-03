@@ -1,0 +1,18 @@
+{
+  "function": "sync-check",
+  "status": 200,
+  "request": {
+    "appId": "d5c5216b-2a16-48b4-86c4-488a9074a42d",
+    "installedVersionId": "0d70d41f-620c-4258-bf96-389cf330d8fc",
+    "installationId": "6c0015d3-6817-4894-aac5-1a10e44f7b30"
+  },
+  "response": {
+    "upToDate": true,
+    "latest": {
+      "versionId": "0d70d41f-620c-4258-bf96-389cf330d8fc",
+      "version": "1.0.0",
+      "publishedAt": "2026-10-03T23:14:30.898729+00:00",
+      "minRuntimeVersion": "0.1.0"
+    }
+  }
+}

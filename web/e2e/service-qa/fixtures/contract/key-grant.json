@@ -1,0 +1,24 @@
+{
+  "function": "key-grant",
+  "status": 200,
+  "request": {
+    "appId": "d5c5216b-2a16-48b4-86c4-488a9074a42d",
+    "installationId": "6c0015d3-6817-4894-aac5-1a10e44f7b30",
+    "datasourceId": "main"
+  },
+  "response": {
+    "grantId": "b1dc4228-a41c-4f7e-91c1-02c2d7a1c44f",
+    "datasourceId": "main",
+    "dek": "[redacted]",
+    "envelope": {
+      "id": "12131cbf-7b2f-4591-8c66-027b6635e9c9",
+      "scope": "shared",
+      "ciphertext": "[redacted]",
+      "nonce": "[redacted]",
+      "aad": "aXh0YWJsZS1kYXRhc291cmNl"
+    },
+    "issuedAt": "2026-10-03T23:14:33.089Z",
+    "expiresAt": "2026-10-04T23:14:33.089Z",
+    "renewed": false
+  }
+}

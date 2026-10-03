@@ -116,6 +116,8 @@ export interface CloudRuntimeInfo {
   roleId: string | null;
   roleName: string | null;
   rolePermissions: Partial<Permissions> | null;
+  /** The signed manifest says this user is the app's Developer/Owner. */
+  owner?: boolean;
   installationId: string;
   fingerprint: string;
   issuedAt: string;

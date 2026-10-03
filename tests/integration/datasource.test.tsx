@@ -217,9 +217,9 @@ it.skipIf(!postgresUrl)(
       ),
     ).resolves.toMatch(/VALIDATION_ERROR.*Migrations apply to the embedded SQLite store only/);
     await openTab(user, "Migrations");
-    expect(await screen.findByRole("note", { name: "Migrations disabled" }, LONG)).toHaveTextContent(
-      "disabled for this document because it uses PostgreSQL",
-    );
+    expect(
+      await screen.findByRole("note", { name: "Migrations disabled" }, LONG),
+    ).toHaveTextContent("disabled for this document because it uses PostgreSQL");
     expect(await screen.findByRole("button", { name: "Apply pending (0)" }, LONG)).toBeDisabled();
     expect(screen.getByRole("button", { name: "Roll back last" })).toBeDisabled();
     const objects = await invoke<Array<{ name: string }>>("list_database_objects", {

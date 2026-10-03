@@ -9,7 +9,7 @@ import { canonicalJson } from "../_shared/crypto.ts";
 import { serviceClient } from "../_shared/db.ts";
 import { loadApp, requireAppOwner } from "../_shared/distribution.ts";
 import { handler, HttpError, readJson, requireUser } from "../_shared/http.ts";
-import { enforceRateLimit } from "../_shared/rateLimit.ts";
+import { enforceNamedRateLimit } from "../_shared/rateLimit.ts";
 import { arr, obj, record, str, uuid } from "../_shared/validate.ts";
 
 interface RoleInput {
@@ -35,7 +35,7 @@ Deno.serve(
     if (new Set(roles.map((role) => role.id)).size !== roles.length)
       throw new HttpError("VALIDATION", "roles: ids must be unique", { field: "roles" });
 
-    await enforceRateLimit(`roles-sync:${user.id}`, 60, 3600);
+    await enforceNamedRateLimit("roles-sync", user.id);
     const app = await loadApp(appId);
     requireAppOwner(app, user.id);
 

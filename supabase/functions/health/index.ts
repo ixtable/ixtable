@@ -1,6 +1,8 @@
 // Public liveness probe (no auth): database and storage reachability plus the
 // deployed version. Returns 503 when a dependency is down. Never returns
 // error details.
+//
+// GET → {ok, db, storage, version} (503 with ok false when a dependency is down)
 import { ARCHIVE_BUCKET, serviceClient } from "../_shared/db.ts";
 import { handler, json } from "../_shared/http.ts";
 

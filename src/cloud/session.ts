@@ -1,20 +1,26 @@
 import { useSyncExternalStore } from "react";
 import type { SessionState } from "../lib/types";
-import { assignRuntimeRole } from "../runtime/rbac";
+import { type AssignedRole, assignRuntimeRole } from "../runtime/rbac";
 import type { CloudRuntimeInfo } from "./types";
 
 /**
  * The cloud installation open in this window, if any. Its signed manifest's
- * role becomes the only runtime role (no "preview as role" switch); a
- * missing role id maps to a role that is allowed nothing (fail closed).
+ * role becomes the only runtime role (no "preview as role" switch).
  */
 let active: { sessionId: string; info: CloudRuntimeInfo } | null = null;
 const listeners = new Set<() => void>();
+
 const NO_ROLE = "cloud:no-role";
 
-export function setCloudRuntime(sessionId: string, info: CloudRuntimeInfo) {
-  active = { sessionId, info };
-  assignRuntimeRole({
+/**
+ * The runtime role a signed manifest grants. Only the manifest's signed
+ * `owner` flag (the app's Developer/Owner) gives developer access (null: no
+ * assigned role). Any other manifest without a role maps to a role that is
+ * allowed nothing (fail closed).
+ */
+export function runtimeRoleFor(info: CloudRuntimeInfo): AssignedRole | null {
+  if (info.owner === true && info.roleId === null) return null;
+  return {
     id: info.roleId ?? NO_ROLE,
     name: info.roleName ?? "Runtime user",
     permissions: {
@@ -23,7 +29,12 @@ export function setCloudRuntime(sessionId: string, info: CloudRuntimeInfo) {
       actions: info.rolePermissions?.actions ?? [],
     },
     user: { name: info.email, email: info.email, id: info.userId },
-  });
+  };
+}
+
+export function setCloudRuntime(sessionId: string, info: CloudRuntimeInfo) {
+  active = { sessionId, info };
+  assignRuntimeRole(runtimeRoleFor(info));
   for (const listener of listeners) listener();
 }
 

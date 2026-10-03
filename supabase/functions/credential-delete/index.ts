@@ -12,7 +12,7 @@ import { loadLiveApp, requireAppOwner } from "../_shared/credentialAccess.ts";
 import { datasourceId as readDatasourceId } from "../_shared/credentials.ts";
 import { serviceClient } from "../_shared/db.ts";
 import { handler, HttpError, readJson, requireUser } from "../_shared/http.ts";
-import { enforceRateLimit } from "../_shared/rateLimit.ts";
+import { enforceNamedRateLimit } from "../_shared/rateLimit.ts";
 import { oneOf, uuid } from "../_shared/validate.ts";
 
 Deno.serve(
@@ -30,7 +30,7 @@ Deno.serve(
         field: "userId",
       });
 
-    await enforceRateLimit(`credential-delete:${user.id}`, 60, 3600);
+    await enforceNamedRateLimit("credential-delete", user.id);
     const app = await loadLiveApp(appId);
     await requireAppOwner(app, user.id);
 

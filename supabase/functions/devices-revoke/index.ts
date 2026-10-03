@@ -11,7 +11,7 @@ import { audit } from "../_shared/audit.ts";
 import { isAppAdmin, loadLiveApp, loadMembership } from "../_shared/credentialAccess.ts";
 import { serviceClient } from "../_shared/db.ts";
 import { handler, HttpError, readJson, requireUser } from "../_shared/http.ts";
-import { enforceRateLimit } from "../_shared/rateLimit.ts";
+import { enforceNamedRateLimit } from "../_shared/rateLimit.ts";
 import { uuid } from "../_shared/validate.ts";
 
 Deno.serve(
@@ -22,7 +22,7 @@ Deno.serve(
     const userId = uuid(body, "userId");
     const installationId = uuid(body, "installationId");
 
-    await enforceRateLimit(`devices-revoke:${user.id}`, 120, 3600);
+    await enforceNamedRateLimit("devices-revoke", user.id);
     const app = await loadLiveApp(appId);
     const self = userId === user.id;
     if (!self && !(await isAppAdmin(app, user.id))) {

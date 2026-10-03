@@ -240,6 +240,8 @@ export interface ManifestInput {
   };
   userId: string;
   role: { id: string; name: string; permissions: unknown } | null;
+  /** The caller is the app's Developer/Owner (no runtime role; full access). */
+  owner: boolean;
   installationId: string;
   fingerprint: string;
   issuedAt: Date;
@@ -260,6 +262,9 @@ export function buildManifest(input: ManifestInput): Record<string, unknown> {
     roleId: input.role?.id ?? null,
     roleName: input.role?.name ?? null,
     rolePermissions: input.role?.permissions ?? null,
+    // Signed: the desktop grants developer access only when this is true; a
+    // null role without it allows nothing (fail closed).
+    owner: input.owner,
     installationId: input.installationId,
     fingerprint: input.fingerprint,
     issuedAt: input.issuedAt.toISOString(),
@@ -316,27 +321,38 @@ function entitlementText(reason: string): string {
   }
 }
 
+/** Public API origin of the local CLI stack (Kong on the host). */
+export const LOCAL_PUBLIC_URL = "http://127.0.0.1:54321";
+
+function isLocalHost(hostname: string): boolean {
+  return (
+    ["localhost", "127.0.0.1", "::1", "[::1]", "kong", "host.docker.internal"].includes(hostname) ||
+    !hostname.includes(".")
+  );
+}
+
 /**
  * Rewrites a storage URL minted inside the Edge runtime to the public API
- * origin: `SUPABASE_PUBLIC_URL` when set, else the forwarded host of the
- * request when the runtime reaches the API through an internal host (local
- * stack: http://kong:8000). Hosted projects already mint public URLs.
+ * origin. The origin comes only from configuration, never from request
+ * headers (a forged x-forwarded-host would hand out links to another host):
+ * `IXTABLE_PUBLIC_API_URL` when set; otherwise, only when `SUPABASE_URL` is a
+ * local stack, the CLI default http://127.0.0.1:54321. A hosted project
+ * without `IXTABLE_PUBLIC_API_URL` keeps the URL Storage minted (already
+ * public); an internal URL there is a misconfiguration and throws.
  */
-export function publicUrl(url: string, req: Request, env = Deno.env.toObject()): string {
+export function publicUrl(url: string, env = Deno.env.toObject()): string {
   const target = new URL(url);
-  const configured = env.SUPABASE_PUBLIC_URL;
-  let origin: string | null = configured ? new URL(configured).origin : null;
-  if (!origin && !target.hostname.includes(".")) {
-    const host = req.headers.get("x-forwarded-host") ?? req.headers.get("host");
-    if (host && host.includes(".")) {
-      const proto = req.headers.get("x-forwarded-proto") ?? "http";
-      const port = req.headers.get("x-forwarded-port");
-      origin = `${proto}://${host}${port && !host.includes(":") ? `:${port}` : ""}`;
-    }
+  let origin: string | null = env.IXTABLE_PUBLIC_API_URL
+    ? new URL(env.IXTABLE_PUBLIC_API_URL).origin
+    : null;
+  if (!origin) {
+    const internal = env.SUPABASE_URL ? new URL(env.SUPABASE_URL) : null;
+    if (internal && isLocalHost(internal.hostname)) origin = LOCAL_PUBLIC_URL;
+    else if (isLocalHost(target.hostname))
+      throw new Error("IXTABLE_PUBLIC_API_URL must be set: storage minted an internal URL");
   }
   if (!origin) return url;
-  const out = new URL(target.pathname + target.search, origin);
-  return out.toString();
+  return new URL(target.pathname + target.search, origin).toString();
 }
 
 // Database and storage (service role) ----------------------------------------
@@ -611,7 +627,7 @@ export async function signedDownloadUrl(
     .createSignedUrl(path, ttlSeconds);
   if (error || !data) throw new Error(`createSignedUrl failed: ${error?.message ?? "no url"}`);
   return {
-    url: publicUrl(data.signedUrl, req),
+    url: publicUrl(data.signedUrl),
     expiresAt: new Date(Date.now() + ttlSeconds * 1000).toISOString(),
   };
 }

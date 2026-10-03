@@ -3,7 +3,7 @@ import type { CloudFixture } from "./service-qa/fixture";
 import { addMember, createRole, grantSubscription } from "./service-qa/seed";
 
 /**
- * A published SQLite app with one runtime user, one role, one version that records a
+ * A published app (SQLite unless asked) with one runtime user, one role, one version that records a
  * confirmed non-TLS override, a Team subscription, and an audit event.
  */
 export async function seedPublishedApp(
@@ -38,11 +38,17 @@ export async function seedPublishedApp(
     storage_path: `apps/${app.id}/versions/${versionId}.ixt`,
     migrations: [{ id: "m-001", name: "add-orders" }],
     min_runtime_version: "0.4.0",
+    // The normalized summary publish-checkpoint stores (_shared/distribution.ts).
     security: {
-      credential_mode: "shared",
+      store: opts.datasourceKind ?? "sqlite",
+      credentialMode: opts.datasourceKind === "postgres" ? "shared" : null,
       tls: false,
-      insecure_override_confirmed: true,
-      shared_credential_warning_acknowledged: true,
+      sslmode: "disable",
+      insecureTransportConfirmed: true,
+      insecureTransportConfirmedAt: "2026-10-01T09:30:00.000Z",
+      sharedCredentialAcknowledged: opts.datasourceKind === "postgres",
+      concurrencyPoliciesResolved: true,
+      unresolvedEntities: [],
     },
     release_notes: "Adds the orders form.",
     status: "published",

@@ -1,0 +1,17 @@
+{
+  "function": "archive-upload-url",
+  "status": 200,
+  "request": {
+    "appId": "d5c5216b-2a16-48b4-86c4-488a9074a42d",
+    "kind": "version",
+    "size": 4096,
+    "sha256": "096a77d5cadbcb25219a62f0d165a3f8909ed988f71ccfdc0f5aace8c3f54a01"
+  },
+  "response": {
+    "uploadId": "0d70d41f-620c-4258-bf96-389cf330d8fc",
+    "path": "apps/d5c5216b-2a16-48b4-86c4-488a9074a42d/versions/0d70d41f-620c-4258-bf96-389cf330d8fc.ixt",
+    "signedUrl": "http://127.0.0.1:54321/storage/v1/object/upload/sign/app-archives/apps/d5c5216b-2a16-48b4-86c4-488a9074a42d/versions/0d70d41f-620c-4258-bf96-389cf330d8fc.ixt?token=redacted",
+    "token": "[redacted]",
+    "expiresAt": "2026-10-04T23:14:30.593504+00:00"
+  }
+}

@@ -5,6 +5,7 @@ import { documentState } from "../release/api";
 import { useShell } from "../shell/context";
 import { publishPreflight, uploadArchive } from "./api";
 import { invokeFunction, runtimeCapacity, requireSession } from "./client";
+import type { PublishedVersion } from "./contract";
 import { CloudError } from "./errors";
 import { ActionStatus } from "./StudioPanels";
 import { useCloudAction } from "./useCloudAction";
@@ -15,7 +16,6 @@ import type { CloudApp, Preflight, UploadResult } from "./types";
 const SEMVER =
   /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?$/;
 
-type Published = { version: { id: string; version: string } };
 type Conflict = {
   upload: UploadResult;
   body: Record<string, unknown>;
@@ -83,7 +83,7 @@ export function PublishPanel({
     unresolvedEntities: preflight?.unresolvedEntities ?? [],
   });
 
-  const finish = async (published: Published) => {
+  const finish = async (published: { version: PublishedVersion }) => {
     await update(
       (draft) => ({ ...draft, cloud: { ...link, headVersionId: published.version.id } }),
       "Record published version",
@@ -128,7 +128,7 @@ export function PublishPanel({
         expectedHeadVersionId: link.headVersionId ?? null,
       };
       try {
-        return await finish(await invokeFunction<Published>("publish-checkpoint", body));
+        return await finish(await invokeFunction("publish-checkpoint", body));
       } catch (reason) {
         if (reason instanceof CloudError && reason.code === "VERSION_CONFLICT") {
           const head =
@@ -143,9 +143,11 @@ export function PublishPanel({
   const resolve = (action: "overwrite" | "fork") =>
     run(async () => {
       if (!conflict) return;
-      const reply = await invokeFunction<
-        Partial<Published> & { app?: { id: string; name?: string } }
-      >("versions-resolve", { ...conflict.body, action, fromVersionId: conflict.headVersionId });
+      const reply = await invokeFunction("versions-resolve", {
+        ...conflict.body,
+        action,
+        fromVersionId: conflict.headVersionId,
+      });
       setConflict(null);
       if (action === "fork" && reply.app) {
         await update(
@@ -164,7 +166,7 @@ export function PublishPanel({
         onPublished();
         return `Forked into a new cloud application${reply.app.name ? ` (${reply.app.name})` : ""}.`;
       }
-      if (reply.version) return finish(reply as Published);
+      if (reply.version) return finish({ version: reply.version });
       return "Resolved.";
     });
 

@@ -11,7 +11,7 @@ import { CODE_CHALLENGE_RE, DESKTOP_AUTH_TTL_MS, STATE_RE } from "../_shared/cre
 import { timingSafeEqual } from "../_shared/crypto.ts";
 import { serviceClient } from "../_shared/db.ts";
 import { handler, HttpError, readJson, requireUser } from "../_shared/http.ts";
-import { enforceRateLimit } from "../_shared/rateLimit.ts";
+import { enforceNamedRateLimit } from "../_shared/rateLimit.ts";
 import { str } from "../_shared/validate.ts";
 
 Deno.serve(
@@ -26,7 +26,7 @@ Deno.serve(
     const state = str(body, "state", { min: 16, max: 200, pattern: STATE_RE });
     if (!user.email) throw new HttpError("VALIDATION", "This account has no email address");
 
-    await enforceRateLimit(`desktop-auth-approve:${user.id}`, 20, 600);
+    await enforceNamedRateLimit("desktop-auth-approve", user.id);
     const db = serviceClient();
     const now = new Date();
     const expiresAt = new Date(now.getTime() + DESKTOP_AUTH_TTL_MS).toISOString();

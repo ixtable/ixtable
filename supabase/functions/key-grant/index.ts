@@ -22,7 +22,7 @@ import { b64encode, unwrapDek } from "../_shared/crypto.ts";
 import { serviceClient } from "../_shared/db.ts";
 import { requireEntitlement } from "../_shared/entitlements.ts";
 import { handler, HttpError, readJson, requireUser } from "../_shared/http.ts";
-import { enforceRateLimit, incrementMetric } from "../_shared/rateLimit.ts";
+import { enforceNamedRateLimit, incrementMetric } from "../_shared/rateLimit.ts";
 import { uuid } from "../_shared/validate.ts";
 
 interface EnvelopeRow {
@@ -44,7 +44,7 @@ Deno.serve(
     const installationId = uuid(body, "installationId");
     const datasourceId = readDatasourceId(body);
 
-    await enforceRateLimit(`key-grant:${user.id}:${appId}`, 30, 3600);
+    await enforceNamedRateLimit("key-grant", `${user.id}:${appId}`);
     const app = await loadLiveApp(appId);
     const db = serviceClient();
 

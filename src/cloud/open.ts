@@ -1,12 +1,11 @@
 import type { SessionState } from "../lib/types";
 import { installApp, installedApps, openInstalled, runtimeInfo } from "./api";
 import { invokeFunction, requireSession } from "./client";
+import type { SyncCheck } from "./contract";
 import { CloudError, toCloudError } from "./errors";
 import { setCloudRuntime } from "./session";
 
 export type OpenResult = { state: SessionState; notice: string };
-
-type SyncCheck = { upToDate: boolean; latest?: { versionId: string; version: string } | null };
 
 /** Codes that mean "the cloud could not be asked", so the installed version may run. */
 const OFFLINE = new Set(["CLOUD_OFFLINE", "CLOUD_TIMEOUT", "CLOUD_UNAVAILABLE"]);
@@ -36,7 +35,7 @@ export async function openCloudApp(
   } else {
     let sync: SyncCheck | null = null;
     try {
-      sync = await invokeFunction<SyncCheck>("sync-check", {
+      sync = await invokeFunction("sync-check", {
         appId,
         installedVersionId: installed.versionId ?? null,
         installationId: installed.installationId,

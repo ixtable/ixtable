@@ -1,0 +1,61 @@
+{
+  "function": "versions-resolve",
+  "status": 200,
+  "request": {
+    "appId": "d5c5216b-2a16-48b4-86c4-488a9074a42d",
+    "action": "fork",
+    "fromVersionId": "0d70d41f-620c-4258-bf96-389cf330d8fc",
+    "name": "Contract CRM (fork)"
+  },
+  "response": {
+    "app": {
+      "id": "bf09e5e8-b2ed-43bd-8e66-8a7247922463",
+      "org_id": "6baa48c5-3687-468d-952c-34e41d117128",
+      "owner_id": "b55a0145-e352-4790-a67c-b55fec436618",
+      "name": "Contract CRM (fork)",
+      "document_id": "6eee5120-281e-4e1b-a702-29845edf1748:fork:bf09e5e8-b2ed-43bd-8e66-8a7247922463",
+      "datasource_kind": "sqlite",
+      "backups_enabled": true,
+      "retention_versions": 20,
+      "retention_days": null,
+      "head_version_id": "dda33fe0-f143-4e08-800e-c9d7fa0d15a4",
+      "created_at": "2026-10-03T23:14:34.905402+00:00",
+      "updated_at": "2026-10-03T23:14:34.939892+00:00",
+      "deleted_at": null
+    },
+    "version": {
+      "id": "dda33fe0-f143-4e08-800e-c9d7fa0d15a4",
+      "app_id": "bf09e5e8-b2ed-43bd-8e66-8a7247922463",
+      "version": "1.0.0",
+      "developer_id": "b55a0145-e352-4790-a67c-b55fec436618",
+      "created_at": "2026-10-03T23:14:34.934825+00:00",
+      "archive_sha256": "096a77d5cadbcb25219a62f0d165a3f8909ed988f71ccfdc0f5aace8c3f54a01",
+      "archive_size": 4096,
+      "storage_path": "apps/bf09e5e8-b2ed-43bd-8e66-8a7247922463/versions/dda33fe0-f143-4e08-800e-c9d7fa0d15a4.ixt",
+      "migrations": [
+        {
+          "id": "m-0001",
+          "name": "Create customers"
+        }
+      ],
+      "min_runtime_version": "0.1.0",
+      "security": {
+        "tls": true,
+        "store": "sqlite",
+        "sslmode": null,
+        "credentialMode": null,
+        "unresolvedEntities": [],
+        "insecureTransportConfirmed": false,
+        "concurrencyPoliciesResolved": true,
+        "insecureTransportConfirmedAt": null,
+        "sharedCredentialAcknowledged": false
+      },
+      "release_notes": "First release",
+      "status": "published",
+      "parent_version_id": "0d70d41f-620c-4258-bf96-389cf330d8fc",
+      "resolution": "fork",
+      "published_at": "2026-10-03T23:14:34.933+00:00",
+      "withdrawn_at": null
+    }
+  }
+}

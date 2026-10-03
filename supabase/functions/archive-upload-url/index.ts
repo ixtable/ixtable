@@ -27,7 +27,7 @@ import {
 } from "../_shared/distribution.ts";
 import { requireEntitlement } from "../_shared/entitlements.ts";
 import { handler, HttpError, readJson, requireUser } from "../_shared/http.ts";
-import { enforceRateLimit, incrementMetric } from "../_shared/rateLimit.ts";
+import { enforceNamedRateLimit, incrementMetric } from "../_shared/rateLimit.ts";
 import { int, oneOf, sha256, uuid } from "../_shared/validate.ts";
 
 Deno.serve(
@@ -48,7 +48,7 @@ Deno.serve(
         ? uuid(body, "installationId")
         : uuid(body, "installationId", { optional: true });
 
-    await enforceRateLimit(`archive-upload-url:${user.id}`, 60, 3600);
+    await enforceNamedRateLimit("archive-upload-url", user.id);
     const app = await loadApp(appId);
     const uploadId = crypto.randomUUID();
     let path: string;
@@ -101,7 +101,7 @@ Deno.serve(
     return {
       uploadId,
       path,
-      signedUrl: publicUrl(signed.data.signedUrl, req),
+      signedUrl: publicUrl(signed.data.signedUrl),
       token: signed.data.token,
       expiresAt: upload.expires_at,
     };

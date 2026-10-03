@@ -40,7 +40,7 @@ test("invitation stores only the token hash, is single use and bound to the invi
   const url = new URL(created.body.acceptUrl);
   const token = tokenOf(created.body.acceptUrl);
   expect(`${url.origin}${url.pathname}`).toBe("http://127.0.0.1:3001/invite");
-  expect(created.body.delivery).toBe("magic_link");
+  expect(created.body.delivery).toBe("sent");
   const { data: row } = await getServiceClient()
     .from("invitations")
     .select("email, token_hash, expires_at, role_id")
@@ -233,14 +233,16 @@ test("org invitation, new-user delivery and permission checks", async ({ cloud }
   expect(strangerInvite.status).toBe(403);
   expect(badRole.status).toBe(422);
   expect(fresh.status).toBe(200);
-  expect(fresh.body.delivery).toBe("invite");
+  // The reply is the same for new and existing accounts (no account enumeration).
+  expect(fresh.body.delivery).toBe("sent");
+  expect((orgInvite.body as { delivery?: string }).delivery).toBe("sent");
   expect(invitedUser?.invited_at).toBeTruthy();
 
   recordOutcome("invitations-03-org-and-delivery", {
     expectations: [
       "An org invitation accepted by the invitee adds them to org_members with the invited role (admin).",
       "A user outside the app cannot invite (403) and an unknown roleId is refused (422).",
-      "Inviting an email with no account sends a Supabase Auth invitation (delivery invite, auth user marked invited).",
+      'Inviting an email with no account sends a Supabase Auth invitation (auth user marked invited), yet the reply says delivery "sent" exactly as for an existing account.',
     ],
     details: {
       joined: joined.body,

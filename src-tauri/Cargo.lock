@@ -2434,6 +2434,7 @@ dependencies = [
  "chrono",
  "duckdb",
  "ed25519-dalek",
+ "flate2",
  "libc",
  "minisign-verify",
  "napi",

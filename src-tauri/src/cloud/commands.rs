@@ -118,10 +118,9 @@ pub async fn cloud_desktop_auth_poll(
         match http::call_function(&cfg, None, "desktop-auth-exchange", &body) {
             Ok(reply) => {
                 pkce::finish(&state);
-                let session = reply.get("session").cloned().unwrap_or(reply);
                 Ok(DesktopAuthPoll {
                     status: "approved".into(),
-                    session: Some(session),
+                    session: Some(super::contract::session(reply)?),
                 })
             }
             Err(e) if e.code == "PENDING" => Ok(DesktopAuthPoll {
@@ -196,18 +195,15 @@ fn staged_for(window: &str) -> Result<publish::Staged, AppError> {
     Ok(staged)
 }
 
-fn signed_upload_url(reply: &Value) -> Result<String, AppError> {
-    let url = reply["signedUrl"]
-        .as_str()
-        .or_else(|| reply["signedURL"].as_str())
-        .ok_or_else(|| err("CLOUD_ERROR", "archive-upload-url returned no upload URL"))?;
-    Ok(match reply["token"].as_str() {
+fn signed_upload_url(reply: &super::contract::UploadUrlReply) -> String {
+    let url = &reply.signed_url;
+    match reply.token.as_deref() {
         Some(token) if !url.contains("token=") => {
             let sep = if url.contains('?') { '&' } else { '?' };
             format!("{url}{sep}token={token}")
         }
         _ => url.to_string(),
-    })
+    }
 }
 
 /// Uploads the saved archive (Studio) or an installation snapshot (Runtime)
@@ -247,7 +243,9 @@ pub async fn cloud_upload_archive(
                 "installationId": installation_id,
             }),
         )?;
-        http::upload_file(&cfg, &signed_upload_url(&reply)?, &staged.path, &progress)?;
+        let reply: super::contract::UploadUrlReply =
+            super::contract::decode("archive-upload-url", reply)?;
+        http::upload_file(&cfg, &signed_upload_url(&reply), &staged.path, &progress)?;
         crate::logging::info(
             "cloud",
             &format!(
@@ -256,8 +254,8 @@ pub async fn cloud_upload_archive(
             ),
         );
         Ok(UploadResult {
-            upload_id: reply["uploadId"].as_str().unwrap_or_default().into(),
-            path: reply["path"].as_str().unwrap_or_default().into(),
+            upload_id: reply.upload_id,
+            path: reply.path,
             sha256: staged.sha256.clone(),
             size: staged.size,
             installation_id,

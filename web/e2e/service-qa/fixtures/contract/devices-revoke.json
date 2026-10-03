@@ -1,0 +1,17 @@
+{
+  "function": "devices-revoke",
+  "status": 200,
+  "request": {
+    "appId": "d5c5216b-2a16-48b4-86c4-488a9074a42d",
+    "userId": "1523108e-c39c-40cb-ba4f-a9956f003949",
+    "installationId": "6c0015d3-6817-4894-aac5-1a10e44f7b30"
+  },
+  "response": {
+    "installation": {
+      "id": "6c0015d3-6817-4894-aac5-1a10e44f7b30",
+      "revokedAt": "2026-10-03T23:14:35.782+00:00"
+    },
+    "revokedGrants": 1,
+    "alreadyRevoked": false
+  }
+}

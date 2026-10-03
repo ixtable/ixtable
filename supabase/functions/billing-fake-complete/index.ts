@@ -3,8 +3,8 @@
 // calls this to "pay". It posts Stripe-shaped events signed with
 // STRIPE_WEBHOOK_SECRET to stripe-webhook, the same path real Stripe uses,
 // so the subscription is written only by the webhook. 404 with any other
-// provider.
-import { billingProvider, buildFakeEvent } from "../_shared/billing.ts";
+// provider, and unless IXTABLE_ALLOW_FAKE_BILLING=1.
+import { buildFakeEvent, fakeBillingAllowed } from "../_shared/billing.ts";
 import { getSubscription, postSignedEvent } from "../_shared/commercial.ts";
 import { serviceClient } from "../_shared/db.ts";
 import { handler, HttpError, readJson, requireUser } from "../_shared/http.ts";
@@ -14,7 +14,8 @@ import { str, uuid } from "../_shared/validate.ts";
 
 Deno.serve(
   handler(async (req) => {
-    if (billingProvider().name !== "fake") throw new HttpError("NOT_FOUND", "Not available");
+    if (!fakeBillingAllowed() || Deno.env.get("BILLING_PROVIDER") !== "fake")
+      throw new HttpError("NOT_FOUND", "Not available");
     const { user } = await requireUser(req);
     const body = await readJson(req);
     const sessionId = str(body, "sessionId", { min: 8, max: 255 });

@@ -1,0 +1,12 @@
+{
+  "function": "desktop-auth-approve",
+  "status": 200,
+  "request": {
+    "codeChallenge": "[redacted]",
+    "state": "[redacted]"
+  },
+  "response": {
+    "ok": true,
+    "expiresAt": "2026-10-03T23:19:36.304+00:00"
+  }
+}

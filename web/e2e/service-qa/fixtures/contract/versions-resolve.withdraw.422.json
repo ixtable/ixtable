@@ -1,0 +1,19 @@
+{
+  "function": "versions-resolve",
+  "status": 422,
+  "request": {
+    "appId": "d5c5216b-2a16-48b4-86c4-488a9074a42d",
+    "action": "withdraw",
+    "versionId": "0d70d41f-620c-4258-bf96-389cf330d8fc"
+  },
+  "response": {
+    "error": {
+      "code": "VALIDATION",
+      "message": "Installations run the only published version; confirm to withdraw it",
+      "details": {
+        "requiresConfirm": true,
+        "installations": 1
+      }
+    }
+  }
+}

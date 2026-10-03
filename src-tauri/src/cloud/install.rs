@@ -171,6 +171,8 @@ pub fn install_verified(
     let document_id = crate::archive_io::read_header(archive)?
         .metadata
         .document_id;
+    // The id names the installation directory: refuse traversal before any join.
+    super::check_id("document", &document_id)?;
     let header = header_for(m, &document_id, public_key_b64);
     bundle::check_runtime_compat(&header, bundle::APP_VERSION)?;
     let bytes = fs::read(archive).map_err(io_err)?;

@@ -58,9 +58,11 @@ pub async fn cloud_install_app(
                 "deviceName": local.device_name,
             }),
         )?;
-        let signature = reply["signature"].as_str().unwrap_or_default().to_string();
+        let reply: super::contract::BundleReply =
+            super::contract::decode("bundle-manifest", reply)?;
+        let signature = reply.signature;
         let verified = manifest::verify(
-            &reply["manifest"],
+            &reply.manifest,
             &signature,
             &key,
             Utc::now(),
@@ -70,9 +72,7 @@ pub async fn cloud_install_app(
                 installation_id: &local.installation_id,
             },
         )?;
-        let url = reply["archiveUrl"]
-            .as_str()
-            .ok_or_else(|| err("CLOUD_ERROR", "bundle-manifest returned no archive URL"))?;
+        let url = reply.archive_url.as_str();
         let incoming = install::cloud_root().join(".incoming");
         let download = http::download(
             &cfg,
@@ -112,10 +112,12 @@ pub struct CloudRuntimeInfo {
     pub version: String,
     pub user_id: String,
     pub email: String,
-    /// Assigned runtime role (None: nothing is allowed).
+    /// Assigned runtime role (None: nothing is allowed unless `owner`).
     pub role_id: Option<String>,
     pub role_name: Option<String>,
     pub role_permissions: Value,
+    /// Signed owner flag from the manifest: developer access.
+    pub owner: bool,
     pub installation_id: String,
     pub fingerprint: String,
     pub issued_at: String,
@@ -139,6 +141,7 @@ fn info_from(record: CloudRecord, window: &str) -> Result<CloudRuntimeInfo, AppE
         role_id: m.role_id,
         role_name: m.role_name,
         role_permissions: m.role_permissions,
+        owner: m.owner,
         installation_id: m.installation_id,
         fingerprint: m.fingerprint,
         issued_at: m.issued_at,
@@ -212,15 +215,13 @@ pub async fn cloud_key_grant(
                 return Err(e);
             }
         };
-        let env = &reply["envelope"];
-        let field = |name: &str| env[name].as_str().unwrap_or_default().to_string();
-        let aad = field("aad");
+        let reply: super::contract::GrantReply = super::contract::decode("key-grant", reply)?;
+        let aad = reply.envelope.aad.clone();
         let prefix = format!("ixtable-credential/1|{}|{}|", m.app_id, ds.id);
         if !aad.starts_with(&prefix) {
             return Err(err("CREDENTIAL_DECRYPT", "The credential envelope is for another application or datasource"));
         }
-        let dek = reply["dek"].as_str().unwrap_or_default();
-        let plain = envelope::open(&field("ciphertext"), &field("nonce"), &aad, dek)?;
+        let plain = envelope::open(&reply.envelope.ciphertext, &reply.envelope.nonce, &aad, &reply.dek)?;
         let cred: envelope::Credential = serde_json::from_slice(&plain)
             .map_err(|_| err("CREDENTIAL_DECRYPT", "The decrypted credential is unreadable"))?;
         drop(plain);
@@ -232,8 +233,9 @@ pub async fn cloud_key_grant(
         }
         // Never trust a grant longer than the 24-hour renewal interval.
         let max = Utc::now() + Duration::hours(24);
-        let expires = reply["expiresAt"]
-            .as_str()
+        let expires = reply
+            .expires_at
+            .as_deref()
             .and_then(|t| DateTime::parse_from_rfc3339(t).ok())
             .map(|t| t.with_timezone(&Utc))
             .unwrap_or(max)

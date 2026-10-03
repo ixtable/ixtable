@@ -72,5 +72,8 @@ Deno.test("fake provider returns website URLs; billingProvider requires a provid
   Deno.env.delete("BILLING_PROVIDER");
   assertThrows(() => billingProvider());
   Deno.env.set("BILLING_PROVIDER", "fake");
+  Deno.env.delete("IXTABLE_ALLOW_FAKE_BILLING");
+  assertThrows(() => billingProvider(), Error, "IXTABLE_ALLOW_FAKE_BILLING");
+  Deno.env.set("IXTABLE_ALLOW_FAKE_BILLING", "1");
   assertEquals(billingProvider().name, "fake");
 });

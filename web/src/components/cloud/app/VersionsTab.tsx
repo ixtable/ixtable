@@ -1,6 +1,7 @@
 import React, { useState, type ReactNode } from "react";
 import { useHistory } from "@docusaurus/router";
 import {
+  CloudError,
   formatBytes,
   formatDate,
   shortId,
@@ -14,35 +15,43 @@ import { useAction, useAsync } from "../useAsync";
 import RestoreDialog from "./RestoreDialog";
 import type { AppTabProps } from "./types";
 
-type Pending = { kind: "fork"; version: AppVersion } | null;
+type Pending =
+  | { kind: "fork"; version: AppVersion }
+  // `installations` is set once the server asked for confirmation (422 requiresConfirm).
+  | { kind: "withdraw"; version: AppVersion; installations: number | null }
+  | null;
 
 function migrationLabel(migration: MigrationRef | string): string {
   return typeof migration === "string" ? migration : (migration.name ?? migration.id);
 }
 
+/** The camelCase summary publish-checkpoint stores (SecuritySummary in lib/cloud/types). */
 function SecuritySummary({ version }: { version: AppVersion }): ReactNode {
-  const security = version.security ?? {};
-  const mode = String(security.credential_mode ?? security.credentialMode ?? "none");
-  const tls = security.tls ?? true;
-  const override = Boolean(
-    security.insecure_override_confirmed ?? security.insecureOverrideConfirmed,
-  );
-  const sharedAck = Boolean(
-    security.shared_credential_warning_acknowledged ?? security.sharedCredentialWarningAcknowledged,
-  );
+  const security = version.security;
+  if (!security) return <>Not recorded</>;
+  const mode = security.credentialMode;
   return (
     <div className="cloud-actions">
-      <Badge tone={mode === "shared" ? "warning" : "neutral"}>
-        Credentials: {mode.replace("_", " ")}
-      </Badge>
-      {tls === false || override ? (
-        <Badge tone="danger">Non-TLS override confirmed</Badge>
-      ) : (
-        <Badge tone="success">TLS required</Badge>
+      <Badge>{security.store === "postgres" ? "PostgreSQL" : "SQLite"}</Badge>
+      {mode && (
+        <Badge tone={mode === "shared" ? "warning" : "neutral"}>
+          Credentials: {mode === "shared" ? "one shared login" : "one login per user"}
+        </Badge>
       )}
-      {mode === "shared" && sharedAck && (
+      {security.tls ? (
+        <Badge tone="success">TLS required</Badge>
+      ) : (
+        <Badge tone="danger">
+          Non-TLS override confirmed
+          {security.insecureTransportConfirmedAt
+            ? ` ${formatDate(security.insecureTransportConfirmedAt)}`
+            : ""}
+        </Badge>
+      )}
+      {mode === "shared" && security.sharedCredentialAcknowledged && (
         <Badge tone="warning">Shared credential warning acknowledged</Badge>
       )}
+      {security.concurrencyPoliciesResolved && <Badge>Concurrency policies resolved</Badge>}
     </div>
   );
 }
@@ -52,7 +61,6 @@ function VersionCard({
   isHead,
   developer,
   canManage,
-  canDownload,
   onAction,
   onDownload,
 }: {
@@ -60,7 +68,6 @@ function VersionCard({
   isHead: boolean;
   developer: Profile | undefined;
   canManage: boolean;
-  canDownload: boolean;
   onAction: (pending: Pending) => void;
   onDownload: (version: AppVersion) => void;
 }): ReactNode {
@@ -81,23 +88,30 @@ function VersionCard({
         </h3>
         {canManage && (
           <div className="cloud-section__actions">
-            {canDownload && (
-              <button
-                type="button"
-                className="button button--sm button--secondary"
-                onClick={() => onDownload(version)}
-              >
-                Download or restore {version.version}
-              </button>
-            )}
+            <button
+              type="button"
+              className="button button--sm button--secondary"
+              onClick={() => onDownload(version)}
+            >
+              Download or restore {version.version}
+            </button>
             {version.status === "published" && (
-              <button
-                type="button"
-                className="button button--sm button--secondary"
-                onClick={() => onAction({ kind: "fork", version })}
-              >
-                Fork {version.version} into a new app
-              </button>
+              <>
+                <button
+                  type="button"
+                  className="button button--sm button--secondary"
+                  onClick={() => onAction({ kind: "fork", version })}
+                >
+                  Fork {version.version} into a new app
+                </button>
+                <button
+                  type="button"
+                  className="button button--sm button--outline button--danger"
+                  onClick={() => onAction({ kind: "withdraw", version, installations: null })}
+                >
+                  Withdraw {version.version}
+                </button>
+              </>
             )}
           </div>
         )}
@@ -107,6 +121,12 @@ function VersionCard({
         <dd>{developer?.email || shortId(version.developer_id)}</dd>
         <dt>Published</dt>
         <dd>{formatDate(version.published_at ?? version.created_at)}</dd>
+        {version.withdrawn_at && (
+          <>
+            <dt>Withdrawn</dt>
+            <dd>{formatDate(version.withdrawn_at)}</dd>
+          </>
+        )}
         <dt>Checksum</dt>
         <dd className="cloud-code">sha256:{version.archive_sha256}</dd>
         <dt>Size</dt>
@@ -126,14 +146,21 @@ function VersionCard({
   );
 }
 
+const WITHDRAW_COPY =
+  "Runtime users stop receiving this version. If it is the current head, the head moves back to the newest remaining published version and installations switch to it on their next sync. The version row and its archive are kept for the audit history.";
+
 const FORK_COPY =
   "Creates a new cloud app in this organization, starting from this version, with the same runtime roles. The new app has no runtime users, plan, or credentials until you add them. This app is unchanged.";
 
-/** Published checkpoints with download/restore and fork. Overwrite is resolved in Studio. */
-export default function VersionsTab({ app, isOwner, isAdmin, reloadApp }: AppTabProps): ReactNode {
+/**
+ * Published checkpoints with download/restore, fork and withdraw (Developer/Owner only:
+ * versions-resolve and restore-url refuse everyone else). Overwrite is resolved in Studio.
+ */
+export default function VersionsTab({ app, isOwner, reloadApp }: AppTabProps): ReactNode {
   const api = useCloudApi();
   const history = useHistory();
   const [pending, setPending] = useState<Pending>(null);
+  const [done, setDone] = useState<string | null>(null);
   const [download, setDownload] = useState<AppVersion | null>(null);
   const state = useAsync(async () => {
     const versions = await api.q().versions(app.id);
@@ -142,6 +169,34 @@ export default function VersionsTab({ app, isOwner, isAdmin, reloadApp }: AppTab
   }, [api, app.id]);
   const resolve = useAction(async () => {
     if (!pending) return;
+    if (pending.kind === "withdraw") {
+      try {
+        const result = await api.call("versions-resolve", {
+          appId: app.id,
+          action: "withdraw",
+          versionId: pending.version.id,
+          // Sent only after the server asked for it, with the count shown in the dialog.
+          ...(pending.installations !== null ? { confirm: true } : {}),
+        });
+        const head = state.data?.versions.find((v) => v.id === result.headVersionId);
+        setDone(
+          `Version ${pending.version.version} withdrawn. ${
+            head ? `Runtime users now get version ${head.version}.` : "No version is published now."
+          }`,
+        );
+      } catch (error) {
+        const details = error instanceof CloudError ? error.details : {};
+        if (details.requiresConfirm === true) {
+          setPending({ ...pending, installations: Number(details.installations ?? 0) });
+          return;
+        }
+        throw error;
+      }
+      setPending(null);
+      state.reload();
+      reloadApp();
+      return;
+    }
     const result = await api.call("versions-resolve", {
       appId: app.id,
       action: "fork",
@@ -160,13 +215,21 @@ export default function VersionsTab({ app, isOwner, isAdmin, reloadApp }: AppTab
   const versions = state.data?.versions ?? [];
   return (
     <>
-      <Notice tone="info" title="Publishing happens in Studio">
+      <Notice tone="info" title="Publishing and overwrite happen in Studio">
         Each version is an explicit Publish checkpoint from the desktop app. Autosave never
-        publishes. When a publish was based on an older version, Studio reports the conflict and
-        asks you to overwrite the current head with your upload or fork it into a new app. You can
-        also fork any published version from this page.
+        publishes. When someone published a newer version since your document was based on the head,
+        Studio reports the conflict and offers two choices: <strong>Overwrite</strong> publishes
+        your upload as the new head anyway (the other version stays in this list), or{" "}
+        <strong>Fork</strong> starts a new app from it. Overwrite needs the archive you are
+        publishing, so it is only available in Studio. Here you can fork or withdraw a published
+        version.
       </Notice>
       <ErrorNotice error={state.error} />
+      {done && (
+        <Notice tone="success" testId="version-withdrawn">
+          {done}
+        </Notice>
+      )}
       {versions.length === 0 && <Empty>No versions published yet.</Empty>}
       <Section
         title="Versions"
@@ -178,14 +241,13 @@ export default function VersionsTab({ app, isOwner, isAdmin, reloadApp }: AppTab
             version={version}
             isHead={version.id === app.head_version_id}
             developer={state.data?.profiles[version.developer_id]}
-            canManage={isAdmin}
-            canDownload={isOwner}
+            canManage={isOwner}
             onAction={setPending}
             onDownload={setDownload}
           />
         ))}
       </Section>
-      {pending && (
+      {pending?.kind === "fork" && (
         <ConfirmDialog
           open
           title="Fork into a new app?"
@@ -198,6 +260,35 @@ export default function VersionsTab({ app, isOwner, isAdmin, reloadApp }: AppTab
           <p>
             <strong>Version {pending.version.version}</strong>. {FORK_COPY}
           </p>
+        </ConfirmDialog>
+      )}
+      {pending?.kind === "withdraw" && (
+        <ConfirmDialog
+          open
+          title={`Withdraw version ${pending.version.version}?`}
+          confirmLabel={pending.installations === null ? "Withdraw" : "Withdraw anyway"}
+          danger
+          pending={resolve.pending}
+          error={resolve.error}
+          onConfirm={() => resolve.run()}
+          onCancel={() => {
+            resolve.clearError();
+            setPending(null);
+          }}
+        >
+          <p>{WITHDRAW_COPY}</p>
+          {pending.installations !== null && (
+            <Notice
+              tone="warning"
+              title="This is the only published version"
+              testId="withdraw-confirm"
+            >
+              {pending.installations} installation{pending.installations === 1 ? " runs" : "s run"}{" "}
+              this version. After withdrawing there is no version to sync to: runtime users keep the
+              copy they have, cannot install the app on new devices, and get nothing new until you
+              publish again.
+            </Notice>
+          )}
         </ConfirmDialog>
       )}
       <RestoreDialog

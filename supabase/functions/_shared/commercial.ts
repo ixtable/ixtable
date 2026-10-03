@@ -1,7 +1,8 @@
 // Shared helpers for the commercial functions (billing-*, stripe-webhook,
 // account-*, admin-support). Authorization rules: billing actions are allowed
 // for the app's owner and for org members with role owner, admin or billing.
-import { signStripePayload } from "./billing.ts";
+import { audit } from "./audit.ts";
+import { billingProvider, ENDED_STATUSES, signStripePayload } from "./billing.ts";
 import { env, optionalEnv, serviceClient } from "./db.ts";
 import { HttpError } from "./http.ts";
 import type { SubscriptionState } from "./billing.ts";
@@ -122,4 +123,41 @@ export async function postSignedEvent(event: Record<string, unknown>): Promise<{
   });
   const body = await response.json().catch(() => null);
   return { status: response.status, body };
+}
+
+/** A subscription that still bills (or could): anything not canceled or expired. */
+export function isBilling(status: string | null | undefined): boolean {
+  return !!status && !ENDED_STATUSES.includes(status);
+}
+
+/**
+ * Cancels a subscription with the provider at once (no period-end grace) and
+ * marks the local row canceled, then audits billing.subscription_canceled.
+ * Used when the app goes away (apps-delete, account-delete); billing-cancel
+ * is the user-facing path with the period-end option.
+ */
+export async function cancelSubscriptionNow(
+  sub: { app_id: string; status: string; plan_id: string; stripe_subscription_id: string | null },
+  ctx: { actorId: string; orgId?: string | null; reason: string; req: Request },
+): Promise<void> {
+  if (sub.stripe_subscription_id) {
+    await billingProvider().cancelSubscription({
+      subscriptionId: sub.stripe_subscription_id,
+      atPeriodEnd: false,
+    });
+  }
+  const { error } = await serviceClient()
+    .from("subscriptions")
+    .update({ status: "canceled", cancel_at_period_end: false })
+    .eq("app_id", sub.app_id);
+  if (error) throw new Error(`cancel subscription failed: ${error.message}`);
+  await audit({
+    action: "billing.subscription_canceled",
+    actorId: ctx.actorId,
+    orgId: ctx.orgId ?? null,
+    appId: sub.app_id,
+    target: `plan:${sub.plan_id}`,
+    details: { reason: ctx.reason, previousStatus: sub.status },
+    req: ctx.req,
+  });
 }

@@ -5,6 +5,7 @@
 //! that must not live in the webview or that handles bytes and secrets:
 //!
 //! - `config`: cloud URL, anon key, site URL, and the pinned Ed25519 public key.
+//! - `contract`: typed Edge Function replies (`CLOUD_CONTRACT` on drift).
 //! - `http`: blocking HTTPS client (rustls), Edge Function calls with stable
 //!   error codes, streaming archive upload/download with pollable progress.
 //! - `manifest`: personalized bundle manifests, canonical JSON, and
@@ -22,6 +23,7 @@
 //! Tokens, DEKs, and credentials are never written to logs or archives.
 pub mod commands;
 pub mod config;
+pub mod contract;
 pub mod envelope;
 pub mod grants;
 pub mod http;

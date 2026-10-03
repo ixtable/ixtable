@@ -1,0 +1,35 @@
+{
+  "function": "roles-sync",
+  "status": 200,
+  "request": {
+    "appId": "d5c5216b-2a16-48b4-86c4-488a9074a42d",
+    "roles": [
+      {
+        "id": "bec9f701-f53f-431c-8ad5-4d4caf520c6b",
+        "name": "Sales",
+        "permissions": {
+          "navigation": ["forms"],
+          "objects": [],
+          "actions": []
+        }
+      }
+    ]
+  },
+  "response": {
+    "roles": [
+      {
+        "app_id": "d5c5216b-2a16-48b4-86c4-488a9074a42d",
+        "id": "bec9f701-f53f-431c-8ad5-4d4caf520c6b",
+        "name": "Sales",
+        "permissions": {
+          "actions": [],
+          "objects": [],
+          "navigation": ["forms"]
+        },
+        "created_at": "2026-10-03T23:14:29.259843+00:00",
+        "updated_at": "2026-10-03T23:14:29.259843+00:00"
+      }
+    ],
+    "kept": []
+  }
+}

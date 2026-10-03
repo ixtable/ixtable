@@ -27,7 +27,7 @@ import {
 } from "../_shared/distribution.ts";
 import { requireEntitlement } from "../_shared/entitlements.ts";
 import { handler, HttpError, readJson, requireUser } from "../_shared/http.ts";
-import { enforceRateLimit, incrementMetric } from "../_shared/rateLimit.ts";
+import { enforceNamedRateLimit, incrementMetric } from "../_shared/rateLimit.ts";
 import { uuid } from "../_shared/validate.ts";
 
 Deno.serve(
@@ -46,7 +46,7 @@ Deno.serve(
     const expectedHead = uuid(body, "expectedHeadVersionId", { optional: true }) ?? null;
     const input = readPublishInput(body);
 
-    await enforceRateLimit(`publish-checkpoint:${user.id}`, 30, 3600);
+    await enforceNamedRateLimit("publish-checkpoint", user.id);
     const app = await loadApp(appId);
     requireAppOwner(app, user.id);
     const entitlement = await requireEntitlement(appId);

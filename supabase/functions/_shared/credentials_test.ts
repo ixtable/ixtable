@@ -1,8 +1,9 @@
-import { assertEquals, assertThrows } from "jsr:@std/assert@1";
+import { assertEquals, assertRejects, assertThrows } from "jsr:@std/assert@1";
 import {
   base64Field,
   datasourceId,
   desktopAuthState,
+  exchangeLimitSubjects,
   envelopeAad,
   GRANT_TTL_MS,
   grantExpiry,
@@ -97,4 +98,27 @@ Deno.test("PKCE patterns accept RFC 7636 values", async () => {
   assertEquals(CODE_VERIFIER_RE.test("short"), false);
   assertEquals(STATE_RE.test("abcdefghijklmnop"), true);
   assertEquals(STATE_RE.test("has space in it!!"), false);
+});
+
+Deno.test("desktop-auth-exchange limits by IP and state, and fails closed without the secret", async () => {
+  const previous = Deno.env.get("IXTABLE_FINGERPRINT_SECRET");
+  const req = (ip?: string) =>
+    new Request("http://kong:8000/functions/v1/desktop-auth-exchange", {
+      headers: ip ? { "x-forwarded-for": ip } : {},
+    });
+  try {
+    Deno.env.delete("IXTABLE_FINGERPRINT_SECRET");
+    const error = await assertRejects(() => exchangeLimitSubjects(req("10.0.0.1"), "s".repeat(16)));
+    assertEquals((error as { code?: string }).code, "INTERNAL");
+    Deno.env.set("IXTABLE_FINGERPRINT_SECRET", "test-secret");
+    const [ip, state] = await exchangeLimitSubjects(req("10.0.0.1"), "state-abcdefghijk");
+    assertEquals(state, "state:state-abcdefghijk");
+    assertEquals(ip.startsWith("ip:") && ip !== "ip:unknown" && !ip.includes("10.0.0.1"), true);
+    const other = await exchangeLimitSubjects(req("10.0.0.2"), "state-abcdefghijk");
+    assertEquals(other[0] === ip, false);
+    assertEquals((await exchangeLimitSubjects(req(), "state-abcdefghijk"))[0], "ip:unknown");
+  } finally {
+    if (previous === undefined) Deno.env.delete("IXTABLE_FINGERPRINT_SECRET");
+    else Deno.env.set("IXTABLE_FINGERPRINT_SECRET", previous);
+  }
 });

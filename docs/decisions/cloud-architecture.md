@@ -272,27 +272,134 @@ VALIDATION, IX423 VALIDATION with `details {requiresConfirm, installations}`).
   remaining version (null when none); withdrawing the last published version
   that installations run needs `confirm: true`. Returns `{version,
   headVersionId, dependentInstallations}`. Withdraw is not entitlement-gated.
-- **Manifest.** Exactly the PLAN fields plus `roleName`; the owner gets
-  `roleId`, `roleName` and `rolePermissions` null. `expiresAt` is issue time
+- **Manifest.** Exactly the PLAN fields plus `roleName` and a signed
+  `owner` flag; the owner gets `owner: true` and `roleId`, `roleName` and
+  `rolePermissions` null. A Runtime User always has a role. `expiresAt` is issue time
   plus 24 hours; the archive URL lives 15 minutes.
 - **Invitation delivery.** An email with no account gets a Supabase Auth
   invitation (`inviteUserByEmail`, redirect to the accept link); an existing
   account gets a sign-in link (`signInWithOtp`, `shouldCreateUser: false`)
-  to the accept link. `delivery` is `invite`, `magic_link` or `none`.
+  to the accept link. The reply's `delivery` is always `"sent"` (and the
+  audit records only `emailSent`), so it does not reveal whether the address
+  has an account.
 - **Signed URLs** minted inside the Edge runtime use its internal API host
   locally (`http://kong:8000`); `publicUrl` rewrites them to
-  `SUPABASE_PUBLIC_URL` when set, else the request's forwarded host.
+  `IXTABLE_PUBLIC_API_URL` when set, else (only when `SUPABASE_URL` is a
+  local stack) to `http://127.0.0.1:54321`. Request headers are never
+  trusted for this. (Supabase refuses secret names starting `SUPABASE_`.)
 - **Retention.** Per app: versions beyond `retention_versions` or older than
   `retention_days` are deleted (storage object first, then the row), never
   the head or a version an installation reports as installed. Each
   installation's backup stream follows the same rule but always keeps its
   newest backup. Pending uploads past expiry become `expired`. A full sweep
   also deletes `desktop_auth_requests` expired over an hour ago.
-- **Rate limits** (per user, fixed window): apps-create 20/h, apps-delete and
-  apps-transfer 10/h, roles-sync 60/h, invitations-create 30/h,
-  invitations-accept 20/10 min, members-update 120/h, archive-upload-url
-  60/h, publish-checkpoint 30/h, versions-resolve 20/h, restore-url 60/h,
-  bundle-manifest 60/h, sync-check 240/h, backup-commit 60/h.
+- **Rate limits** (fixed window): every function except `health`,
+  `stripe-webhook` and `retention-sweep` calls
+  `enforceNamedRateLimit("<function>", subject)`; the numbers are the
+  `RATE_LIMITS` table in `_shared/rateLimit.ts` (listed in the Contract
+  appendix). The subject is the caller's user id, `<userId>:<appId>` for
+  key-grant, and both `ip:<hash>` and `state:<state>` for
+  desktop-auth-exchange. `_shared/rateLimit_test.ts` fails when a function
+  uses ad-hoc numbers or a name missing from the table.
+- **Deleting an app** mirrors account deletion: while its subscription still
+  bills, `apps-delete` answers 403 with `details.reason:
+  "active_subscription"` unless `cancelSubscription: true`, which cancels it
+  with the provider at once (audited `billing.subscription_canceled`,
+  reason `app_delete`) before the soft delete.
 
 Evidence: `web/e2e/service-qa/specs/{apps-journey,apps,invitations,members,publish,versions,bundle,backup,retention}.spec.ts`
 (helpers in `distribution-fixtures.ts`).
+
+## Desktop client
+
+Studio and the Runtime talk to the cloud from two places
+(`src/cloud`, `src-tauri/src/cloud`):
+
+- **Sign-in.** Email and password go through supabase-js in the webview.
+  Google and Microsoft use a browser hand-off: the desktop makes a PKCE
+  verifier and opens `<site>/desktop-auth?code_challenge=…&state=…`; the
+  signed-in website calls `desktop-auth-approve`; the desktop polls
+  `desktop-auth-exchange {state, codeVerifier}` (428 `PENDING` until
+  approved) and adopts the returned session with `setSession`. supabase-js
+  stores the session through `cloud_auth_storage_*`, which seals it in the
+  local secret store; it is never in `localStorage`, archives or logs.
+- **Build configuration.** Release builds take the cloud from build-time
+  environment variables: `IXTABLE_CLOUD_BUILD_URL`,
+  `IXTABLE_CLOUD_BUILD_ANON_KEY`, `IXTABLE_CLOUD_BUILD_SITE_URL`, and the
+  pinned bundle-signing key `IXTABLE_CLOUD_PUBLIC_KEY_RAW` (raw 32-byte
+  Ed25519 key, base64; or `IXTABLE_CLOUD_PUBLIC_KEY`, SPKI). Without a key
+  every cloud install is refused. Debug builds default to the local stack
+  and accept the key from the runtime environment (tests).
+- **Install and update.** `bundle-manifest` returns the signed manifest and
+  a 15-minute archive URL. Rust verifies the Ed25519 signature over the
+  canonical JSON, expiry, app, user and installation, then the archive's
+  sha256 and size, before using any byte. The archive installs through the
+  same path as a runtime bundle (`installation::apply_bundle`: staging,
+  kept `data.db`, migrations, health check, atomic switch, revert). The
+  archive's document id names the installation directory, so it must be a
+  safe id. The manifest is stored next to the installation for attribution.
+- **Role.** The manifest's role becomes the only runtime role. A manifest
+  with `owner: true` (the Developer/Owner) gives developer access; any other
+  manifest without a role allows nothing.
+- **Credentials.** `key-grant` returns a DEK and the envelope; Rust opens it
+  (XChaCha20-Poly1305) and keeps the password in memory only, for at most
+  24 hours. Revocation, sign-out and closing the app clear it.
+- **Offline.** An installed app opens without the cloud. `sync-check`
+  failures that mean "cannot reach the cloud" let the installed version run;
+  an expired grant means a PostgreSQL datasource stays detached until a new
+  grant succeeds.
+- **Replies are decoded.** `src/cloud/contract.ts` and
+  `src-tauri/src/cloud/contract.rs` decode every reply the desktop reads; a
+  missing field fails with `CLOUD_CONTRACT` instead of an empty value.
+
+## Contract
+
+The table below is generated from the functions
+(`node scripts/cloud/contract-doc.mjs`; `--check` fails when stale). Errors
+use `{error:{code, message, details?}}`. Reply keys come from exchanges
+recorded against the local stack by
+`web/e2e/service-qa/specs/contract.spec.ts` into
+`web/e2e/service-qa/fixtures/contract/*.json` (`CONTRACT_RECORD=1`
+re-records; otherwise the spec fails when a live reply changes shape). The
+fixtures feed `tests/unit/cloud-contract.test.ts` (desktop decoders),
+`src-tauri/src/cloud/contract.rs` tests (Rust replies) and
+`web/e2e/service-qa/contract/website-types.ts` (compile-time check of the
+website's `FunctionMap`).
+
+<!-- contract:start (generated by scripts/cloud/contract-doc.mjs) -->
+
+| Function | Request → reply (from the function's header) | Error codes (direct and via shared helpers) | Rate limit | Recorded reply keys |
+|---|---|---|---|---|
+| `account-delete` | account-delete {confirmEmail, cancelSubscriptions?} → {} | UNAUTHENTICATED, FORBIDDEN, VALIDATION, RATE_LIMITED | 5 / 1 h |  |
+| `account-export` | account-export {} → {export, archives: string[]} | UNAUTHENTICATED, RATE_LIMITED | 5 / 1 h |  |
+| `admin-support` | admin-support {query:{email?\|appId?}} → {diagnostics} | UNAUTHENTICATED, FORBIDDEN, NOT_FOUND, VERSION_CONFLICT, ENTITLEMENT_REQUIRED, VALIDATION, RATE_LIMITED | 120 / 1 h |  |
+| `apps-create` | POST {orgId, name, documentId, datasourceKind?:"sqlite"\|"postgres"} → {app} | UNAUTHENTICATED, FORBIDDEN, NOT_FOUND, VALIDATION, RATE_LIMITED | 20 / 1 h | `app` |
+| `apps-delete` | POST {appId, confirm:<app name>, cancelSubscription?} → {appId, deletedAt, subscriptionStatus, subscriptionCanceled} | UNAUTHENTICATED, FORBIDDEN, NOT_FOUND, VALIDATION, RATE_LIMITED | 10 / 1 h | `appId`, `deletedAt`, `subscriptionStatus`, `subscriptionCanceled` |
+| `apps-transfer` | POST {appId, newOwnerId, confirm:<app name>} → {app} | UNAUTHENTICATED, FORBIDDEN, NOT_FOUND, VERSION_CONFLICT, VALIDATION, RATE_LIMITED | 10 / 1 h |  |
+| `archive-upload-url` | POST {appId, kind, size, sha256, installationId?} → {uploadId, path, signedUrl, token, expiresAt} | UNAUTHENTICATED, FORBIDDEN, REVOKED, NOT_FOUND, TOO_LARGE, ENTITLEMENT_REQUIRED, VALIDATION, RATE_LIMITED | 60 / 1 h | `uploadId`, `path`, `signedUrl`, `token`, `expiresAt` |
+| `backup-commit` | POST {appId, uploadId, installationId} → {backup} | UNAUTHENTICATED, FORBIDDEN, REVOKED, NOT_FOUND, ENTITLEMENT_REQUIRED, VALIDATION, RATE_LIMITED | 60 / 1 h | `backup` |
+| `billing-cancel` | billing-cancel {appId, atPeriodEnd?=true} → {subscription} | UNAUTHENTICATED, FORBIDDEN, NOT_FOUND, VALIDATION, RATE_LIMITED | 10 / 10 min | `subscription` |
+| `billing-checkout` | billing-checkout {appId, planId} → {url} | UNAUTHENTICATED, FORBIDDEN, NOT_FOUND, VALIDATION, RATE_LIMITED | 10 / 10 min | `url`, `overAllowance` |
+| `billing-fake-complete` | billing-fake-complete {sessionId, appId, planId} → {ok, status} | UNAUTHENTICATED, NOT_FOUND, VALIDATION, RATE_LIMITED | 10 / 10 min | `ok`, `status` |
+| `billing-invoices` | billing-invoices {appId} → {invoices: Invoice[]} | UNAUTHENTICATED, FORBIDDEN, NOT_FOUND, VALIDATION, RATE_LIMITED | 60 / 10 min | `invoices` |
+| `billing-portal` | billing-portal {appId} → {url} | UNAUTHENTICATED, FORBIDDEN, NOT_FOUND, VALIDATION, RATE_LIMITED | 20 / 10 min | `url` |
+| `bundle-manifest` | POST {appId, installationId, deviceName?} → {manifest, signature, archiveUrl, archiveUrlExpiresAt} | UNAUTHENTICATED, FORBIDDEN, REVOKED, NOT_FOUND, ENTITLEMENT_REQUIRED, VALIDATION, RATE_LIMITED | 60 / 1 h | `manifest`, `signature`, `archiveUrl`, `archiveUrlExpiresAt` |
+| `credential-delete` | POST {appId, datasourceId, scope?:"shared"\|"user", userId?} scope omitted: every envelope of the datasource. → {revokedEnvelopeIds, revokedGrants} | UNAUTHENTICATED, FORBIDDEN, NOT_FOUND, VALIDATION, RATE_LIMITED | 60 / 1 h | `revokedEnvelopeIds`, `revokedGrants` |
+| `credential-envelope` | POST {appId, datasourceId, scope:"shared"\|"user", userId?, ciphertext, nonce, aad, dek} → {envelopeId, replacedEnvelopeId, kekVersion} | UNAUTHENTICATED, FORBIDDEN, NOT_FOUND, VERSION_CONFLICT, ENTITLEMENT_REQUIRED, VALIDATION, RATE_LIMITED | 60 / 1 h | `envelopeId`, `replacedEnvelopeId`, `kekVersion` |
+| `desktop-auth-approve` | POST {codeChallenge, state} → {ok:true, expiresAt} | UNAUTHENTICATED, VALIDATION, RATE_LIMITED | 20 / 10 min | `ok`, `expiresAt` |
+| `desktop-auth-exchange` | POST {state, codeVerifier} → {session:{access_token, refresh_token, expires_at, expires_in, token_type, user:{id, email}}} | FORBIDDEN, NOT_FOUND, VALIDATION, PENDING, RATE_LIMITED, INTERNAL | 120 / 1 min | `session` |
+| `devices-revoke` | POST {appId, userId, installationId} → {installation:{id, revokedAt}, revokedGrants, alreadyRevoked} | UNAUTHENTICATED, FORBIDDEN, NOT_FOUND, VALIDATION, RATE_LIMITED | 120 / 1 h | `installation`, `revokedGrants`, `alreadyRevoked` |
+| `health` | GET → {ok, db, storage, version} (503 with ok false when a dependency is down) |  | none | `ok`, `db`, `storage`, `version` |
+| `invitations-accept` | POST {token} → {membership:{kind, invitationId, orgId, appId?, userId, roleId?\|role, status?}} | UNAUTHENTICATED, FORBIDDEN, VALIDATION, RATE_LIMITED, INTERNAL | 20 / 10 min | `membership` |
+| `invitations-create` | POST {kind:"app", appId, email, roleId} \| {kind:"org", orgId, email, role} → {invitation, acceptUrl, delivery:"sent"} | UNAUTHENTICATED, FORBIDDEN, NOT_FOUND, VALIDATION, RATE_LIMITED | 30 / 1 h | `invitation`, `acceptUrl`, `delivery` |
+| `key-grant` | POST {appId, installationId, datasourceId} → {grantId, datasourceId, dek, envelope:{id, scope, ciphertext, nonce, aad}, issuedAt, expiresAt, renewed} | UNAUTHENTICATED, REVOKED, NOT_FOUND, ENTITLEMENT_REQUIRED, VALIDATION, RATE_LIMITED | 30 / 1 h | `grantId`, `datasourceId`, `dek`, `envelope`, `issuedAt`, `expiresAt`, `renewed` |
+| `members-update` | POST {appId, userId, roleId?, status?:"active"\|"revoked"} → {member} | UNAUTHENTICATED, FORBIDDEN, NOT_FOUND, VALIDATION, RATE_LIMITED | 120 / 1 h | `member` |
+| `publish-checkpoint` | POST {appId, uploadId, version, releaseNotes, minRuntimeVersion, migrations, security, expectedHeadVersionId} → {version} | UNAUTHENTICATED, FORBIDDEN, NOT_FOUND, VERSION_CONFLICT, TOO_LARGE, ENTITLEMENT_REQUIRED, VALIDATION, RATE_LIMITED | 30 / 1 h | `version` |
+| `restore-url` | POST {appId, versionId} \| {appId, backupId} → {signedUrl, sha256, size, isPostgres, warning, kind, id, expiresAt} | UNAUTHENTICATED, FORBIDDEN, NOT_FOUND, VALIDATION, RATE_LIMITED | 60 / 1 h | `signedUrl`, `sha256`, `size`, `isPostgres`, `warning`, `kind`, `id`, `expiresAt` |
+| `retention-sweep` | POST {appId?} → {deleted, versions, backups, uploads, desktopAuthRequests} | UNAUTHENTICATED, FORBIDDEN, VALIDATION | none |  |
+| `roles-sync` | POST {appId, roles:[{id, name, permissions}]} → {roles, kept} | UNAUTHENTICATED, FORBIDDEN, NOT_FOUND, VALIDATION, RATE_LIMITED | 60 / 1 h | `roles`, `kept` |
+| `stripe-webhook` | POST <Stripe event> (Stripe-Signature header) → {received, outcome} \| {received, duplicate} | FORBIDDEN, NOT_FOUND, VERSION_CONFLICT, ENTITLEMENT_REQUIRED, VALIDATION | none |  |
+| `sync-check` | POST {appId, installedVersionId, installationId} → {upToDate, latest:{versionId, version, publishedAt, minRuntimeVersion} \| null} | UNAUTHENTICATED, FORBIDDEN, REVOKED, NOT_FOUND, VALIDATION, RATE_LIMITED | 240 / 1 h | `upToDate`, `latest` |
+| `versions-resolve` | POST {appId, action:"withdraw", versionId, confirm?} → {version, headVersionId, dependentInstallations}; POST {appId, action:"overwrite", fromVersionId, uploadId, version, releaseNotes, minRuntimeVersion, migrations, security} → {version}; POST {appId, action:"fork", fromVersionId?, uploadId?, version?, …, name?, documentId?} → {app, version} | UNAUTHENTICATED, FORBIDDEN, NOT_FOUND, VERSION_CONFLICT, TOO_LARGE, ENTITLEMENT_REQUIRED, VALIDATION, RATE_LIMITED | 20 / 1 h | `app`, `version`, `headVersionId`, `dependentInstallations` |
+
+<!-- contract:end -->

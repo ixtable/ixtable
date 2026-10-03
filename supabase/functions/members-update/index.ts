@@ -9,7 +9,7 @@ import { audit } from "../_shared/audit.ts";
 import { serviceClient } from "../_shared/db.ts";
 import { loadApp, type MemberRow, requireAppAdmin, rpc } from "../_shared/distribution.ts";
 import { handler, HttpError, readJson, requireUser } from "../_shared/http.ts";
-import { enforceRateLimit, incrementMetric } from "../_shared/rateLimit.ts";
+import { enforceNamedRateLimit, incrementMetric } from "../_shared/rateLimit.ts";
 import { oneOf, uuid } from "../_shared/validate.ts";
 
 Deno.serve(
@@ -23,7 +23,7 @@ Deno.serve(
     if (!roleId && !status)
       throw new HttpError("VALIDATION", "roleId or status: one is required", { field: "status" });
 
-    await enforceRateLimit(`members-update:${user.id}`, 120, 3600);
+    await enforceNamedRateLimit("members-update", user.id);
     const app = await loadApp(appId);
     await requireAppAdmin(app, user.id);
     if (userId === app.owner_id)

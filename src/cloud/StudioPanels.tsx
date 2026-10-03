@@ -68,7 +68,7 @@ export function LinkPanel() {
         const org = await createOrganization(orgName.trim());
         target = org.id;
       }
-      const reply = await invokeFunction<{ app: { id: string } }>("apps-create", {
+      const reply = await invokeFunction("apps-create", {
         orgId: target,
         name: name.trim() || config.name,
         documentId: doc.documentId,

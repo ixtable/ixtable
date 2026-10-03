@@ -18,11 +18,17 @@ test("login page shows email sign-in and the Google and Microsoft buttons", asyn
   });
 });
 
-test("cloud dashboard lists the app with plan, seats, and archive size", async ({ page, cloud }) => {
+test("cloud dashboard lists the app with plan, seats, and archive size", async ({
+  page,
+  cloud,
+}) => {
   const { owner, app } = await seedPublishedApp(cloud);
   await loginFromHome(page, owner.email, owner.password);
   await page.getByRole("link", { name: "Cloud", exact: true }).click();
-  const row = page.getByRole("region", { name: "Cloud apps" }).getByRole("row").filter({ hasText: app.name });
+  const row = page
+    .getByRole("region", { name: "Cloud apps" })
+    .getByRole("row")
+    .filter({ hasText: app.name });
   await expect(row).toContainText("1 of 25");
   await captureOutcome(page, "ui-cloud-01-dashboard", {
     expectations: [
@@ -34,14 +40,19 @@ test("cloud dashboard lists the app with plan, seats, and archive size", async (
   });
 });
 
-test("versions tab shows the published checkpoint and its security summary", async ({ page, cloud }) => {
+test("versions tab shows the published checkpoint and its security summary", async ({
+  page,
+  cloud,
+}) => {
   const { owner, app, sha } = await seedPublishedApp(cloud, { datasourceKind: "postgres" });
   await loginFromHome(page, owner.email, owner.password);
   await openCloudApp(page, app.name);
   await page.getByRole("tab", { name: "Versions" }).click();
   await expect(page.getByRole("article", { name: "Version 1.2.0" })).toContainText(sha);
   await page.getByRole("button", { name: "Download or restore 1.2.0" }).click();
-  await expect(page.getByTestId("restore-postgres-warning")).toContainText("External PostgreSQL records are not restored");
+  await expect(page.getByTestId("restore-postgres-warning")).toContainText(
+    "External PostgreSQL records are not restored",
+  );
   await captureOutcome(page, "ui-cloud-02-versions-restore", {
     expectations: [
       "Version 1.2.0 shows its developer, checksum, migration add-orders, minimum Runtime 0.4.0, and release notes.",
@@ -51,7 +62,10 @@ test("versions tab shows the published checkpoint and its security summary", asy
   });
 });
 
-test("roles tab shows the synced permission matrix and the enforcement limitation", async ({ page, cloud }) => {
+test("roles tab shows the synced permission matrix and the enforcement limitation", async ({
+  page,
+  cloud,
+}) => {
   const { owner, app } = await seedPublishedApp(cloud);
   await loginFromHome(page, owner.email, owner.password);
   await openCloudApp(page, app.name);
@@ -90,7 +104,11 @@ test("desktop sign-in approval records the approval", async ({ page, cloud }) =>
   await submitLogin(page, user.email, user.password);
   await page.getByRole("button", { name: "Approve sign-in" }).click();
   await expect(page.getByTestId("desktop-auth-approved")).toBeVisible({ timeout: 15_000 });
-  const { data } = await cloud.admin.from("desktop_auth_requests").select("user_id, approved_at").eq("state", state).single();
+  const { data } = await cloud.admin
+    .from("desktop_auth_requests")
+    .select("user_id, approved_at")
+    .eq("state", state)
+    .single();
   expect(data?.user_id).toBe(user.user.id);
   await captureOutcome(page, "ui-desktop-auth-01-approved", {
     expectations: [
@@ -123,7 +141,12 @@ test("invitation accept adds the invitee as a runtime user", async ({ page, clou
   await submitLogin(page, invitee.email, invitee.password);
   await page.getByRole("button", { name: "Accept invitation" }).click();
   await expect(page.getByTestId("invite-accepted")).toBeVisible({ timeout: 15_000 });
-  const { data } = await cloud.admin.from("app_members").select("status").eq("app_id", app.id).eq("user_id", invitee.user.id).single();
+  const { data } = await cloud.admin
+    .from("app_members")
+    .select("status")
+    .eq("app_id", app.id)
+    .eq("user_id", invitee.user.id)
+    .single();
   expect(data?.status).toBe("active");
   await captureOutcome(page, "ui-invite-01-accepted", {
     expectations: [
@@ -138,7 +161,10 @@ test("cloud dashboard fits a phone screen", async ({ page, cloud }) => {
   await page.setViewportSize({ width: 390, height: 844 });
   await page.goto("/");
   await page.getByRole("button", { name: "Toggle navigation bar" }).click();
-  await page.getByRole("navigation", { name: "Main" }).getByRole("link", { name: "Log in" }).click();
+  await page
+    .getByRole("navigation", { name: "Main" })
+    .getByRole("link", { name: "Log in" })
+    .click();
   await submitLogin(page, owner.email, owner.password);
   await page.getByRole("link", { name: "Cloud dashboard" }).click();
   const region = page.getByRole("region", { name: "Cloud apps" });

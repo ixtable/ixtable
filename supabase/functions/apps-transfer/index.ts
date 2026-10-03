@@ -9,7 +9,7 @@ import { audit } from "../_shared/audit.ts";
 import { serviceClient } from "../_shared/db.ts";
 import { loadApp, orgRole, requireAppOwner } from "../_shared/distribution.ts";
 import { handler, HttpError, readJson, requireUser } from "../_shared/http.ts";
-import { enforceRateLimit } from "../_shared/rateLimit.ts";
+import { enforceNamedRateLimit } from "../_shared/rateLimit.ts";
 import { str, uuid } from "../_shared/validate.ts";
 
 Deno.serve(
@@ -20,7 +20,7 @@ Deno.serve(
     const newOwnerId = uuid(body, "newOwnerId");
     const confirm = str(body, "confirm", { max: 200 });
 
-    await enforceRateLimit(`apps-transfer:${user.id}`, 10, 3600);
+    await enforceNamedRateLimit("apps-transfer", user.id);
     const app = await loadApp(appId);
     requireAppOwner(app, user.id);
     if (confirm.trim() !== app.name.trim())

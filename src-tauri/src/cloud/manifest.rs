@@ -34,7 +34,8 @@ pub struct Manifest {
     #[serde(default)]
     pub min_runtime_version: Option<String>,
     pub user_id: String,
-    /// Desktop role id assigned to the user (None: no role, nothing is allowed).
+    /// Desktop role id assigned to the user (None: no role; nothing is
+    /// allowed unless `owner`).
     #[serde(default)]
     pub role_id: Option<String>,
     /// The role's permissions (desktop `roles.rs` shape) at issue time.
@@ -42,6 +43,10 @@ pub struct Manifest {
     pub role_permissions: Value,
     #[serde(default)]
     pub role_name: Option<String>,
+    /// The user is the app's Developer/Owner: developer access, no role.
+    /// Older manifests lack it (false: fail closed).
+    #[serde(default)]
+    pub owner: bool,
     pub installation_id: String,
     pub fingerprint: String,
     pub issued_at: String,

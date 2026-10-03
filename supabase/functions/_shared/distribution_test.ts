@@ -166,6 +166,7 @@ Deno.test("buildManifest has exactly the bundle fields", () => {
     },
     userId: "u",
     role: { id: "r", name: "Clerk", permissions: { pages: {} } },
+    owner: false,
     installationId: "i",
     fingerprint: "f",
     issuedAt,
@@ -183,6 +184,7 @@ Deno.test("buildManifest has exactly the bundle fields", () => {
     roleId: "r",
     roleName: "Clerk",
     rolePermissions: { pages: {} },
+    owner: false,
     installationId: "i",
     fingerprint: "f",
     issuedAt: "2026-10-03T12:00:00.000Z",
@@ -210,19 +212,21 @@ Deno.test("mapDbError maps distribution SQLSTATEs to the API contract", () => {
   assert(!(mapDbError({ code: "23505", message: "dup" }) instanceof HttpError));
 });
 
-Deno.test("publicUrl rewrites internal storage hosts to the public API origin", () => {
+Deno.test("publicUrl takes the origin from configuration, never from request headers", () => {
   const internal = "http://kong:8000/storage/v1/object/sign/app-archives/a.ixt?token=t";
-  const req = new Request("http://kong:8000/functions/v1/x", {
-    headers: { "x-forwarded-host": "127.0.0.1:54321", "x-forwarded-proto": "http" },
-  });
+  const local = { SUPABASE_URL: "http://kong:8000" };
   assertEquals(
-    publicUrl(internal, req, {}),
+    publicUrl(internal, local),
     "http://127.0.0.1:54321/storage/v1/object/sign/app-archives/a.ixt?token=t",
   );
   assertEquals(
-    publicUrl(internal, req, { SUPABASE_PUBLIC_URL: "https://api.example.com" }),
+    publicUrl(internal, { ...local, IXTABLE_PUBLIC_API_URL: "https://api.example.com" }),
     "https://api.example.com/storage/v1/object/sign/app-archives/a.ixt?token=t",
   );
+  // A hosted project keeps Storage's public URL; an internal one is refused.
   const hosted = "https://abc.supabase.co/storage/v1/object/sign/x?token=t";
-  assertEquals(publicUrl(hosted, req, {}), hosted);
+  assertEquals(publicUrl(hosted, { SUPABASE_URL: "https://abc.supabase.co" }), hosted);
+  assertThrows(() => publicUrl(internal, { SUPABASE_URL: "https://abc.supabase.co" }));
+  // The old header-derived origin is gone: there is no request to forge.
+  assertEquals(publicUrl.length, 1);
 });

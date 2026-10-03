@@ -13,7 +13,7 @@
 // through the admin API (memberships, installations and grants cascade).
 // Audit rows stay and keep the caller's id as actor.
 import { audit } from "../_shared/audit.ts";
-import { billingProvider, ENDED_STATUSES } from "../_shared/billing.ts";
+import { cancelSubscriptionNow, isBilling } from "../_shared/commercial.ts";
 import { ARCHIVE_BUCKET, serviceClient } from "../_shared/db.ts";
 import { handler, HttpError, readJson, requireUser } from "../_shared/http.ts";
 import { enforceNamedRateLimit, incrementMetric } from "../_shared/rateLimit.ts";
@@ -69,7 +69,7 @@ Deno.serve(
               .in("app_id", appIds),
             "load subscriptions",
           );
-    const billing = subscriptions.filter((sub) => !ENDED_STATUSES.includes(sub.status));
+    const billing = subscriptions.filter((sub) => isBilling(sub.status));
     if (billing.length > 0 && !cancelSubscriptions) {
       throw new HttpError(
         "FORBIDDEN",
@@ -112,30 +112,8 @@ Deno.serve(
     }
 
     // Cancel billing at once (refusal paths above changed nothing).
-    const provider = billingProvider();
     for (const sub of billing) {
-      if (sub.stripe_subscription_id) {
-        await provider.cancelSubscription({
-          subscriptionId: sub.stripe_subscription_id,
-          atPeriodEnd: false,
-        });
-      }
-      await must(
-        db
-          .from("subscriptions")
-          .update({ status: "canceled", cancel_at_period_end: false })
-          .eq("app_id", sub.app_id)
-          .select("id"),
-        "cancel subscription",
-      );
-      await audit({
-        action: "billing.subscription_canceled",
-        actorId: uid,
-        appId: sub.app_id,
-        target: `plan:${sub.plan_id}`,
-        details: { reason: "account_delete", previousStatus: sub.status },
-        req,
-      });
+      await cancelSubscriptionNow(sub, { actorId: uid, reason: "account_delete", req });
     }
 
     // Soft-delete owned apps (audited), then remove their archives.

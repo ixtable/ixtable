@@ -21,7 +21,7 @@ import {
 } from "../_shared/distribution.ts";
 import { requireEntitlement } from "../_shared/entitlements.ts";
 import { handler, HttpError, readJson, requireUser } from "../_shared/http.ts";
-import { enforceRateLimit, incrementMetric } from "../_shared/rateLimit.ts";
+import { enforceNamedRateLimit, incrementMetric } from "../_shared/rateLimit.ts";
 import { uuid } from "../_shared/validate.ts";
 
 Deno.serve(
@@ -32,7 +32,7 @@ Deno.serve(
     const uploadId = uuid(body, "uploadId");
     const installationId = uuid(body, "installationId");
 
-    await enforceRateLimit(`backup-commit:${user.id}`, 60, 3600);
+    await enforceNamedRateLimit("backup-commit", user.id);
     const app = await loadApp(appId);
     await requireRuntimeAccess(app, user.id);
     if (!app.backups_enabled)

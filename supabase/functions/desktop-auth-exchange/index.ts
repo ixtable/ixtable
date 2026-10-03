@@ -9,8 +9,9 @@
 //   → {session:{access_token, refresh_token, expires_at, expires_in, token_type, user:{id, email}}}
 // Errors: 428 PENDING (keep polling), 404 NOT_FOUND {reason: expired|consumed},
 // 403 FORBIDDEN {reason: verifier_mismatch}, 429 RATE_LIMITED, 422 VALIDATION.
-import { audit, ipHash } from "../_shared/audit.ts";
+import { audit } from "../_shared/audit.ts";
 import {
+  exchangeLimitSubjects,
   CODE_VERIFIER_RE,
   DESKTOP_AUTH_MAX_FAILURES,
   desktopAuthState,
@@ -19,7 +20,7 @@ import {
 import { pkceChallenge, timingSafeEqual } from "../_shared/crypto.ts";
 import { anonClient, serviceClient } from "../_shared/db.ts";
 import { handler, HttpError, readJson } from "../_shared/http.ts";
-import { enforceRateLimit, incrementMetric } from "../_shared/rateLimit.ts";
+import { enforceNamedRateLimit, incrementMetric } from "../_shared/rateLimit.ts";
 import { str } from "../_shared/validate.ts";
 
 interface RequestRow {
@@ -43,7 +44,9 @@ Deno.serve(
     });
 
     // Polling every second or two for five minutes stays well under this.
-    await enforceRateLimit(`desktop-auth-exchange:ip:${(await ipHash(req)) ?? "unknown"}`, 120, 60);
+    // Keyed by client IP and by sign-in request (exchangeLimitSubjects).
+    for (const subject of await exchangeLimitSubjects(req, state))
+      await enforceNamedRateLimit("desktop-auth-exchange", subject);
 
     const db = serviceClient();
     const found = await db

@@ -126,7 +126,10 @@ pub fn export_runtime_bundle(
 
 /// A consistent copy of the live records (`VACUUM INTO` a private temp file,
 /// always removed), so bootstrap data never captures a half-written database.
-pub(crate) fn snapshot_data(db: &std::path::Path, scratch: &std::path::Path) -> Result<Vec<u8>, AppError> {
+pub(crate) fn snapshot_data(
+    db: &std::path::Path,
+    scratch: &std::path::Path,
+) -> Result<Vec<u8>, AppError> {
     struct Remove(PathBuf);
     impl Drop for Remove {
         fn drop(&mut self) {
@@ -155,12 +158,11 @@ mod tests {
         fs::create_dir_all(&dir).unwrap();
         let db = dir.join("data.db");
         let conn = rusqlite::Connection::open(&db).unwrap();
-        conn.execute_batch(
-            "PRAGMA journal_mode=WAL; CREATE TABLE t(x); INSERT INTO t VALUES (1);",
-        )
-        .unwrap();
+        conn.execute_batch("PRAGMA journal_mode=WAL; CREATE TABLE t(x); INSERT INTO t VALUES (1);")
+            .unwrap();
         // Uncommitted work plus committed WAL frames not yet in the main file.
-        conn.execute_batch("BEGIN; INSERT INTO t VALUES (2);").unwrap();
+        conn.execute_batch("BEGIN; INSERT INTO t VALUES (2);")
+            .unwrap();
         let scratch = dir.join("tmp");
         let bytes = snapshot_data(&db, &scratch).unwrap();
         conn.execute_batch("COMMIT").unwrap();
@@ -170,7 +172,10 @@ mod tests {
             .unwrap()
             .query_row("SELECT count(*) FROM t", [], |r| r.get(0))
             .unwrap();
-        assert_eq!(n, 1, "committed rows only, including those still in the WAL");
+        assert_eq!(
+            n, 1,
+            "committed rows only, including those still in the WAL"
+        );
         assert_eq!(fs::read_dir(&scratch).unwrap().count(), 0);
         let _ = fs::remove_dir_all(dir);
     }

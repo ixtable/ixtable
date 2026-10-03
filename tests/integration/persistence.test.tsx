@@ -164,6 +164,23 @@ it("asks where to save recovered work that was never saved", async () => {
   expect(await notesInArchive(destination)).toBe(1);
 });
 
+it("asks for Save As instead of overwriting a saved file it cannot checkpoint", async () => {
+  const path = archivePath("unreadable");
+  await seedCrashedSession("garbled", "Garbled Notes", path);
+  writeFileSync(path, "not an archive any more");
+  const before = readFileSync(path);
+  const destination = archivePath("garbled-rescued");
+  dialogMock.save.mockResolvedValueOnce(destination);
+
+  const user = renderStartScreen();
+  await user.click(await screen.findByRole("button", { name: "Recover Garbled Notes" }, LONG));
+  expect(await screen.findByText("Saved archive", {}, LONG)).toBeInTheDocument();
+  expect(dialogMock.save).toHaveBeenCalledOnce();
+  expect(readFileSync(path).equals(before)).toBe(true);
+  expect((await state()).path).toBe(destination);
+  expect(await notesInArchive(destination)).toBe(1);
+});
+
 it("keeps the last valid archive when recovered work is invalid, then discards it", async () => {
   const path = archivePath("invalid");
   const crashed = await seedCrashedSession("broken", "Broken Work", path);

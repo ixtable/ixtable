@@ -6,6 +6,10 @@
 //! recovery; clean leftovers hold nothing new and are removed. Recovering validates the
 //! WIP, reopens it, checkpoints the current `.ixt` locally, and saves the WIP back into
 //! the `.ixt`. Invalid WIP never touches the archive: the error is surfaced instead.
+//! When the `.ixt` is unreadable or cannot be checkpointed first, the work opens
+//! with `RECOVERY_NEEDS_SAVE_AS` and the file is left untouched. Live sessions hold
+//! an OS lock on `<workspace>.lock`, so another ixtable process never lists,
+//! cleans up, or discards their workspaces.
 use crate::{
     archive::{ArchiveDocument, ArchiveError, ArchiveMetadata, Attachment, DocumentConfig},
     archive_io::{self, HashingReader},
@@ -21,6 +25,10 @@ use std::{
     io::{self, BufReader},
     path::{Path, PathBuf},
 };
+
+/// `lastError` code of recovered work that must not be saved over its file (the
+/// file is unreadable or could not be checkpointed first); the UI asks for Save As.
+pub const RECOVERY_NEEDS_SAVE_AS: &str = "RECOVERY_NEEDS_SAVE_AS";
 
 fn storage_error(e: impl ToString) -> AppError {
     AppError::new("IO_ERROR", e)
@@ -62,6 +70,9 @@ pub fn validate_workspace(work: &Path, record: &RecoveryRecord) -> Result<Archiv
     if metadata.document_id != record.document_id {
         return Err("the workspace belongs to a different document".into());
     }
+    if !crate::paths::is_safe_id(&metadata.document_id) {
+        return Err(format!("unsafe document id {:?}", metadata.document_id));
+    }
     let mut attachments = vec![];
     if let Ok(entries) = fs::read_dir(work.join("attachments")) {
         for entry in entries.filter_map(Result::ok) {
@@ -74,6 +85,14 @@ pub fn validate_workspace(work: &Path, record: &RecoveryRecord) -> Result<Archiv
                 .ok()
                 .and_then(|b| serde_json::from_slice(&b).ok())
                 .ok_or_else(|| format!("asset {} has no valid metadata", dir.display()))?;
+            // The id names the asset directory: it must be a plain id and match it.
+            if !crate::paths::is_safe_id(&meta.id) || entry.file_name().to_str() != Some(&meta.id) {
+                return Err(format!(
+                    "asset {} has an invalid id {:?}",
+                    dir.display(),
+                    meta.id
+                ));
+            }
             let mut reader = HashingReader::new(BufReader::new(
                 File::open(dir.join("content"))
                     .map_err(|e| format!("asset {} is missing: {e}", meta.display_name))?,
@@ -97,6 +116,56 @@ pub fn validate_workspace(work: &Path, record: &RecoveryRecord) -> Result<Archiv
     })
 }
 
+/// OS advisory lock on `<workspace>.lock`. A live session holds it for its whole
+/// lifetime; the OS releases it when the process exits, even after a crash. Dropping
+/// it unlocks and removes the lock file.
+#[derive(Debug)]
+pub struct WorkspaceLock {
+    file: Option<File>,
+    path: PathBuf,
+}
+impl Drop for WorkspaceLock {
+    fn drop(&mut self) {
+        drop(self.file.take());
+        let _ = fs::remove_file(&self.path);
+    }
+}
+
+/// `<workspace>.lock`, next to (not inside) the workspace so deleting the workspace never races the lock.
+pub fn lock_path(workspace: &Path) -> PathBuf {
+    let mut name = workspace.as_os_str().to_owned();
+    name.push(".lock");
+    PathBuf::from(name)
+}
+
+/// Locks a workspace for this session. `Ok(None)` when a live session (in this or
+/// another ixtable process) already holds it.
+pub fn try_lock_workspace(workspace: &Path) -> io::Result<Option<WorkspaceLock>> {
+    let path = lock_path(workspace);
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent)?;
+    }
+    let file = File::options()
+        .read(true)
+        .write(true)
+        .create(true)
+        .truncate(false)
+        .open(&path)?;
+    match file.try_lock() {
+        Ok(()) => Ok(Some(WorkspaceLock {
+            file: Some(file),
+            path,
+        })),
+        Err(fs::TryLockError::WouldBlock) => Ok(None),
+        Err(fs::TryLockError::Error(e)) => Err(e),
+    }
+}
+
+/// True while a live session holds the workspace's lock.
+pub fn workspace_in_use(workspace: &Path) -> bool {
+    matches!(try_lock_workspace(workspace), Ok(None))
+}
+
 impl DocumentManager {
     fn open_session_ids(&self) -> HashSet<String> {
         self.sessions
@@ -112,7 +181,8 @@ impl DocumentManager {
         let open: HashSet<&str> = sessions.values().map(|s| s.id.as_str()).collect();
         let mut out = vec![];
         for r in self.global.recoveries().map_err(storage_error)? {
-            if open.contains(r.session_id.as_str()) {
+            // Live sessions of this process, or of another ixtable process (lock held).
+            if open.contains(r.session_id.as_str()) || workspace_in_use(Path::new(&r.workspace)) {
                 continue;
             }
             if r.dirty {
@@ -138,12 +208,20 @@ impl DocumentManager {
                 "That session is still open in this window",
             ));
         }
-        self.global
+        let record = self
+            .global
             .recoveries()
             .map_err(storage_error)?
             .into_iter()
             .find(|r| r.session_id == session_id)
-            .ok_or_else(|| AppError::new("NOT_FOUND", "No unsaved work to recover"))
+            .ok_or_else(|| AppError::new("NOT_FOUND", "No unsaved work to recover"))?;
+        if workspace_in_use(Path::new(&record.workspace)) {
+            return Err(AppError::new(
+                "SESSION_OPEN",
+                "That work is open in another ixtable window",
+            ));
+        }
+        Ok(record)
     }
     pub fn discard_recovery(&self, session_id: &str) -> Result<(), AppError> {
         match self.recovery_record(session_id) {
@@ -181,29 +259,41 @@ impl DocumentManager {
             )
         })?;
         let path = record.document_path.as_ref().map(PathBuf::from);
+        let conflict = |message: &str| Some(AppError::new("EXTERNAL_CONFLICT", message));
+        // The saved file is only replaced after a safety checkpoint of it exists.
+        let needs_save_as = |why: String| {
+            logging::warn(
+                "recovery",
+                &format!("not saving recovered work in place: {why}"),
+            );
+            Some(AppError::new(
+                RECOVERY_NEEDS_SAVE_AS,
+                format!("{why}. The saved file was left untouched; use Save As to keep the recovered work."),
+            ))
+        };
         let mut blocked = None;
         if let Some(p) = path.as_ref().filter(|p| p.exists()) {
             match archive_io::read_header(p) {
                 Ok(h) if h.metadata.document_id == doc.metadata.document_id => {
                     if let Err(e) = self.checkpoint_archive(p, "before-recovery") {
-                        logging::warn("recovery", &format!("pre-recovery checkpoint failed: {e}"));
+                        blocked = needs_save_as(format!(
+                            "A safety copy of {} could not be made ({e})",
+                            p.display()
+                        ));
                     }
                 }
-                Ok(_) => blocked = Some("The file now holds a different document. Use Save As to keep the recovered work."),
-                Err(ArchiveError::NewerFormat(_)) => blocked = Some("The file was saved by a newer ixtable. Use Save As to keep the recovered work."),
-                Err(e) => logging::warn(
-                    "recovery",
-                    &format!("{} is unreadable ({e}); it will be replaced", p.display()),
-                ),
+                Ok(_) => blocked = conflict("The file now holds a different document. Use Save As to keep the recovered work."),
+                Err(ArchiveError::NewerFormat(_)) => blocked = conflict("The file was saved by a newer ixtable. Use Save As to keep the recovered work."),
+                Err(e) => blocked = needs_save_as(format!("{} is unreadable ({e})", p.display())),
             }
         }
         let state =
             self.install_workspace(window, session_id.into(), path.clone(), doc, work, true)?;
         logging::info("recovery", &format!("recovered session {session_id}"));
-        if let Some(message) = blocked {
+        if let Some(error) = blocked {
             return self.with_session(window, |s| {
                 s.conflict = true;
-                s.last_error = Some(AppError::new("EXTERNAL_CONFLICT", message));
+                s.last_error = Some(error);
                 Ok(s.state())
             });
         }
@@ -264,6 +354,138 @@ mod tests {
             name: Some("WIP".into()),
         };
         (work, record)
+    }
+
+    /// A manager over fresh state dirs; a second one over the same dirs stands in for a second ixtable process.
+    fn managers() -> (DocumentManager, DocumentManager, PathBuf) {
+        let base = std::env::temp_dir().join(format!("ixtable-mgr-{}", uuid::Uuid::new_v4()));
+        let make = || DocumentManager::new(base.join("data"), base.join("cache")).unwrap();
+        (make(), make(), base)
+    }
+
+    /// Opens a titled document in `window`, then leaves it dirty with one new table.
+    fn dirty_session(m: &DocumentManager, window: &str, path: &Path) -> SessionState {
+        m.new_session(window).unwrap();
+        m.save(window, Some(path.to_owned())).unwrap();
+        Connection::open(m.database_path(window).unwrap())
+            .unwrap()
+            .execute_batch(
+                "CREATE TABLE notes(id INTEGER PRIMARY KEY); INSERT INTO notes VALUES(1);",
+            )
+            .unwrap();
+        m.mark_data_dirty(window).unwrap()
+    }
+
+    #[test]
+    fn another_process_never_lists_cleans_or_discards_live_workspaces() {
+        let (first, second, base) = managers();
+        let clean = first.new_session("clean").unwrap();
+        let dirty = dirty_session(&first, "dirty", &base.join("live.ixt"));
+        assert!(dirty.dirty);
+
+        // The second process sees both records but neither as abandoned.
+        assert!(second.recoverable_sessions().unwrap().is_empty());
+        assert!(
+            Path::new(&clean.workspace).is_dir(),
+            "a clean live workspace is not cleaned up"
+        );
+        assert_eq!(
+            second.discard_recovery(&dirty.session_id).unwrap_err().code,
+            "SESSION_OPEN"
+        );
+        assert_eq!(
+            second
+                .recover_session("w", &dirty.session_id)
+                .unwrap_err()
+                .code,
+            "SESSION_OPEN"
+        );
+        assert!(Path::new(&dirty.workspace).join("data.db").is_file());
+
+        // Once the owner is gone (a crash releases the OS lock), the work is recoverable.
+        drop(first.sessions.lock().unwrap().remove("dirty"));
+        let listed = second.recoverable_sessions().unwrap();
+        assert_eq!(listed.len(), 1);
+        assert_eq!(listed[0].session_id, dirty.session_id);
+        first.close("clean", true).unwrap();
+        assert!(!lock_path(Path::new(&clean.workspace)).exists());
+        fs::remove_dir_all(base).unwrap();
+    }
+
+    #[test]
+    fn committed_writes_stay_dirty_when_the_read_refresh_fails() {
+        let (m, _, base) = managers();
+        m.new_session("w").unwrap();
+        // The write committed, but the reader cannot re-attach the database.
+        let db = m.database_path("w").unwrap();
+        fs::remove_file(&db).unwrap();
+        fs::create_dir(&db).unwrap();
+        let state = m.mark_data_dirty("w").unwrap();
+        assert!(state.dirty, "the committed write is kept for the next save");
+        assert_eq!(
+            state.last_error.map(|e| e.code).as_deref(),
+            Some(crate::manager::READ_REFRESH_FAILED)
+        );
+        m.close("w", true).unwrap();
+        fs::remove_dir_all(base).unwrap();
+    }
+
+    #[test]
+    fn recovery_never_overwrites_a_file_it_could_not_checkpoint() {
+        let (m, _, base) = managers();
+        for (name, damage) in [("corrupt", "checksum"), ("unreadable", "garbage")] {
+            let path = base.join(format!("{name}.ixt"));
+            let crashed = dirty_session(&m, name, &path);
+            drop(m.sessions.lock().unwrap().remove(name));
+            if damage == "checksum" {
+                // Header still reads, but the archive fails validation, so no checkpoint can be taken.
+                Connection::open(&path)
+                    .unwrap()
+                    .execute_batch("UPDATE data_payload SET checksum='0'")
+                    .unwrap();
+            } else {
+                fs::write(&path, b"not an archive at all").unwrap();
+            }
+            let before = fs::read(&path).unwrap();
+            let state = m.recover_session("w", &crashed.session_id).unwrap();
+            assert_eq!(
+                state.last_error.map(|e| e.code).as_deref(),
+                Some(RECOVERY_NEEDS_SAVE_AS),
+                "{name}"
+            );
+            assert!(
+                state.conflict && state.dirty && !state.autosave_eligible,
+                "{name}"
+            );
+            assert_eq!(
+                fs::read(&path).unwrap(),
+                before,
+                "{name}: the file is untouched"
+            );
+            let rescued = base.join(format!("{name}-rescued.ixt"));
+            let saved = m.save("w", Some(rescued.clone())).unwrap();
+            assert!(!saved.dirty && saved.last_error.is_none());
+            assert!(archive_io::verify(&rescued).is_ok());
+            m.close("w", true).unwrap();
+        }
+        fs::remove_dir_all(base).unwrap();
+    }
+
+    #[test]
+    fn workspace_assets_must_live_under_their_own_id() {
+        let (work, record) = workspace();
+        let id = validate_workspace(&work, &record).unwrap().attachments[0]
+            .id
+            .clone();
+        let dir = archive_io::asset_dir(&work, &id);
+        let meta = dir.join("metadata.json");
+        let mut a: Attachment = serde_json::from_slice(&fs::read(&meta).unwrap()).unwrap();
+        a.id = "../../elsewhere".into();
+        fs::write(&meta, serde_json::to_vec(&a).unwrap()).unwrap();
+        assert!(validate_workspace(&work, &record)
+            .unwrap_err()
+            .contains("invalid id"));
+        fs::remove_dir_all(work).unwrap();
     }
 
     #[test]

@@ -8,8 +8,28 @@ use std::{
     path::{Path, PathBuf},
 };
 
+/// `work/attachments/<id>`. Never leaves `work/attachments`, even for an unsafe id.
 pub fn asset_dir(work: &Path, id: &str) -> PathBuf {
-    work.join("attachments").join(id)
+    crate::paths::child(&work.join("attachments"), id)
+}
+
+/// Rejects ids that cannot be used as a single path component (see [`crate::paths::is_safe_id`]).
+pub fn check_ids(doc_id: &str, attachments: &[Attachment]) -> Result<(), ArchiveError> {
+    if !crate::paths::is_safe_id(doc_id) {
+        return Err(ArchiveError::Invalid(format!(
+            "unsafe document id {doc_id:?}"
+        )));
+    }
+    match attachments
+        .iter()
+        .find(|a| !crate::paths::is_safe_id(&a.id))
+    {
+        Some(a) => Err(ArchiveError::Invalid(format!(
+            "unsafe attachment id {:?}",
+            a.id
+        ))),
+        None => Ok(()),
+    }
 }
 pub fn asset_content(work: &Path, id: &str) -> PathBuf {
     asset_dir(work, id).join("content")
@@ -73,6 +93,7 @@ pub fn extract_to(path: &Path, work: &Path) -> Result<ArchiveDocument, ArchiveEr
 
 /// Lays out an in-memory document as a working session (new documents).
 pub fn extract_document(doc: &ArchiveDocument, work: &Path) -> Result<(), ArchiveError> {
+    check_ids(&doc.metadata.document_id, &doc.attachments)?;
     fs::create_dir_all(work)?;
     fs::write(work.join("data.db"), &doc.data)?;
     write_config_files(work, &doc.config)?;

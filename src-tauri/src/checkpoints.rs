@@ -36,8 +36,15 @@ fn io_error(e: impl ToString) -> AppError {
 }
 
 impl DocumentManager {
-    fn checkpoint_dir(&self, document_id: &str) -> PathBuf {
-        self.checkpoint_root.join(document_id)
+    /// `checkpoints/<documentId>`; the id must be a plain id (never a path).
+    fn checkpoint_dir(&self, document_id: &str) -> Result<PathBuf, AppError> {
+        if !crate::paths::is_safe_id(document_id) {
+            return Err(AppError::new(
+                "INVALID_ARCHIVE",
+                format!("unsafe document id {document_id:?}"),
+            ));
+        }
+        Ok(crate::paths::child(&self.checkpoint_root, document_id))
     }
     fn record_checkpoint(
         &self,
@@ -54,11 +61,10 @@ impl DocumentManager {
             path: path.to_string_lossy().into(),
             size: fs::metadata(path).map_err(io_error)?.len(),
         };
-        fs::write(
-            path.with_extension("json"),
-            serde_json::to_vec_pretty(&info).map_err(io_error)?,
-        )
-        .map_err(io_error)?;
+        crate::bundle::write_atomic(
+            &path.with_extension("json"),
+            &serde_json::to_vec_pretty(&info).map_err(io_error)?,
+        )?;
         logging::info(
             "checkpoint",
             &format!(
@@ -69,8 +75,17 @@ impl DocumentManager {
         self.prune_checkpoints(document_id);
         Ok(info)
     }
+    /// Checkpoints whose sidecar names `<dir>/<id>.ixt` for its own safe id and document; anything else in the directory is ignored (and never pruned).
     fn checkpoints_of(&self, document_id: &str) -> Vec<CheckpointInfo> {
-        let mut all: Vec<CheckpointInfo> = fs::read_dir(self.checkpoint_dir(document_id))
+        let Ok(dir) = self.checkpoint_dir(document_id) else {
+            return vec![];
+        };
+        let expected = |c: &CheckpointInfo| {
+            crate::paths::is_safe_id(&c.id)
+                && c.document_id == document_id
+                && Path::new(&c.path) == dir.join(format!("{}.ixt", c.id))
+        };
+        let mut all: Vec<CheckpointInfo> = fs::read_dir(&dir)
             .map(|entries| {
                 entries
                     .filter_map(Result::ok)
@@ -78,20 +93,28 @@ impl DocumentManager {
                     .filter(|p| p.extension().is_some_and(|x| x == "json"))
                     .filter_map(|p| fs::read(p).ok())
                     .filter_map(|b| serde_json::from_slice::<CheckpointInfo>(&b).ok())
-                    .filter(|c| Path::new(&c.path).exists())
+                    .filter(expected)
+                    .filter(|c| Path::new(&c.path).is_file())
                     .collect()
             })
             .unwrap_or_default();
         all.sort_by(|a, b| b.created_at.cmp(&a.created_at).then(b.id.cmp(&a.id)));
         all
     }
+    /// Deletes only `<checkpoint dir>/<id>.{ixt,json}` of listed checkpoints beyond the newest [`KEEP_CHECKPOINTS`].
     fn prune_checkpoints(&self, document_id: &str) {
+        let Ok(dir) = self.checkpoint_dir(document_id) else {
+            return;
+        };
         for old in self
             .checkpoints_of(document_id)
             .into_iter()
             .skip(KEEP_CHECKPOINTS)
         {
-            let path = PathBuf::from(&old.path);
+            let path = crate::paths::child(&dir, &old.id).with_extension("ixt");
+            if path.parent() != Some(dir.as_path()) {
+                continue;
+            }
             let _ = fs::remove_file(path.with_extension("json"));
             let _ = fs::remove_file(path);
         }
@@ -105,7 +128,7 @@ impl DocumentManager {
         let snap = self.with_session(window, |s| Ok(self.snapshot(s)))?;
         let id = Uuid::new_v4().to_string();
         let document_id = snap.metadata.document_id.clone();
-        let path = self.checkpoint_dir(&document_id).join(format!("{id}.ixt"));
+        let path = self.checkpoint_dir(&document_id)?.join(format!("{id}.ixt"));
         self.write_snapshot(&snap, &path).inspect_err(|e| {
             logging::error(
                 "checkpoint",
@@ -122,7 +145,7 @@ impl DocumentManager {
     ) -> Result<CheckpointInfo, AppError> {
         let document_id = archive_io::verify(archive)?.metadata.document_id;
         let id = Uuid::new_v4().to_string();
-        let dir = self.checkpoint_dir(&document_id);
+        let dir = self.checkpoint_dir(&document_id)?;
         fs::create_dir_all(&dir).map_err(io_error)?;
         let path = dir.join(format!("{id}.ixt"));
         let part = dir.join(format!("{id}.part"));
@@ -220,4 +243,84 @@ pub fn restore_checkpoint_as_copy(
     path: String,
 ) -> Result<String, AppError> {
     crate::manager()?.restore_checkpoint_as_copy(&window_label, &checkpoint_id, Path::new(&path))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn checkpoint_files_never_leave_the_document_directory() {
+        let base = std::env::temp_dir().join(format!("ixtable-ckpt-{}", Uuid::new_v4()));
+        let m = DocumentManager::new(base.join("data"), base.join("cache")).unwrap();
+        assert_eq!(
+            m.checkpoint_dir("../../x").unwrap_err().code,
+            "INVALID_ARCHIVE"
+        );
+
+        m.new_session("w").unwrap();
+        let info = m.create_checkpoint("w", "test").unwrap();
+        let dir = m.checkpoint_dir(&info.document_id).unwrap();
+        let mut names: Vec<String> = fs::read_dir(&dir)
+            .unwrap()
+            .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
+            .collect();
+        names.sort();
+        // The sidecar is written atomically: no temp file is left behind.
+        assert_eq!(
+            names,
+            vec![format!("{}.ixt", info.id), format!("{}.json", info.id)]
+        );
+
+        // Planted sidecars that point elsewhere are ignored, so they are never pruned or restored.
+        let victim = base.join("victim.txt");
+        fs::write(&victim, b"keep").unwrap();
+        for (id, path) in [
+            ("planted", victim.clone()),
+            ("../../victim", victim.clone()),
+            ("aaaa", dir.join("bbbb.ixt")),
+        ] {
+            let planted = CheckpointInfo {
+                id: id.into(),
+                path: path.to_string_lossy().into(),
+                created_at: "0000".into(),
+                ..info.clone()
+            };
+            fs::write(
+                dir.join(format!("{}.json", Uuid::new_v4())),
+                serde_json::to_vec(&planted).unwrap(),
+            )
+            .unwrap();
+        }
+        fs::copy(&info.path, dir.join("bbbb.ixt")).unwrap();
+        assert_eq!(m.list_checkpoints("w").unwrap(), vec![info.clone()]);
+
+        // Fill past the limit with real (older) checkpoints, then prune.
+        for n in 0..KEEP_CHECKPOINTS {
+            let id = Uuid::new_v4().to_string();
+            let path = dir.join(format!("{id}.ixt"));
+            fs::copy(&info.path, &path).unwrap();
+            let old = CheckpointInfo {
+                id,
+                path: path.to_string_lossy().into(),
+                created_at: format!("2000-01-01T00:00:{n:02}Z"),
+                ..info.clone()
+            };
+            fs::write(
+                path.with_extension("json"),
+                serde_json::to_vec(&old).unwrap(),
+            )
+            .unwrap();
+        }
+        m.prune_checkpoints(&info.document_id);
+        assert_eq!(m.list_checkpoints("w").unwrap().len(), KEEP_CHECKPOINTS);
+        assert!(Path::new(&info.path).exists(), "the newest is kept");
+        assert_eq!(fs::read(&victim).unwrap(), b"keep");
+        assert!(
+            dir.join("bbbb.ixt").exists(),
+            "files of mismatched sidecars are left alone"
+        );
+        m.close("w", true).unwrap();
+        fs::remove_dir_all(base).unwrap();
+    }
 }

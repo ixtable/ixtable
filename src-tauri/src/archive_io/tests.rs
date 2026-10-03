@@ -297,3 +297,127 @@ fn unknown_tables_are_not_copied_from_another_document() {
     assert!(report.preserved_tables.is_empty());
     fs::remove_dir_all(dir).unwrap();
 }
+
+/// Rewrites one value of a written archive the way a hostile tool could.
+fn tamper(path: &Path, sql: &str) {
+    Connection::open(path).unwrap().execute_batch(sql).unwrap();
+}
+
+#[test]
+fn attachment_ids_that_are_paths_reject_the_archive() {
+    let dir = temp_dir();
+    let path = dir.join("evil.ixt");
+    let mut doc = create_document("Evil").unwrap();
+    add_attachment(&mut doc, "a.txt".into(), "text/plain".into(), b"x".to_vec());
+    write_archive(&path, &doc).unwrap();
+    let victim = dir.join("victim");
+    fs::create_dir_all(&victim).unwrap();
+    fs::write(victim.join("keep.txt"), b"keep").unwrap();
+    tamper(&path, "UPDATE attachments SET id='../../victim'");
+
+    let work = dir.join("work").join("session");
+    let err = extract_to(&path, &work).unwrap_err();
+    assert!(
+        matches!(err, ArchiveError::Invalid(ref m) if m.contains("unsafe attachment id")),
+        "{err}"
+    );
+    assert!(read_archive(&path).is_err());
+    assert!(
+        !work.join("data.db").exists(),
+        "nothing is extracted before the ids are checked"
+    );
+    assert_eq!(fs::read(victim.join("keep.txt")).unwrap(), b"keep");
+    assert_eq!(crate::manager::AppError::from(err).code, "INVALID_ARCHIVE");
+
+    // In-memory documents (bundle installs) are checked too.
+    doc.attachments[0].id = "../../victim".into();
+    assert!(extract_document(&doc, &dir.join("work2")).is_err());
+    assert!(!dir.join("work2").exists());
+    // Defense in depth: an unsafe id never resolves outside `attachments/`.
+    assert_eq!(
+        asset_dir(&work, "../../victim").parent(),
+        Some(work.join("attachments").as_path())
+    );
+    fs::remove_dir_all(dir).unwrap();
+}
+
+#[test]
+fn document_ids_that_are_paths_reject_the_archive() {
+    let dir = temp_dir();
+    let path = dir.join("evil-doc.ixt");
+    write_archive(&path, &create_document("Evil").unwrap()).unwrap();
+    tamper(
+        &path,
+        "UPDATE archive_metadata SET document_id='../../../outside'",
+    );
+    let err = read_header(&path).unwrap_err();
+    assert!(err.to_string().contains("unsafe document id"), "{err}");
+    assert!(verify(&path).is_err());
+    fs::remove_dir_all(dir).unwrap();
+}
+
+#[test]
+fn hostile_schema_sql_of_unknown_tables_is_never_executed() {
+    let dir = temp_dir();
+    let path = dir.join("hostile.ixt");
+    let pwned = dir.join("pwned.db");
+    let doc = create_document("Hostile").unwrap();
+    write_archive(&path, &doc).unwrap();
+    // A schema row whose text smuggles a second statement after the CREATE TABLE.
+    tamper(
+        &path,
+        &format!(
+            "CREATE TABLE extra(x); INSERT INTO extra VALUES(1);
+             PRAGMA writable_schema=ON;
+             UPDATE sqlite_master SET sql='CREATE TABLE extra(x); ATTACH DATABASE ''{}'' AS pwn; CREATE TABLE pwn.t(y)' WHERE name='extra';
+             PRAGMA writable_schema=OFF;",
+            pwned.display()
+        ),
+    );
+    let report = write(
+        &path,
+        WriteRequest {
+            metadata: &doc.metadata,
+            config: &doc.config,
+            data: Payload::Bytes(&doc.data),
+            attachments: vec![],
+            preserve_from: Some(&path),
+        },
+    )
+    .unwrap();
+    assert!(report.preserved_tables.is_empty());
+    assert!(!pwned.exists(), "the smuggled ATTACH never ran");
+    read_archive(&path).unwrap();
+
+    // Each statement is checked on its own, under an authorizer.
+    let conn = Connection::open_in_memory().unwrap();
+    conn.execute("ATTACH DATABASE ':memory:' AS prev", [])
+        .unwrap();
+    for bad in [
+        "CREATE TABLE a(x); DROP TABLE b",
+        "CREATE TEMP TABLE a(x)",
+        "CREATE TABLE prev.a(x)",
+        "CREATE TABLE temp.a(x)",
+        "ATTACH DATABASE 'x.db' AS y",
+        "PRAGMA writable_schema=ON",
+        "CREATE VIEW v AS SELECT 1",
+    ] {
+        assert!(
+            run_preserved_ddl(&conn, bad, DdlKind::Table).is_err(),
+            "{bad}"
+        );
+    }
+    assert!(run_preserved_ddl(&conn, "CREATE INDEX i ON a(x)", DdlKind::Table).is_err());
+    run_preserved_ddl(
+        &conn,
+        "  create table ok(x, y AS (upper(x)));  ",
+        DdlKind::Table,
+    )
+    .unwrap();
+    run_preserved_ddl(&conn, "CREATE UNIQUE INDEX ok_x ON ok(x)", DdlKind::Index).unwrap();
+    assert!(run_preserved_ddl(&conn, "CREATE INDEX prev.i ON ok(x)", DdlKind::Index).is_err());
+    // The authorizer is removed afterwards.
+    conn.execute_batch("CREATE TEMP TABLE after_check(x)")
+        .unwrap();
+    fs::remove_dir_all(dir).unwrap();
+}

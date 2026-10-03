@@ -190,8 +190,7 @@ fn redact_keys(text: &str) -> String {
             while j < bytes.len() && bytes[j] == b' ' {
                 j += 1;
             }
-            let (value_start, value_end) = if j < bytes.len() && matches!(bytes[j], b'"' | b'\'')
-            {
+            let (value_start, value_end) = if j < bytes.len() && matches!(bytes[j], b'"' | b'\'') {
                 (j + 1, closing_quote(bytes, j))
             } else {
                 let end = (j..bytes.len())
@@ -293,15 +292,24 @@ mod tests {
             (r"password='it\'s' user=x", "password='***' user=x"),
             ("password='it''s secret' user=x", "password='***' user=x"),
             (r#"pwd="x y" db=z"#, r#"pwd="***" db=z"#),
-            (r#"{"password": "a \"b\" c", "n": 1}"#, r#"{"password": "***", "n": 1}"#),
+            (
+                r#"{"password": "a \"b\" c", "n": 1}"#,
+                r#"{"password": "***", "n": 1}"#,
+            ),
             ("password='unterminated secret", "password='***"),
             ("password='' user=x", "password='' user=x"),
         ] {
             assert_eq!(redact(input), expected, "{input}");
         }
         for (input, expected) in [
-            ("postgres://admin:p@ss%20w@rd@db.local/app", "postgres://admin:***@db.local/app"),
-            ("postgres://u:pa/ss?#x@db.local/app", "postgres://u:***@db.local/app"),
+            (
+                "postgres://admin:p@ss%20w@rd@db.local/app",
+                "postgres://admin:***@db.local/app",
+            ),
+            (
+                "postgres://u:pa/ss?#x@db.local/app",
+                "postgres://u:***@db.local/app",
+            ),
             ("'postgres://u:p@ss@h/db'", "'postgres://u:***@h/db'"),
         ] {
             assert_eq!(redact(input), expected, "{input}");

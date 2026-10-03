@@ -30,14 +30,18 @@ use std::{
 };
 use uuid::Uuid;
 
+mod preserve;
 mod size;
 mod stream;
 mod workspace;
+use preserve::preserve_unknown_tables;
+#[cfg(test)]
+use preserve::{run_preserved_ddl, DdlKind};
 pub use size::{size_entries, SizeEntry};
 use stream::{read_payload, write_payload};
 pub use stream::{HashingReader, HashingWriter};
 pub use workspace::{
-    asset_content, asset_dir, extract_document, extract_to, write_asset_metadata,
+    asset_content, asset_dir, check_ids, extract_document, extract_to, write_asset_metadata,
     write_config_files, write_session_metadata,
 };
 
@@ -233,73 +237,6 @@ pub fn write(path: &Path, req: WriteRequest<'_>) -> Result<WriteReport, ArchiveE
     result
 }
 
-/// Copies ordinary tables unknown to this build (with rows and indexes) from `prev`.
-fn preserve_unknown_tables(
-    conn: &Connection,
-    prev: &Path,
-    metadata: &ArchiveMetadata,
-) -> Result<Vec<String>, ArchiveError> {
-    match read_header(prev) {
-        Ok(h) if h.metadata.document_id == metadata.document_id => {}
-        _ => return Ok(vec![]),
-    }
-    conn.execute(
-        "ATTACH DATABASE ?1 AS prev",
-        [prev.to_string_lossy().as_ref()],
-    )?;
-    let result = (|| {
-        let tables: Vec<(String, String)> = {
-            let mut stmt = conn.prepare(
-                "SELECT name, sql FROM prev.sqlite_master WHERE type='table' AND sql IS NOT NULL AND name NOT LIKE 'sqlite_%' AND sql NOT LIKE 'CREATE VIRTUAL%' ORDER BY name",
-            )?;
-            let rows = stmt.query_map([], |r| Ok((r.get(0)?, r.get(1)?)))?;
-            rows.collect::<Result<_, _>>()?
-        };
-        let mut kept = vec![];
-        for (name, sql) in tables {
-            if KNOWN_TABLES.contains(&name.as_str()) {
-                continue;
-            }
-            let quoted = format!("\"{}\"", name.replace('"', "\"\""));
-            let columns: Vec<String> = {
-                let mut stmt = conn.prepare(
-                    "SELECT name FROM pragma_table_xinfo(?1, 'prev') WHERE hidden=0 ORDER BY cid",
-                )?;
-                let rows = stmt.query_map([&name], |r| r.get::<_, String>(0))?;
-                rows.map(|c| c.map(|c| format!("\"{}\"", c.replace('"', "\"\""))))
-                    .collect::<Result<_, _>>()?
-            };
-            conn.execute_batch(&sql)?;
-            let list = columns.join(",");
-            conn.execute(
-                &format!("INSERT INTO main.{quoted}({list}) SELECT {list} FROM prev.{quoted}"),
-                [],
-            )?;
-            let indexes: Vec<String> = {
-                let mut stmt = conn.prepare(
-                    "SELECT sql FROM prev.sqlite_master WHERE type='index' AND tbl_name=?1 AND sql IS NOT NULL",
-                )?;
-                let rows = stmt.query_map([&name], |r| r.get(0))?;
-                rows.collect::<Result<_, _>>()?
-            };
-            for index in indexes {
-                conn.execute_batch(&index)?;
-            }
-            kept.push(name);
-        }
-        Ok::<_, ArchiveError>(kept)
-    })();
-    conn.execute_batch("DETACH DATABASE prev")?;
-    let kept = result?;
-    if !kept.is_empty() {
-        logging::info(
-            "archive",
-            &format!("preserved unknown archive tables: {}", kept.join(", ")),
-        );
-    }
-    Ok(kept)
-}
-
 pub(crate) fn open_read_only(path: &Path) -> Result<Connection, ArchiveError> {
     if !path.exists() {
         return Err(ArchiveError::Io(io::Error::new(
@@ -330,6 +267,13 @@ pub(crate) fn header(conn: &Connection) -> Result<ArchiveHeader, ArchiveError> {
         },
     )?;
     check_format(format_version)?;
+    // The document id names checkpoint directories; never let it act as a path.
+    if !crate::paths::is_safe_id(&metadata.document_id) {
+        return Err(ArchiveError::Invalid(format!(
+            "unsafe document id {:?}",
+            metadata.document_id
+        )));
+    }
     Ok(ArchiveHeader {
         format_version,
         metadata,
@@ -379,7 +323,15 @@ fn attachment_rows(conn: &Connection) -> Result<Vec<Attachment>, ArchiveError> {
             contents: vec![],
         })
     })?;
-    Ok(rows.collect::<Result<_, _>>()?)
+    let rows: Vec<Attachment> = rows.collect::<Result<_, _>>()?;
+    // Attachment ids name workspace directories; reject anything but a plain id.
+    if let Some(bad) = rows.iter().find(|a| !crate::paths::is_safe_id(&a.id)) {
+        return Err(ArchiveError::Invalid(format!(
+            "unsafe attachment id {:?}",
+            bad.id
+        )));
+    }
+    Ok(rows)
 }
 
 /// Visits every payload of an archive: the data payload, then each attachment.
@@ -395,6 +347,8 @@ pub(crate) fn visit(path: &Path, v: Visitor<'_>) -> Result<ArchiveDocument, Arch
         metadata,
     } = header(&conn)?;
     let chunked = has_chunks(&conn)?;
+    // Validated before any payload is written out (ids become workspace paths).
+    let attachments = attachment_rows(&conn)?;
     let (sum, size, first): (String, i64, Vec<u8>) = conn.query_row(
         "SELECT checksum,uncompressed_size,contents FROM data_payload WHERE id=1",
         [],
@@ -413,7 +367,6 @@ pub(crate) fn visit(path: &Path, v: Visitor<'_>) -> Result<ArchiveDocument, Arch
     out.flush()?;
     drop(out);
     let config = read_config(&conn)?;
-    let attachments = attachment_rows(&conn)?;
     for a in &attachments {
         let first: Vec<u8> = conn.query_row(
             "SELECT contents FROM attachments WHERE id=?1",

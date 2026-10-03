@@ -194,7 +194,10 @@ pub fn read_installed(dir: &Path) -> Option<InstalledBundle> {
 
 /// Moves an existing directory aside to `<dir>.corrupt-<timestamp>` (never deletes it).
 fn move_aside(dir: &Path) -> Result<(), AppError> {
-    let name = dir.file_name().and_then(|n| n.to_str()).unwrap_or("installation");
+    let name = dir
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or("installation");
     let aside = dir.with_file_name(format!(
         "{name}.corrupt-{}-{}",
         Utc::now().format("%Y%m%dT%H%M%S"),
@@ -334,9 +337,12 @@ fn restore_retired(dir: &Path, retired: &Path) -> Result<(), String> {
     back("active").map_err(|e| e.to_string())?;
     back("data.db").map_err(|e| e.to_string())?;
     // bundle.json is only rewritten after both renames; restore the checkpointed copy.
-    fs::copy(dir.join("previous").join(BUNDLE_JSON), dir.join(BUNDLE_JSON))
-        .map(|_| ())
-        .map_err(|e| e.to_string())
+    fs::copy(
+        dir.join("previous").join(BUNDLE_JSON),
+        dir.join(BUNDLE_JSON),
+    )
+    .map(|_| ())
+    .map_err(|e| e.to_string())
 }
 
 /// Validates staged state: migrations on the staged records, then health checks.

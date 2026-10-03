@@ -23,7 +23,9 @@ export const recoverSession = (sessionId: string) =>
 /** Recovers crashed WIP; untitled work asks for a destination (canceling keeps it open, unsaved). */
 export async function recoverWork(record: RecoveryRecord): Promise<SessionState> {
   const state = await recoverSession(record.sessionId);
-  if (state.path) return state;
+  // The saved file could not be safely replaced (unreadable, or no safety checkpoint): ask where to save instead.
+  const needsSaveAs = state.lastError?.code === "RECOVERY_NEEDS_SAVE_AS";
+  if (state.path && !needsSaveAs) return state;
   const path = await chooseDocumentDestination(record.name || "Recovered");
   return path ? saveDocumentAs(path) : state;
 }

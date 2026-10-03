@@ -74,7 +74,10 @@ impl From<SecretError> for super::StoreError {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(untagged)]
 enum Entry {
-    Bound { target: String, sealed: String },
+    Bound {
+        target: String,
+        sealed: String,
+    },
     /// Pre-binding format (associated data = id only).
     Legacy(String),
 }
@@ -83,7 +86,10 @@ enum Entry {
 /// half-written file and concurrent writers never share a temp path.
 fn write_private(path: &Path, bytes: &[u8]) -> Result<(), String> {
     use std::io::Write;
-    let name = path.file_name().and_then(|n| n.to_str()).unwrap_or("secret");
+    let name = path
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or("secret");
     let tmp = path.with_file_name(format!(".{name}.{}.tmp", uuid::Uuid::new_v4()));
     let result = (|| {
         let mut f = open_private(&tmp, false)?;
@@ -367,16 +373,31 @@ mod tests {
             .put_for(&id, "s3cret", &datasource_target(&good))
             .unwrap();
         assert_eq!(
-            store.get_for(&id, &datasource_target(&good)).unwrap().as_deref(),
+            store
+                .get_for(&id, &datasource_target(&good))
+                .unwrap()
+                .as_deref(),
             Some("s3cret")
         );
         // A crafted document reusing the reference against another server.
         for evil in [
             pg("evil.example.com"),
-            DatasourceConfig { port: 6543, ..good.clone() },
-            DatasourceConfig { database: "other".into(), ..good.clone() },
-            DatasourceConfig { user: "postgres".into(), ..good.clone() },
-            DatasourceConfig { id: "ds2".into(), ..good.clone() },
+            DatasourceConfig {
+                port: 6543,
+                ..good.clone()
+            },
+            DatasourceConfig {
+                database: "other".into(),
+                ..good.clone()
+            },
+            DatasourceConfig {
+                user: "postgres".into(),
+                ..good.clone()
+            },
+            DatasourceConfig {
+                id: "ds2".into(),
+                ..good.clone()
+            },
         ] {
             let err = store.get_for(&id, &datasource_target(&evil)).unwrap_err();
             assert_eq!(err.code, "CREDENTIAL_TARGET_MISMATCH");
@@ -397,7 +418,10 @@ mod tests {
         entries.insert(id.clone(), Entry::Legacy("AAAAAAAAAAAAAAAA".into()));
         store.save(&entries).unwrap();
         assert_eq!(
-            store.get_for(&id, &datasource_target(&good)).unwrap_err().code,
+            store
+                .get_for(&id, &datasource_target(&good))
+                .unwrap_err()
+                .code,
             "CREDENTIAL_TARGET_MISMATCH"
         );
         let _ = fs::remove_dir_all(dir);
@@ -411,7 +435,10 @@ mod tests {
             datasource_credential(&ds).unwrap_err().code,
             "INSECURE_TRANSPORT"
         );
-        assert_eq!(ensure_transport(&ds).unwrap_err().code, "INSECURE_TRANSPORT");
+        assert_eq!(
+            ensure_transport(&ds).unwrap_err().code,
+            "INSECURE_TRANSPORT"
+        );
         ds.insecure_transport_confirmed = true;
         assert!(ensure_transport(&ds).is_ok());
         ds.sslmode = "prefer".into();
@@ -464,7 +491,13 @@ mod tests {
         }
         let leftovers = fs::read_dir(&dir)
             .unwrap()
-            .filter(|e| e.as_ref().unwrap().file_name().to_string_lossy().ends_with(".tmp"))
+            .filter(|e| {
+                e.as_ref()
+                    .unwrap()
+                    .file_name()
+                    .to_string_lossy()
+                    .ends_with(".tmp")
+            })
             .count();
         assert_eq!(leftovers, 0);
         let _ = fs::remove_dir_all(dir);

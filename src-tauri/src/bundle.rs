@@ -446,7 +446,10 @@ impl Drop for ScratchFile {
 /// the distributed file, not the installation (docs/decisions/runtime-bundles.md).
 pub fn read_archive_bytes(bytes: &[u8], scratch: &Path) -> Result<ArchiveDocument, AppError> {
     fs::create_dir_all(scratch).map_err(io_err)?;
-    let tmp = ScratchFile::create(scratch.join(format!(".bundle-{}.ixt", Uuid::new_v4())), bytes)?;
+    let tmp = ScratchFile::create(
+        scratch.join(format!(".bundle-{}.ixt", Uuid::new_v4())),
+        bytes,
+    )?;
     Ok(archive::read_archive(&tmp.0)?)
 }
 

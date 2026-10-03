@@ -25,6 +25,16 @@ const sidebars: SidebarsConfig = {
         "concepts/deployment",
       ],
     },
+    {
+      type: "category",
+      label: "ixtable Cloud",
+      items: ["cloud/getting-started", "cloud/security"],
+    },
+    {
+      type: "category",
+      label: "Legal",
+      items: ["legal/privacy", "legal/terms"],
+    },
   ],
 };
 

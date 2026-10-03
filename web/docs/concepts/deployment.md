@@ -6,7 +6,7 @@ sidebar_position: 4
 
 _Deploy an ixtable application by exporting a signed runtime-only bundle and sending it to the people who use it._
 
-A **runtime-only bundle** is an `.ixtr` file that holds a complete application. Recipients open it in ixtable and can run the application but not edit its design. You distribute the file yourself, by email or a shared drive. ixtable Cloud publishing is not available yet.
+A **runtime-only bundle** is an `.ixtr` file that holds a complete application. Recipients open it in ixtable and can run the application but not edit its design. You distribute the file yourself, by email or a shared drive. To distribute privately with automatic updates instead, see [ixtable Cloud](../cloud/getting-started).
 
 ## Export a bundle
 

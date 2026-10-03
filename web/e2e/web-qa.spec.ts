@@ -11,7 +11,7 @@ async function capture(
   fullPage = true,
 ): Promise<void> {
   await mkdir(outputDir, { recursive: true });
-  await page.locator("img").evaluateAll(async (images) => {
+  await page.locator("img").evaluateAll(async (images: HTMLImageElement[]) => {
     for (const image of images) image.loading = "eager";
     await Promise.all(
       images.map((image) =>
@@ -38,11 +38,11 @@ async function capture(
 async function darkPixelsInFlowCanvas(page: Page, imageName: RegExp): Promise<number> {
   const image = page.getByRole("img", { name: imageName });
   await expect(image).toBeVisible();
-  await image.evaluate(async (element) => {
+  await image.evaluate(async (element: HTMLImageElement) => {
     element.loading = "eager";
     await element.decode();
   });
-  return image.evaluate((element) => {
+  return image.evaluate((element: HTMLImageElement) => {
     const canvas = document.createElement("canvas");
     canvas.width = element.naturalWidth;
     canvas.height = element.naturalHeight;
@@ -98,7 +98,7 @@ test.describe("web QA", () => {
     expect(await darkPixelsInFlowCanvas(page, /new order entered/i)).toBeGreaterThan(2_000);
     const flowImage = page.getByRole("img", { name: /Customers, Products, Orders/i });
     await expect(flowImage).toBeVisible();
-    await flowImage.evaluate(async (image) => {
+    await flowImage.evaluate(async (image: HTMLImageElement) => {
       image.loading = "eager";
       await image.decode();
     });
@@ -170,6 +170,35 @@ test.describe("web QA", () => {
       "Hero copy and calls to action fit the viewport without horizontal scrolling.",
       "The product preview and feature sections collapse into a readable single column.",
       "Text remains legible and no content is visibly clipped.",
+    ]);
+  });
+});
+
+test.describe("web QA: account pages", () => {
+  test("pricing and log in pages fit a phone screen", async ({ page }) => {
+    await page.setViewportSize({ width: 390, height: 844 });
+    await page.goto("/");
+    await page.getByRole("button", { name: "Toggle navigation bar" }).click();
+    await page
+      .getByRole("navigation", { name: "Main" })
+      .getByRole("link", { name: "Pricing" })
+      .click();
+    await expect(page.getByRole("heading", { level: 1, name: "Pricing" })).toBeVisible();
+    const starter = await page.getByRole("region", { name: "Starter plan" }).boundingBox();
+    expect(starter?.width ?? 0).toBeLessThanOrEqual(390);
+    await capture(page, "cloud-01-pricing-mobile", [
+      "The three plan cards stack in one column and each names its runtime user allowance.",
+      "The page has no horizontal scrolling or clipped text.",
+    ]);
+    await page.getByRole("button", { name: "Toggle navigation bar" }).click();
+    await page
+      .getByRole("navigation", { name: "Main" })
+      .getByRole("link", { name: "Log in" })
+      .click();
+    await expect(page.getByRole("button", { name: "Continue with Microsoft" })).toBeVisible();
+    await capture(page, "cloud-02-login-mobile", [
+      "The log in form, the Google and Microsoft buttons, and the not-configured note fit the phone width.",
+      "Form controls show labels and are large enough to tap.",
     ]);
   });
 });

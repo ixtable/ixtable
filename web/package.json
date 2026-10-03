@@ -42,6 +42,7 @@
     "@docusaurus/tsconfig": "3.10.1",
     "@docusaurus/types": "3.10.1",
     "@eslint/js": "10.0.1",
+    "@noble/ciphers": "^2.4.0",
     "@playwright/test": "^1.61.1",
     "@types/react": "^19.0.0",
     "eslint": "10.8.1",

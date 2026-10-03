@@ -138,10 +138,9 @@ test("cloud dashboard fits a phone screen", async ({ page, cloud }) => {
   await page.setViewportSize({ width: 390, height: 844 });
   await page.goto("/");
   await page.getByRole("button", { name: "Toggle navigation bar" }).click();
-  await page.getByRole("link", { name: "Log in" }).click();
+  await page.getByRole("navigation", { name: "Main" }).getByRole("link", { name: "Log in" }).click();
   await submitLogin(page, owner.email, owner.password);
-  await page.getByRole("button", { name: "Toggle navigation bar" }).click();
-  await page.getByRole("link", { name: "Cloud", exact: true }).click();
+  await page.getByRole("link", { name: "Cloud dashboard" }).click();
   const region = page.getByRole("region", { name: "Cloud apps" });
   await expect(region).toContainText(app.name);
   const box = await region.boundingBox();

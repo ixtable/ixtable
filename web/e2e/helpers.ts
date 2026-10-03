@@ -1,3 +1,5 @@
+import { expect, type Page } from "@playwright/test";
+
 const MAILPIT_URL = process.env.MAILPIT_URL ?? "http://127.0.0.1:54324";
 
 export function supabaseAvailable(): boolean {
@@ -55,4 +57,27 @@ export async function waitForRecoveryLink(email: string, timeoutMs = 15000): Pro
   }
 
   throw new Error(`Timed out waiting for a recovery email to ${email}`);
+}
+
+/** Opens the landing page and signs in through the navbar Log in link. */
+export async function loginFromHome(page: Page, email: string, password: string): Promise<void> {
+  await page.goto("/");
+  await page.getByTestId("navbar-login-link").click();
+  await submitLogin(page, email, password);
+}
+
+/** Fills and submits the log in form that is already on screen. */
+export async function submitLogin(page: Page, email: string, password: string): Promise<void> {
+  await expect(page.getByRole("heading", { level: 1, name: "Log in" })).toBeVisible();
+  await page.getByLabel("Email").fill(email);
+  await page.getByLabel("Password").fill(password);
+  await page.getByTestId("login-submit").click();
+}
+
+/** Opens a cloud app from the Cloud dashboard by its name. */
+export async function openCloudApp(page: Page, appName: string): Promise<void> {
+  await page.getByRole("link", { name: "Cloud", exact: true }).click();
+  await expect(page.getByRole("heading", { level: 1, name: "Cloud dashboard" })).toBeVisible();
+  await page.getByRole("link", { name: appName }).click();
+  await expect(page.getByRole("heading", { level: 1, name: appName })).toBeVisible();
 }

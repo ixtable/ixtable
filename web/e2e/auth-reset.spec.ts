@@ -1,6 +1,6 @@
 import { createClient } from "@supabase/supabase-js";
 import { test, expect } from "@playwright/test";
-import { supabaseAvailable, uniqueEmail, waitForRecoveryLink } from "./helpers";
+import { submitLogin, supabaseAvailable, uniqueEmail, waitForRecoveryLink } from "./helpers";
 
 const SUPABASE_URL = process.env.SUPABASE_URL ?? "http://127.0.0.1:54321";
 const SUPABASE_SERVICE_ROLE_KEY =
@@ -23,7 +23,9 @@ test.describe("password reset", () => {
     });
     await admin.auth.admin.createUser({ email, password: originalPassword, email_confirm: true });
 
-    await page.goto("/forgot-password");
+    await page.goto("/");
+    await page.getByTestId("navbar-login-link").click();
+    await page.getByRole("link", { name: "Forgot your password?" }).click();
     await page.getByTestId("forgot-password-email-input").fill(email);
     await page.getByTestId("forgot-password-submit").click();
     await expect(page.getByTestId("reset-request-success")).toBeVisible();
@@ -36,12 +38,7 @@ test.describe("password reset", () => {
     await page.getByTestId("reset-password-submit").click();
     await expect(page.getByTestId("reset-password-success")).toBeVisible();
 
-    await page.waitForURL("**/login");
-    await page.getByTestId("login-email-input").fill(email);
-    await page.getByTestId("login-password-input").fill(newPassword);
-    await page.getByTestId("login-submit").click();
-
-    await page.waitForURL("**/account");
+    await submitLogin(page, email, newPassword);
     await expect(page.getByTestId("account-email")).toHaveText(email);
   });
 });

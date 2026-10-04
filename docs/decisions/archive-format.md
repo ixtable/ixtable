@@ -78,6 +78,12 @@ checkpoints are validated archive copies under
   500 MB cloud limit bounds.
 - Unknown-table preservation only works for plain tables. A future format
   that needs views or triggers must bump `FORMAT_VERSION`.
+- Every released format stays openable. `tests/fixtures/archives/format-<N>/`
+  holds one `.ixt` per golden app (CRM, inventory with its asset, work
+  orders) with seeded data, plus a `manifest.json` of the ids, row counts, and
+  asset checksums each must contain. A change that bumps `FORMAT_VERSION` adds
+  a new `format-<N+1>/` with `node scripts/ci/write-archive-fixtures.mjs` and
+  never rewrites an existing directory. `.gitattributes` marks `*.ixt` binary.
 
 ## Evidence
 
@@ -93,3 +99,16 @@ checkpoints are validated archive copies under
 - `tests/integration/assets.test.tsx`: asset checksums, archive size report,
   checkpoint create and restore-as-copy.
 - `tests/unit/autosave.test.ts`: debounce, max wait, single in-flight save.
+- `src-tauri/src/durability_tests/fixtures.rs`: every committed archive
+  fixture opens with the current build, matches its manifest (forms, queries,
+  reports, dashboards by id, row counts, asset checksums), saves (upgrading
+  older formats), and reopens.
+- `src-tauri/src/durability_tests/kill.rs`: a real child process saves and
+  autosaves a growing document and is killed (`Child::kill`) at eight points.
+  The archive at the path always verifies, and the leftover workspace is
+  recovered into it or refused with `RECOVERY_FAILED`.
+- `src-tauri/src/durability_tests/heavy.rs` (opt-in): an archive just over
+  500,000,000 bytes saves and reopens, the size report flags it, and the
+  publish preflight blocks it. Run with
+  `IXTABLE_HEAVY_TESTS=1 cargo test --lib durability_tests::heavy` (about a
+  minute and 1.5 GB of temporary disk). Default CI does not run it.

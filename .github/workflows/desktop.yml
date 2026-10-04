@@ -177,22 +177,24 @@ jobs:
       - uses: ./.github/actions/setup-desktop
       - name: Build NAPI test bridge
         run: npm run pretest
-      # Placeholder until the golden CRM / inventory / work-order suites land
-      # (PRD §26); passes when no golden spec exists yet.
+      # CRM, inventory, and work-order journeys (PRD §26). Fails when no spec runs.
       - name: Golden application suite
         run: >-
           npx vitest run --config vitest.integration.config.ts tests/integration/golden
-          --passWithNoTests
           --reporter=default --reporter=junit --outputFile.junit=reports/golden.xml
-      - name: Upload test evidence
-        if: failure()
+      # Journey evidence (steps, assertions, failure log tail) is release evidence,
+      # so it is uploaded on success too.
+      - name: Upload golden evidence
+        if: always()
         uses: actions/upload-artifact@v4
         with:
           name: golden-evidence-${{ matrix.os }}
           path: |
             reports/
+            tests/integration/golden/.evidence/
             scripts/screenshot/.generated/
-          if-no-files-found: ignore
+          if-no-files-found: warn
+          include-hidden-files: true
           retention-days: 7
 
   build:

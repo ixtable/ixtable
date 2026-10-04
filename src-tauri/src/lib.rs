@@ -487,6 +487,9 @@ pub fn run() {
 }
 
 #[cfg(test)]
+mod durability_tests;
+
+#[cfg(test)]
 mod launch_args_tests {
     #[test]
     fn a_second_launch_forwards_only_ixt_paths_resolved_against_its_cwd() {

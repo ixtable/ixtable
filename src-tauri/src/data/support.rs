@@ -49,6 +49,10 @@ impl TableSchema {
                     .unwrap_or(0),
                 generated: c.generated_expression.is_some(),
                 unique: def.is_unique_column(&c.name),
+                auto_increment: c.identity
+                    || c.default_expression
+                        .as_deref()
+                        .is_some_and(|d| d.contains("nextval(")),
             })
             .collect();
         Self {

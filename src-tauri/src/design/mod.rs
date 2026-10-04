@@ -291,13 +291,24 @@ pub struct SelectOption {
     #[serde(default)]
     pub label: String,
 }
+/// One column of a multi-column key: `column` on this side, `target` on the other table.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct KeyPair {
+    pub column: String,
+    pub target: String,
+}
 /// Foreign-key lookup: stores `value_column` of `table`, shows `display_column`.
+/// A multi-column key lists every pair in `keys` (bound column first); choosing a
+/// record writes all of them.
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct Relationship {
     pub table: String,
     pub value_column: String,
     pub display_column: String,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub keys: Vec<KeyPair>,
     /// Row filter over the choices (`record` is a choice row, `parent` the edited record).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub filter: Option<String>,
@@ -309,12 +320,16 @@ pub struct TabPage {
     pub label: String,
 }
 /// Child rows of `table` whose `foreign_key` equals the parent record's `parent_column`.
+/// A multi-column key lists every pair in `keys` (`column` on the child, `target` on
+/// the parent); rows match on all of them.
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct RelatedList {
     pub table: String,
     pub foreign_key: String,
     pub parent_column: String,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub keys: Vec<KeyPair>,
     #[serde(default)]
     pub columns: Vec<String>,
     /// Form used to add and edit child rows (embedded; it may not hold related lists).

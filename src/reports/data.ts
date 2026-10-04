@@ -1,3 +1,4 @@
+import { asTauriError, readTablePage } from "../lib/api";
 import type { DataValue, DocumentConfig, QueryResult } from "../lib/types";
 import { cancelQuery, runSavedQuery, runQuerySql } from "../query/api";
 import type { QueryRunResult, SavedQuery } from "../query/types";
@@ -61,8 +62,42 @@ export async function loadDataset(
     if (!query) throw new Error("The report's saved query no longer exists");
     return runSavedQuery(query.id, queryParams(query, params), options);
   }
-  if (report.table) return runQuerySql(`SELECT * FROM ${quoteIdent(report.table)}`, {}, options);
+  if (report.table) return tableDataset(report.table, options);
   return null;
+}
+
+/**
+ * All rows of a table, up to `limit`. A runtime role may not run ad hoc SQL
+ * (FORBIDDEN), so it reads the table page by page, which Rust authorizes.
+ */
+async function tableDataset(
+  table: string,
+  options: { limit: number; runId?: string },
+): Promise<QueryRunResult> {
+  try {
+    return await runQuerySql(`SELECT * FROM ${quoteIdent(table)}`, {}, options);
+  } catch (error) {
+    if (asTauriError(error).code !== "FORBIDDEN") throw error;
+  }
+  const started = Date.now();
+  const first = await readTablePage(table, { limit: Math.min(1000, options.limit) });
+  const total = first.total;
+  const rows: DataValue[][] = [...first.rows];
+  while (rows.length < Math.min(total, options.limit)) {
+    const page = await readTablePage(table, {
+      offset: rows.length,
+      limit: Math.min(1000, options.limit - rows.length),
+    });
+    if (!page.rows.length) break;
+    rows.push(...page.rows);
+  }
+  return {
+    columns: first.columns.map((c) => c.name),
+    rows,
+    truncated: total > rows.length,
+    rowLimit: options.limit,
+    elapsedMs: Date.now() - started,
+  };
 }
 
 export interface ReportData {

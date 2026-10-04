@@ -46,46 +46,50 @@ export function ArchiveSizePanel({ revision }: { revision: number }) {
           <span>{error.message}</span>
         </div>
       )}
-      {report && (
-        <>
-          <p>
-            {formatBytes(report.totalBytes)} in total; assets take{" "}
-            {formatPercent(report.assetShare)}.{" "}
-            {report.measured === "saved"
-              ? "Measured on the saved archive."
-              : "Measured on a snapshot that includes unsaved changes."}
-          </p>
-          {report.overCloudLimit ? (
-            <div className="error" role="alert">
-              <b>Over the cloud limit</b>
-              <span>
-                This archive is larger than {formatBytes(report.cloudLimitBytes)}. It keeps working
-                locally but cannot sync to ixtable Cloud until it is smaller.
-              </span>
-            </div>
-          ) : (
-            <p>Within the {formatBytes(report.cloudLimitBytes)} cloud limit.</p>
-          )}
-          <dl className="size-breakdown" aria-label="Archive size by section">
-            {SECTIONS.map(([key, label]) => (
-              <div key={key}>
-                <dt>{label}</dt>
-                <dd>{formatBytes(report[key])}</dd>
-              </div>
-            ))}
-          </dl>
-          <h4>Largest entries</h4>
-          <ol className="size-largest" aria-label="Largest archive entries">
-            {report.largest.map((entry) => (
-              <li key={`${entry.section}-${entry.id}`}>
-                <span>{entry.name}</span>
-                <small>{entry.section}</small>
-                <b>{formatBytes(entry.bytes)}</b>
-              </li>
-            ))}
-          </ol>
-        </>
-      )}
+      {report && <ArchiveSizeDetails report={report} />}
     </section>
+  );
+}
+
+/** Totals, cloud-limit verdict, sections, and largest entries of one size report. */
+export function ArchiveSizeDetails({ report }: { report: ArchiveSizeReport }) {
+  return (
+    <>
+      <p>
+        {formatBytes(report.totalBytes)} in total; assets take {formatPercent(report.assetShare)}.{" "}
+        {report.measured === "saved"
+          ? "Measured on the saved archive."
+          : "Measured on a snapshot that includes unsaved changes."}
+      </p>
+      {report.overCloudLimit ? (
+        <div className="error" role="alert">
+          <b>Over the cloud limit</b>
+          <span>
+            This archive is larger than {formatBytes(report.cloudLimitBytes)}. It keeps working
+            locally but cannot sync to ixtable Cloud until it is smaller.
+          </span>
+        </div>
+      ) : (
+        <p>Within the {formatBytes(report.cloudLimitBytes)} cloud limit.</p>
+      )}
+      <dl className="size-breakdown" aria-label="Archive size by section">
+        {SECTIONS.map(([key, label]) => (
+          <div key={key}>
+            <dt>{label}</dt>
+            <dd>{formatBytes(report[key])}</dd>
+          </div>
+        ))}
+      </dl>
+      <h4>Largest entries</h4>
+      <ol className="size-largest" aria-label="Largest archive entries">
+        {report.largest.map((entry) => (
+          <li key={`${entry.section}-${entry.id}`}>
+            <span>{entry.name}</span>
+            <small>{entry.section}</small>
+            <b>{formatBytes(entry.bytes)}</b>
+          </li>
+        ))}
+      </ol>
+    </>
   );
 }

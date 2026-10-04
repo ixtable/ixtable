@@ -117,7 +117,7 @@ export function ListView({ form, onOpen, onCreate }: Props) {
     booleans.has(column) ? (
       <BooleanCell value={record[column]} />
     ) : (
-      (lookup(column, record[column]) ?? cellText(record[column], controlFor(column)))
+      (lookup(column, record) ?? cellText(record[column], controlFor(column)))
     );
   const subject = isDesignedForm(config, detail)
     ? { kind: "form", id: detail.id }
@@ -232,7 +232,7 @@ export function ListView({ form, onOpen, onCreate }: Props) {
               key={index}
               tabIndex={0}
               className="rt-row"
-              aria-label={`Open ${record[columns[0]] == null ? `row ${offset + index + 1}` : (lookup(columns[0], record[columns[0]]) ?? String(record[columns[0]]))}`}
+              aria-label={`Open ${record[columns[0]] == null ? `row ${offset + index + 1}` : (lookup(columns[0], record) ?? String(record[columns[0]]))}`}
               onClick={(event) => open(index, event.currentTarget)}
               onKeyDown={(event) => {
                 if (event.key === "Enter" || event.key === " ") {

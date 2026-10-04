@@ -194,7 +194,14 @@ fn check_control(config: &DocumentConfig, form: &Form, control: &Control, out: &
             Some(r)
                 if !r.table.is_empty()
                     && !r.value_column.is_empty()
-                    && !r.display_column.is_empty() => {}
+                    && !r.display_column.is_empty() =>
+            {
+                if !keys_complete(&r.keys) {
+                    error(format!(
+                        "relationship selector \"{label}\" has a key column without a target"
+                    ));
+                }
+            }
             _ => error(format!(
                 "relationship selector \"{label}\" needs a table, value column, and display column"
             )),
@@ -228,6 +235,11 @@ fn check_control(config: &DocumentConfig, form: &Form, control: &Control, out: &
                     && !r.foreign_key.is_empty()
                     && !r.parent_column.is_empty() =>
             {
+                if !keys_complete(&r.keys) {
+                    error(format!(
+                        "related list \"{label}\" has a key column without a parent column"
+                    ));
+                }
                 if let Some(child) = &r.form_id {
                     if !config.design.forms.iter().any(|f| &f.id == child) {
                         error(format!(
@@ -446,7 +458,11 @@ pub fn validate_tables(
                 }
             }
             if let Some(r) = &control.relationship {
-                for column in [&r.value_column, &r.display_column] {
+                let targets = r.keys.iter().map(|k| &k.target);
+                for column in [&r.value_column, &r.display_column]
+                    .into_iter()
+                    .chain(targets)
+                {
                     if !has(&r.table, Some(column)) {
                         error(format!(
                             "\"{}\" looks up {}.{column}, which does not exist",
@@ -454,13 +470,32 @@ pub fn validate_tables(
                         ));
                     }
                 }
+                if let Some(table) = table.filter(|t| has(t, None)) {
+                    for key in r.keys.iter().filter(|k| !has(table, Some(&k.column))) {
+                        error(format!(
+                            "\"{}\" writes {table}.{}, which does not exist",
+                            control.label, key.column
+                        ));
+                    }
+                }
             }
             if let Some(r) = &control.related {
-                if !has(&r.table, Some(&r.foreign_key)) {
-                    error(format!(
-                        "\"{}\" lists {}.{}, which does not exist",
-                        control.label, r.table, r.foreign_key
-                    ));
+                let keys = r.keys.iter().map(|k| &k.column);
+                for column in std::iter::once(&r.foreign_key).chain(keys) {
+                    if !has(&r.table, Some(column)) {
+                        error(format!(
+                            "\"{}\" lists {}.{column}, which does not exist",
+                            control.label, r.table
+                        ));
+                    }
+                }
+                if let Some(table) = table.filter(|t| has(t, None)) {
+                    for key in r.keys.iter().filter(|k| !has(table, Some(&k.target))) {
+                        error(format!(
+                            "\"{}\" links to {table}.{}, which does not exist",
+                            control.label, key.target
+                        ));
+                    }
                 }
             }
         }
@@ -506,4 +541,10 @@ pub fn validate_document_design(window: &str) -> Result<Vec<Issue>, crate::manag
     let mut issues = validate(&config);
     issues.extend(table_issues(window, &config)?);
     Ok(issues)
+}
+
+/// A multi-column key is complete when every pair names both columns.
+fn keys_complete(keys: &[super::KeyPair]) -> bool {
+    keys.iter()
+        .all(|k| !k.column.is_empty() && !k.target.is_empty())
 }

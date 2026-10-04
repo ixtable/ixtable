@@ -25,13 +25,29 @@ export interface RecordWriteMeta {
    * retrying the same write passes the same id, so async triggers dedupe it.
    */
   writeId?: string;
+  /** Marks the write as a step of an app-mode trigger (see src-tauri/src/trigger_auth.rs). */
+  trigger?: TriggerStepAuth;
+}
+
+/** What an app-mode trigger presents to Rust: its sync grant, or its job lease. */
+export interface TriggerAuth {
+  triggerId: string;
+  grant?: string;
+  jobId?: string;
+  leaseToken?: string;
+}
+export type TriggerStepAuth = TriggerAuth & { stepId: string };
+
+/** Extra outcome of a committed write: the grant for its app-mode sync triggers. */
+export interface WriteExtra {
+  triggerGrant?: string;
 }
 
 export interface RecordHook {
   // Runs before the write; throwing aborts it.
   before?: (write: RecordWrite) => void | Promise<void>;
   // Runs after the write commits, with the command result.
-  after?: (write: RecordWrite, result: unknown) => void | Promise<void>;
+  after?: (write: RecordWrite, result: unknown, extra?: WriteExtra) => void | Promise<void>;
 }
 
 const hooks = new Set<RecordHook>();
@@ -49,19 +65,40 @@ function withWriteId(record: RecordWrite): RecordWrite {
   return record.meta?.writeId ? record : { ...record, meta: { ...record.meta, writeId: newId() } };
 }
 
-async function write<T>(input: RecordWrite, run: () => Promise<T>): Promise<T> {
+interface Outcome {
+  changed: number;
+  identity?: DataValue[] | null;
+  triggerGrant?: string;
+}
+
+const toOp = ({ operation, table, values, identity, meta }: RecordWrite) =>
+  operation === "insert"
+    ? { op: "insert", table, values }
+    : operation === "update"
+      ? { op: "update", table, values, identity, expected: meta?.expected ?? null }
+      : { op: "delete", table, identity, expected: meta?.expected ?? null };
+
+const resultOf = (record: RecordWrite, outcome: Outcome | undefined) =>
+  record.operation === "insert" ? (outcome?.identity ?? []) : (outcome?.changed ?? 0);
+
+async function write<T>(input: RecordWrite, send: (record: RecordWrite) => Promise<Outcome>) {
   const record = withWriteId(input);
   const active = [...hooks];
   for (const hook of active) await hook.before?.(record);
-  const result = await run();
-  for (const hook of active) await hook.after?.(record, result);
+  const outcome = await send(record);
+  const result = resultOf(record, outcome) as T;
+  const extra = outcome?.triggerGrant ? { triggerGrant: outcome.triggerGrant } : undefined;
+  for (const hook of active) await hook.after?.(record, result, extra);
   return result;
 }
 
+const trigger = (record: RecordWrite) => record.meta?.trigger ?? null;
+
 /** Inserts a row and resolves with the new row's identity values. */
 export const insertRecord = (table: string, values: NamedValue[], meta?: RecordWriteMeta) =>
-  write({ operation: "insert", table, values, identity: null, ...(meta && { meta }) }, () =>
-    call<DataValue[]>("insert_row", { table, values }),
+  write<DataValue[]>(
+    { operation: "insert", table, values, identity: null, ...(meta && { meta }) },
+    (record) => call<Outcome>("insert_row", { table, values, trigger: trigger(record) }),
   );
 
 /** Updates one row by identity and resolves with the affected row count. */
@@ -71,20 +108,26 @@ export const updateRecord = (
   identity: DataValue[],
   meta?: RecordWriteMeta,
 ) =>
-  write({ operation: "update", table, values, identity, ...(meta && { meta }) }, () =>
-    call<number>("update_row", { table, values, identity, expected: meta?.expected ?? null }),
+  write<number>({ operation: "update", table, values, identity, ...(meta && { meta }) }, (record) =>
+    call<Outcome>("update_row", {
+      table,
+      values,
+      identity,
+      expected: meta?.expected ?? null,
+      trigger: trigger(record),
+    }),
   );
 
 /** Deletes one row by identity and resolves with the affected row count. */
 export const deleteRecord = (table: string, identity: DataValue[], meta?: RecordWriteMeta) =>
-  write({ operation: "delete", table, values: [], identity, ...(meta && { meta }) }, () =>
-    call<number>("delete_row", { table, identity, expected: meta?.expected ?? null }),
+  write<number>({ operation: "delete", table, values: [], identity, ...(meta && { meta }) }, (record) =>
+    call<Outcome>("delete_row", {
+      table,
+      identity,
+      expected: meta?.expected ?? null,
+      trigger: trigger(record),
+    }),
   );
-
-interface BatchOutcome {
-  changed: number;
-  identity?: DataValue[] | null;
-}
 
 /**
  * Applies several writes as one RecordStore transaction (`execute_write_batch`):
@@ -96,18 +139,15 @@ export async function writeRecordBatch(input: RecordWrite[]): Promise<unknown[]>
   const writes = input.map(withWriteId);
   const active = [...hooks];
   for (const record of writes) for (const hook of active) await hook.before?.(record);
-  const ops = writes.map(({ operation, table, values, identity, meta }) =>
-    operation === "insert"
-      ? { op: "insert", table, values }
-      : operation === "update"
-        ? { op: "update", table, values, identity, expected: meta?.expected ?? null }
-        : { op: "delete", table, identity, expected: meta?.expected ?? null },
-  );
-  const outcomes = await call<BatchOutcome[]>("execute_write_batch", { ops });
-  const results = writes.map((record, i) =>
-    record.operation === "insert" ? (outcomes[i]?.identity ?? []) : (outcomes[i]?.changed ?? 0),
-  );
-  for (const [i, record] of writes.entries())
-    for (const hook of active) await hook.after?.(record, results[i]);
+  const outcomes = await call<Outcome[]>("execute_write_batch", {
+    ops: writes.map(toOp),
+    triggers: writes.map((w) => w.meta?.trigger ?? null),
+  });
+  const results = writes.map((record, i) => resultOf(record, outcomes[i]));
+  for (const [i, record] of writes.entries()) {
+    const grant = outcomes[i]?.triggerGrant;
+    for (const hook of active)
+      await hook.after?.(record, results[i], grant ? { triggerGrant: grant } : undefined);
+  }
   return results;
 }

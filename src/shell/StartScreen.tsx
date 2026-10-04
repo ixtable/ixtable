@@ -134,7 +134,7 @@ export function StartScreen({
         )}
         {notice && (
           <div className="notice">
-            <span>{notice}</span>
+            <span className="cloud-update-notice">{notice}</span>
             <button aria-label="Dismiss" onClick={() => setNotice("")}>
               <X />
             </button>

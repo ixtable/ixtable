@@ -1,6 +1,6 @@
 import { runQuery } from "../automation/runner";
 import type { DesignForm, Relationship } from "../design/schema";
-import { inspectTable, readTablePage } from "../lib/api";
+import { inspectTable, listDatabaseObjects, readTablePage } from "../lib/api";
 import { registerRecordHook } from "../lib/records";
 import type { DataValue, DocumentConfig, Filter, Sort, TableSchema } from "../lib/types";
 import {
@@ -51,6 +51,27 @@ export function tableSchema(table: string): Promise<TableSchema> {
     schemas.set(table, hit);
   }
   return hit;
+}
+
+/**
+ * A table with what generated forms need around it: the tables its foreign keys point at
+ * (lookup display columns) and the tables pointing at it (one-level related lists).
+ */
+export async function tableContext(table: string) {
+  const schema = await tableSchema(table);
+  const objects = await listDatabaseObjects();
+  const known = (
+    await Promise.all(
+      objects
+        .filter((object) => object.objectType === "table")
+        .map((object) => tableSchema(object.name).catch(() => null)),
+    )
+  ).filter((other): other is TableSchema => !!other);
+  return {
+    schema,
+    targets: Object.fromEntries(known.map((other) => [other.name, other])),
+    children: known.filter((other) => other.foreignKeys.some((fk) => fk.targetTable === table)),
+  };
 }
 
 const pageKey = (form: DesignForm, request: PageRequest, scope: Record<string, unknown>) =>
@@ -245,7 +266,21 @@ export async function loadRecord(table: string, recordId: unknown): Promise<Load
   return { record: rowObject(page.columns, page.rows[0]), identity: page.identities[0] };
 }
 
-export type Choice = { value: unknown; label: string };
+/** A choice; relationship choices also carry the target record (multi-column keys). */
+export type Choice = { value: unknown; label: string; record?: RecordValues };
+
+/**
+ * A relationship key: the stored value of a single-column key, or target column → value
+ * for a multi-column key. Empty when any part is missing.
+ */
+export type RelationshipKey = unknown;
+const emptyKey = (value: RelationshipKey) =>
+  value == null ||
+  value === "" ||
+  (typeof value === "object" &&
+    Object.values(value as RecordValues).some((part) => part == null || part === ""));
+const keyText = (value: RelationshipKey) =>
+  typeof value === "object" ? JSON.stringify(value) : String(value);
 
 /**
  * Lookup choices for a relationship selector, searched on the display column (DuckDB).
@@ -273,6 +308,7 @@ export async function relationshipChoices(
   const toChoice = (record: RecordValues): Choice => ({
     value: record[valueColumn],
     label: String(record[displayColumn] ?? record[valueColumn] ?? ""),
+    record,
   });
   if (!keep) {
     const page = await readTablePage(table, { limit, filters, sorts });
@@ -289,36 +325,37 @@ export async function relationshipChoices(
   return scan.matches.slice(0, limit).map(toChoice);
 }
 
-/** Display label for one stored relationship value. */
+/** Display label for one stored relationship key. */
 export async function relationshipLabel(
   relationship: Relationship,
-  value: unknown,
+  value: RelationshipKey,
 ): Promise<string> {
-  if (value == null || value === "") return "";
-  const hit = await loadRecord(relationship.table, { [relationship.valueColumn]: value }).catch(
-    () => null,
-  );
-  const label = hit ? String(hit.record[relationship.displayColumn] ?? value) : String(value);
+  if (emptyKey(value)) return "";
+  const keys =
+    typeof value === "object" ? (value as RecordValues) : { [relationship.valueColumn]: value };
+  const hit = await loadRecord(relationship.table, keys).catch(() => null);
+  const shown = hit?.record[relationship.displayColumn];
+  const label = shown != null ? String(shown) : typeof value === "object" ? "" : String(value);
   shownLabels.set(labelKey(relationship, value), label);
   return label;
 }
 
 /** Last label shown per relationship key, so a reloaded field shows it while it revalidates. */
 const shownLabels = new Map<string, string>();
-const labelKey = (relationship: Relationship, value: unknown) =>
+const labelKey = (relationship: Relationship, value: RelationshipKey) =>
   JSON.stringify([
     relationship.table,
     relationship.valueColumn,
     relationship.displayColumn,
-    String(value),
+    keyText(value),
   ]);
 
 /** The label `relationshipLabel` last returned for this key, if any (stale-while-revalidate). */
 export function cachedRelationshipLabel(
   relationship: Relationship,
-  value: unknown,
+  value: RelationshipKey,
 ): string | undefined {
-  if (value == null || value === "") return "";
+  if (emptyKey(value)) return "";
   return shownLabels.get(labelKey(relationship, value));
 }
 

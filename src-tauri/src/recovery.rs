@@ -34,26 +34,51 @@ fn storage_error(e: impl ToString) -> AppError {
     AppError::new("IO_ERROR", e)
 }
 
+/// Loads the workspace config from `document.json`, falling back to `config.yaml`
+/// when `document.json` is missing or unreadable (both are written as a pair, so
+/// either one holds the latest or the previous config).
+pub fn workspace_config(work: &Path) -> Result<DocumentConfig, String> {
+    let from_json = fs::read(work.join("document.json"))
+        .map_err(|e| format!("document.json is missing: {e}"))
+        .and_then(|json| {
+            serde_json::from_slice::<DocumentConfig>(&json)
+                .map_err(|e| format!("document.json is invalid: {e}"))
+        })
+        .and_then(|c| c.upgrade().map_err(|e| e.to_string()))
+        .and_then(|c| c.design.validate().map(|_| c));
+    let json_error = match from_json {
+        Ok(config) => return Ok(config),
+        Err(e) => e,
+    };
+    let yaml = fs::read_to_string(work.join("config.yaml"))
+        .map_err(|e| format!("{json_error}; config.yaml is missing: {e}"))?;
+    let config = crate::archive::document_config_from_yaml(&yaml)
+        .map_err(|e| format!("{json_error}; config.yaml is invalid: {e}"))?;
+    logging::warn(
+        "recovery",
+        &format!("{json_error}; recovered the config from config.yaml"),
+    );
+    Ok(config)
+}
+
 /// Checks that a leftover workspace can be reopened: `data.db` passes SQLite's
-/// integrity check, `document.json` loads, and every asset matches its checksum.
+/// integrity check, the config loads (see [`workspace_config`]), and every asset matches its checksum.
 pub fn validate_workspace(work: &Path, record: &RecoveryRecord) -> Result<ArchiveDocument, String> {
     let db = work.join("data.db");
     if !db.is_file() {
         return Err("data.db is missing".into());
     }
-    let integrity: String = Connection::open_with_flags(&db, OpenFlags::SQLITE_OPEN_READ_ONLY)
+    // Read-write (never create): a crash mid-transaction leaves a hot rollback
+    // journal, and only a writable connection may roll it back. Read-only opens
+    // fail with SQLITE_READONLY_ROLLBACK and would reject recoverable work.
+    let flags = OpenFlags::SQLITE_OPEN_READ_WRITE | OpenFlags::SQLITE_OPEN_NO_MUTEX;
+    let integrity: String = Connection::open_with_flags(&db, flags)
         .and_then(|c| c.query_row("PRAGMA integrity_check", [], |r| r.get(0)))
         .map_err(|e| format!("data.db is not a valid database: {e}"))?;
     if integrity != "ok" {
         return Err(format!("data.db failed its integrity check: {integrity}"));
     }
-    let json = fs::read(work.join("document.json"))
-        .map_err(|e| format!("document.json is missing: {e}"))?;
-    let config = serde_json::from_slice::<DocumentConfig>(&json)
-        .map_err(|e| format!("document.json is invalid: {e}"))?
-        .upgrade()
-        .map_err(|e| e.to_string())?;
-    config.design.validate()?;
+    let config = workspace_config(work)?;
     let metadata = match fs::read(work.join("archive.json")) {
         Ok(bytes) => serde_json::from_slice::<ArchiveMetadata>(&bytes)
             .map_err(|e| format!("archive.json is invalid: {e}"))?,
@@ -500,6 +525,103 @@ mod tests {
     }
 
     #[test]
+    fn a_truncated_or_missing_config_file_falls_back_to_its_twin() {
+        let (work, record) = workspace();
+        let json = fs::read(work.join("document.json")).unwrap();
+        fs::write(work.join("document.json"), &json[..json.len() / 2]).unwrap();
+        assert_eq!(
+            validate_workspace(&work, &record).unwrap().config.name,
+            "WIP"
+        );
+        fs::remove_file(work.join("document.json")).unwrap();
+        assert_eq!(
+            validate_workspace(&work, &record).unwrap().config.name,
+            "WIP"
+        );
+        fs::write(work.join("document.json"), &json).unwrap();
+        fs::write(work.join("config.yaml"), b"").unwrap();
+        assert_eq!(
+            validate_workspace(&work, &record).unwrap().config.name,
+            "WIP"
+        );
+        fs::remove_dir_all(work).unwrap();
+    }
+
+    #[test]
+    fn config_files_are_replaced_atomically() {
+        let (work, _) = workspace();
+        let config = DocumentConfig {
+            name: "Next".into(),
+            ..Default::default()
+        };
+        archive_io::write_config_files(&work, &config).unwrap();
+        assert_eq!(workspace_config(&work).unwrap().name, "Next");
+        let leftovers: Vec<_> = fs::read_dir(&work)
+            .unwrap()
+            .filter_map(Result::ok)
+            .filter(|e| e.file_name().to_string_lossy().ends_with(".tmp"))
+            .collect();
+        assert!(leftovers.is_empty());
+        fs::remove_dir_all(work).unwrap();
+    }
+
+    #[test]
+    fn a_hot_journal_from_a_crash_is_rolled_back_not_rejected() {
+        let (work, record) = workspace();
+        let crashed = std::env::temp_dir().join(format!("ixtable-hot-{}", uuid::Uuid::new_v4()));
+        copy_dir(&work, &crashed);
+        // A transaction large enough to spill pages into data.db before commit.
+        let c = Connection::open(work.join("data.db")).unwrap();
+        c.execute_batch(
+            "PRAGMA cache_size=1; BEGIN; CREATE TABLE big(x TEXT);
+             WITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i + 1 FROM n WHERE i < 2000)
+             INSERT INTO big SELECT printf('%0500d', i) FROM n;",
+        )
+        .unwrap();
+        let journal = work.join("data.db-journal");
+        assert!(
+            journal.is_file(),
+            "the open transaction keeps a rollback journal"
+        );
+        // Copying mid-transaction is what a crash leaves behind: no lock, a hot journal.
+        fs::copy(work.join("data.db"), crashed.join("data.db")).unwrap();
+        fs::copy(&journal, crashed.join("data.db-journal")).unwrap();
+        drop(c);
+        let record = RecoveryRecord {
+            workspace: crashed.to_string_lossy().into(),
+            ..record
+        };
+        validate_workspace(&crashed, &record).unwrap();
+        let rows: i64 = Connection::open(crashed.join("data.db"))
+            .unwrap()
+            .query_row("SELECT count(*) FROM item", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(rows, 1, "committed rows survive");
+        let big: i64 = Connection::open(crashed.join("data.db"))
+            .unwrap()
+            .query_row(
+                "SELECT count(*) FROM sqlite_schema WHERE name = 'big'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(big, 0, "the uncommitted transaction is rolled back");
+        fs::remove_dir_all(work).unwrap();
+        fs::remove_dir_all(crashed).unwrap();
+    }
+
+    fn copy_dir(from: &Path, to: &Path) {
+        fs::create_dir_all(to).unwrap();
+        for e in fs::read_dir(from).unwrap().filter_map(Result::ok) {
+            if e.path().is_dir() {
+                copy_dir(&e.path(), &to.join(e.file_name()));
+            } else {
+                fs::copy(e.path(), to.join(e.file_name())).unwrap();
+            }
+        }
+    }
+
+    #[test]
     fn invalid_wip_is_reported_not_loaded() {
         let (work, record) = workspace();
         let id = validate_workspace(&work, &record).unwrap().attachments[0]
@@ -510,9 +632,10 @@ mod tests {
             .unwrap_err()
             .contains("failed checksum validation"));
         fs::write(work.join("document.json"), b"{\"name\":").unwrap();
-        assert!(validate_workspace(&work, &record)
-            .unwrap_err()
-            .contains("document.json is invalid"));
+        fs::write(work.join("config.yaml"), b"name: [").unwrap();
+        let err = validate_workspace(&work, &record).unwrap_err();
+        assert!(err.contains("document.json is invalid"), "{err}");
+        assert!(err.contains("config.yaml is invalid"), "{err}");
         fs::write(work.join("data.db"), b"not sqlite at all, just text").unwrap();
         assert!(validate_workspace(&work, &record)
             .unwrap_err()

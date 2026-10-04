@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { humanize } from "../design/generate";
-import type { DesignControl, DesignForm, FormMode } from "../design/schema";
+import { type DesignControl, type DesignForm, type FormMode, relatedKeys } from "../design/schema";
 import { readTablePage } from "../lib/api";
 import { useDocumentConfig } from "../lib/config-store";
 import { deleteRecord } from "../lib/records";
@@ -31,10 +31,19 @@ const RELATED_LIMIT = 200;
 type Editing = { mode: FormMode; recordId?: unknown } | null;
 
 /**
- * One-level master/detail: child rows whose foreign key matches the current record, kept
- * by the related list's `filter` expression (`record` is the child, `parent` the parent).
+ * One-level master/detail: child rows whose key columns match the current record, kept by
+ * the related list's `filter` expression (`record` is the child, `parent` the parent).
+ * `disabled` (the control's or a container's `enabledWhen`) makes the list read-only.
  */
-export function RelatedRecords({ ctx, control }: { ctx: BodyContext; control: DesignControl }) {
+export function RelatedRecords({
+  ctx,
+  control,
+  disabled = false,
+}: {
+  ctx: BodyContext;
+  control: DesignControl;
+  disabled?: boolean;
+}) {
   const related = control.related;
   const { config } = useDocumentConfig();
   const { roleId } = useRuntimeNavigation();
@@ -45,7 +54,10 @@ export function RelatedRecords({ ctx, control }: { ctx: BodyContext; control: De
   // Messages of the embedded child form, shown here because that form closes on save.
   const [message, setMessage] = useState("");
   const [dialog, confirm] = useConfirm();
-  const parentValue = related ? ctx.scope.record[related.parentColumn] : null;
+  const keys = related ? relatedKeys(related) : [];
+  // Child column → the parent record's value it must equal.
+  const link = Object.fromEntries(keys.map((key) => [key.column, ctx.scope.record[key.target]]));
+  const linkSignature = JSON.stringify(link);
   const childForm: DesignForm | null = !related
     ? null
     : related.formId
@@ -57,14 +69,14 @@ export function RelatedRecords({ ctx, control }: { ctx: BodyContext; control: De
     ? []
     : related.columns.length
       ? related.columns
-      : (schema?.columns.map((c) => c.name).filter((c) => c !== related.foreignKey) ?? []);
+      : (schema?.columns.map((c) => c.name).filter((c) => !(c in link)) ?? []);
   const lookup = useLookupLabels(
     related?.table ?? null,
     columns,
     (column) => childForm?.controls.find((c) => c.binding?.column === column),
     rows?.records,
   );
-  const saved = !!ctx.identity && parentValue != null;
+  const saved = !!ctx.identity && keys.length > 0 && keys.every((key) => link[key.column] != null);
   // Keyed on the values the filter reads, and debounced, so typing in the parent form
   // reloads the list only when a referenced field settles on a new value.
   const filterKey = useDebounced(
@@ -85,20 +97,15 @@ export function RelatedRecords({ ctx, control }: { ctx: BodyContext; control: De
     if (!related || !saved) return;
     try {
       const child = await tableSchema(related.table);
-      const fk = child.columns.find((c) => c.name === related.foreignKey);
+      const values = JSON.parse(linkSignature) as Record<string, unknown>;
+      const filters = Object.entries(values).map(([column, value]) => ({
+        column,
+        operator: "eq" as const,
+        value: toColumnValue(value, child.columns.find((c) => c.name === column)?.declaredType),
+      }));
       const keep = filterScope && rowFilter(related.filter, filterScope);
       const read = async (offset: number, limit: number) => {
-        const page = await readTablePage(related.table, {
-          offset,
-          limit,
-          filters: [
-            {
-              column: related.foreignKey,
-              operator: "eq",
-              value: toColumnValue(parentValue, fk?.declaredType),
-            },
-          ],
-        });
+        const page = await readTablePage(related.table, { offset, limit, filters });
         return page.rows.map((row, i) => ({
           record: rowObject(page.columns, row),
           identity: page.identities[i],
@@ -119,7 +126,7 @@ export function RelatedRecords({ ctx, control }: { ctx: BodyContext; control: De
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : String(reason));
     }
-  }, [related, saved, parentValue, filterScope]);
+  }, [related, saved, linkSignature, filterScope]);
   useEffect(() => {
     load().catch(() => undefined);
   }, [load]);
@@ -138,7 +145,7 @@ export function RelatedRecords({ ctx, control }: { ctx: BodyContext; control: De
       ? { kind: "form", id: childForm.id }
       : { kind: "table", id: related.table };
   const allowed = (op: "create" | "update" | "delete") =>
-    can(config, roleId, subject.kind, subject.id, op);
+    !disabled && can(config, roleId, subject.kind, subject.id, op);
   const booleanColumn = (column: string) =>
     isBooleanColumn(
       childForm?.controls.filter((c) => c.binding?.column === column) ?? [],
@@ -219,7 +226,7 @@ export function RelatedRecords({ ctx, control }: { ctx: BodyContext; control: De
                   {booleanColumn(column) ? (
                     <BooleanCell value={record[column]} />
                   ) : (
-                    (lookup(column, record[column]) ?? displayText(record[column]))
+                    (lookup(column, record) ?? displayText(record[column]))
                   )}
                 </td>
               ))}
@@ -261,13 +268,13 @@ export function RelatedRecords({ ctx, control }: { ctx: BodyContext; control: De
           )}
         </tbody>
       </table>
-      {editing && childForm && (
+      {editing && childForm && !disabled && (
         <div className="rt-embedded" role="group" aria-label={`${label} record`}>
           <FormRenderer
             formId={childForm.id}
             mode={editing.mode}
             recordId={editing.recordId}
-            link={{ column: related.foreignKey, value: parentValue }}
+            link={link}
             embedded
             onNotify={(text, tone) => {
               if (tone === "error") setError(text);

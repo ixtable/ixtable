@@ -164,7 +164,7 @@ function LoadedPreview({
         creationDate: result.generatedAt,
         assets,
       });
-      await writeReportPdf(path, bytes);
+      await writeReportPdf(path, bytes, report.id);
       setNotice(`Exported PDF to ${path}`);
     } catch (reason) {
       setError(asTauriError(reason).message);

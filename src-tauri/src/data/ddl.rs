@@ -393,6 +393,7 @@ fn parse_column(b: &mut Parser, table: &mut TableDef) -> Result<(), String> {
         nullable: true,
         default_expression: None,
         generated_expression: None,
+        identity: false,
     };
     while b.peek().is_some() && !b.punct(',') {
         let mut constraint_name = None;

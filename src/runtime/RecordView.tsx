@@ -11,11 +11,13 @@ import { loadRecord, recordIdFor, tableSchema } from "./data";
 import {
   compute,
   defaultRecord,
+  disabledColumns,
   type FormErrors,
   type FormScope,
   hasErrors,
   validateControl,
   validateForm,
+  enabledControls,
   visibleControls,
 } from "./formState";
 import { useRuntimeNavigation } from "./navigation";
@@ -23,7 +25,8 @@ import { can, PermissionError } from "./rbac";
 import { isDesignedForm } from "./registry";
 import { fromDataValue, namedValues, type RecordValues, sameValue } from "./values";
 
-export type Link = { column: string; value: unknown };
+/** Column values fixed by a parent record (a related list's foreign-key columns). */
+export type Link = Record<string, unknown>;
 export type OpenTarget = { formId: string; mode: FormMode; recordId?: unknown };
 
 type Notice = { text: string; tone: "info" | "error" };
@@ -126,9 +129,10 @@ export function RecordView({
         .catch(() => undefined);
     if (mode === "create") {
       const initial = defaultRecord(form, { form: {}, app });
-      if (link) initial[link.column] = link.value;
+      Object.assign(initial, link);
       setRecord(initial);
-      setOriginal({});
+      // In create mode the defaults are the stored values a disabled field keeps.
+      setOriginal({ ...initial });
       setIdentity(null);
       done();
       return () => {
@@ -168,10 +172,11 @@ export function RecordView({
     [record, formState, app],
   );
   const visible = useMemo(() => visibleControls(form, scope), [form, scope]);
+  const enabled = useMemo(() => enabledControls(form, scope), [form, scope]);
   const readOnly = mode === "detail" || readOnlySource;
   const locked = useMemo(() => {
     const set = new Set<string>();
-    if (link) set.add(link.column);
+    for (const column of Object.keys(link ?? {})) set.add(column);
     if (mode === "edit" && schema)
       schema.columns.filter((c) => c.primaryKeyPosition > 0).forEach((c) => set.add(c.name));
     return set;
@@ -192,13 +197,20 @@ export function RecordView({
     });
   };
 
-  /** Record values to write: bound inputs plus derived (computed) bound fields. */
+  /**
+   * Record values to write: bound inputs plus derived (computed) bound fields. Fields whose
+   * controls are disabled keep their stored value (or default, when creating).
+   */
   const valuesToWrite = (): RecordValues => {
     const values: RecordValues = { ...record };
     for (const control of form.controls) {
       const column = control.binding?.column;
       if (column && control.computed && isInputKind(control.kind))
         values[column] = compute(control.computed, scope).value;
+    }
+    for (const column of disabledColumns(form, scope)) {
+      if (column in original) values[column] = original[column];
+      else delete values[column];
     }
     return values;
   };
@@ -229,34 +241,37 @@ export function RecordView({
       setStatus({ text: "Fix the highlighted problems before saving.", tone: "error" });
       return;
     }
-    if (!table || !schema) return;
+    if (!table) return;
     setNotice(null);
+    // Busy before any await, so a second press cannot start a second write.
     setBusy(true);
     try {
+      // Create can be pressed before the schema load finishes; wait for it instead of ignoring it.
+      const def = schema ?? (await tableSchema(table));
       const values = valuesToWrite();
       if (mode === "create") {
         if (!allowed("create")) throw new PermissionError("This role cannot create records here.");
         const keys = new Set(
-          schema.columns
+          def.columns
             .filter((c) => c.primaryKeyPosition > 0 && values[c.name] == null)
             .map((c) => c.name),
         );
-        const columns = schema.columns.filter(
+        const columns = def.columns.filter(
           (c) => !keys.has(c.name) && values[c.name] != null && !c.generated,
         );
         const id = await insertRecord(table, namedValues(values, columns));
-        const keyNames = schema.columns.filter((c) => c.primaryKeyPosition > 0).map((c) => c.name);
+        const keyNames = def.columns.filter((c) => c.primaryKeyPosition > 0).map((c) => c.name);
         const saved = { ...values };
         keyNames.forEach((name, i) => {
           if (saved[name] == null) saved[name] = fromDataValue(id[i]);
         });
         announce("Record created.");
         if (embedded) onClose();
-        else onMode("detail", recordIdFor(schema, saved, id));
+        else onMode("detail", recordIdFor(def, saved, id));
       } else {
         if (!allowed("update")) throw new PermissionError("This role cannot change records here.");
         if (!identity) throw new Error("This record cannot be identified for saving.");
-        const changed = schema.columns.filter(
+        const changed = def.columns.filter(
           (c) => !c.generated && c.name in values && !sameValue(values[c.name], original[c.name]),
         );
         if (changed.length)
@@ -318,6 +333,7 @@ export function RecordView({
     form,
     scope,
     visible,
+    enabled,
     errors: errors.fields,
     readOnly,
     locked,

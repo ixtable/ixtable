@@ -34,6 +34,7 @@ const { backupRow, decoders, invitationToken } = await import("../../src/cloud/c
 const { updateNotice } = await import("../../src/cloud/open");
 const { AcceptInvitation, SignInPanel } = await import("../../src/cloud/auth");
 const { InstallationBackups } = await import("../../src/cloud/InstallationBackups");
+const { UpdateDetails } = await import("../../src/release/UpdateConfirm");
 
 const DIR = join(__dirname, "..", "..", "web", "e2e", "service-qa", "fixtures", "contract");
 const recorded = (name: string) =>
@@ -97,13 +98,47 @@ describe("recorded replies the recipient features read", () => {
 });
 
 describe("post-update notice", () => {
-  it("names the version, the migrations that ran, and the release notes", async () => {
-    client.versionReleaseNotes.mockResolvedValue("Adds due dates.");
-    release.runtimeInstallationInfo.mockResolvedValue({ appliedMigrations: ["Add due dates"] });
+  it("names the version, the migrations that ran, and the release notes with their line breaks", async () => {
+    client.versionReleaseNotes.mockResolvedValue("Adds due dates.\nFixes totals.");
+    release.runtimeInstallationInfo.mockResolvedValue({
+      version: "2.0.0",
+      lastAction: "update",
+      appliedMigrations: ["Add due dates"],
+    });
     expect(await updateNotice("v2", "2.0.0")).toBe(
-      "Updated to version 2.0.0. Your records were kept. Migrations applied: Add due dates. Release notes: Adds due dates.",
+      "Updated to version 2.0.0. Your records were kept. Migrations applied: Add due dates.\nRelease notes:\nAdds due dates.\nFixes totals.",
     );
     expect(client.versionReleaseNotes).toHaveBeenCalledWith("v2");
+  });
+
+  it("does not repeat an earlier update when this apply changed nothing", async () => {
+    client.versionReleaseNotes.mockResolvedValue("Old notes.");
+    release.runtimeInstallationInfo.mockResolvedValue({
+      version: "2.0.0",
+      lastAction: "open",
+      appliedMigrations: [],
+    });
+    expect(await updateNotice("v2", "2.0.0")).toBe("Running version 2.0.0.");
+  });
+
+  it("keeps line breaks in the confirm step's release notes", () => {
+    render(<UpdateDetails releaseNotes={"First line.\nSecond line."} migrations={[]} />);
+    const notes = screen.getByText(/First line\./);
+    expect(notes.textContent).toBe("First line.\nSecond line.");
+    expect(notes).toHaveClass("release-notes");
+  });
+
+  it("explains an unavailable migration preview", () => {
+    render(
+      <UpdateDetails
+        releaseNotes=""
+        migrations={null}
+        migrationsUnavailable="file is not a database"
+      />,
+    );
+    expect(screen.getByRole("note")).toHaveTextContent(
+      "The migration preview is unavailable (file is not a database)",
+    );
   });
 
   it("still reports the update when notes and migrations cannot be read", async () => {

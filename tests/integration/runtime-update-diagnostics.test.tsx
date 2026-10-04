@@ -84,6 +84,18 @@ it("previews a protected update's notes and migrations, then shows jobs and logs
   });
   expect(objects.map((o) => o.name)).toContain("tags");
 
+  dialogMock.open.mockResolvedValueOnce(v1);
+  await user.click(within(bar).getByRole("button", { name: "Check for update…" }));
+  const older = await screen.findByRole(
+    "dialog",
+    { name: "Install older version 1.0.0 of Untitled?" },
+    LONG,
+  );
+  expect(within(older).getByText("No release notes.")).toBeInTheDocument();
+  expect(within(older).getByText("No migrations will run on your records.")).toBeInTheDocument();
+  await user.click(within(older).getByRole("button", { name: "Cancel" }));
+  expect(within(bar).getByText("Version 2.0.0")).toBeInTheDocument();
+
   await user.click(screen.getByRole("button", { name: "Diagnostics…" }));
   const diagnostics = await screen.findByRole("dialog", { name: "Diagnostics" }, LONG);
   expect(within(diagnostics).getByRole("tab", { name: "Background jobs" })).toHaveAttribute(

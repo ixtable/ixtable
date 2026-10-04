@@ -29,6 +29,16 @@ fn check_bundle_size(len: u64) -> Result<(), AppError> {
 
 /// Copies the chosen file into a private temporary location, then verifies it there.
 fn receive(root: &Path, path: &str) -> Result<SignedBundle, AppError> {
+    receive_checked(root, path, None).map(|(signed, _)| signed)
+}
+
+/// `receive`, also returning the file's sha256. With `expected_sha256` (from
+/// `inspect_runtime_bundle`), a file that changed since inspection is refused.
+fn receive_checked(
+    root: &Path,
+    path: &str,
+    expected_sha256: Option<&str>,
+) -> Result<(SignedBundle, String), AppError> {
     let missing = |e: std::io::Error| AppError::new("MISSING_FILE", format!("{path}: {e}"));
     check_bundle_size(fs::metadata(path).map_err(missing)?.len())?;
     let incoming = root.join(".incoming");
@@ -39,7 +49,14 @@ fn receive(root: &Path, path: &str) -> Result<SignedBundle, AppError> {
     check_bundle_size(fs::metadata(&tmp.0).map_err(io_err)?.len())?;
     let bytes = fs::read(&tmp.0).map_err(io_err)?;
     drop(tmp);
-    bundle::verify(&bytes)
+    let sha256 = bundle::sha256_hex(&bytes);
+    if expected_sha256.is_some_and(|e| !e.eq_ignore_ascii_case(&sha256)) {
+        return Err(AppError::new(
+            "BUNDLE_CHANGED",
+            "The bundle file changed after it was inspected. Open it again.",
+        ));
+    }
+    Ok((bundle::verify(&bytes)?, sha256))
 }
 
 /// Verifies signature, signer pin, and Runtime compatibility, then decrypts.
@@ -47,8 +64,9 @@ fn admit(
     root: &Path,
     path: &str,
     password: Option<&str>,
+    expected_sha256: Option<&str>,
 ) -> Result<(SignedBundle, Vec<u8>), AppError> {
-    let signed = receive(root, path)?;
+    let (signed, _) = receive_checked(root, path, expected_sha256)?;
     check_signer(root, &signed)?;
     bundle::check_runtime_compat(&signed.header, bundle::APP_VERSION)?;
     let archive = signed.archive_bytes(password)?;
@@ -101,17 +119,28 @@ pub fn inspect_runtime_bundle(
     path: String,
 ) -> Result<BundleSummary, AppError> {
     let _ = window_label;
-    let root = installations_root();
-    let signed = receive(&root, &path)?;
-    let installed = check_signer(&root, &signed)?;
+    inspect(&installations_root(), &path)
+}
+
+fn inspect(root: &Path, path: &str) -> Result<BundleSummary, AppError> {
+    let (signed, sha256) = receive_checked(root, path, None)?;
+    let installed = check_signer(root, &signed)?;
+    bundle::check_runtime_compat(&signed.header, bundle::APP_VERSION)?;
     let action = plan(&signed, installed.as_ref())?;
-    let pending_migrations = match action {
+    // Best effort: a preview failure never blocks opening; the UI shows why.
+    let (pending_migrations, migrations_unavailable) = match action {
         installation::Action::Update | installation::Action::Downgrade
             if !signed.header.flags.encrypted =>
         {
-            Some(pending_for(&root, &signed, &signed.archive_bytes(None)?)?)
+            match signed
+                .archive_bytes(None)
+                .and_then(|archive| pending_for(root, &signed, &archive))
+            {
+                Ok(list) => (Some(list), None),
+                Err(e) => (None, Some(e.message)),
+            }
         }
-        _ => None,
+        _ => (None, None),
     };
     let h = &signed.header;
     Ok(BundleSummary {
@@ -125,6 +154,8 @@ pub fn inspect_runtime_bundle(
         installed_version: installed.map(|i| i.version),
         action: format!("{action:?}").to_lowercase(),
         pending_migrations,
+        migrations_unavailable,
+        sha256,
     })
 }
 
@@ -150,7 +181,7 @@ pub fn preview_runtime_update(
 ) -> Result<Vec<PendingMigration>, AppError> {
     let _ = window_label;
     let root = installations_root();
-    let (signed, archive) = admit(&root, &path, password.as_deref())?;
+    let (signed, archive) = admit(&root, &path, password.as_deref(), None)?;
     pending_for(&root, &signed, &archive)
 }
 
@@ -162,8 +193,14 @@ pub fn open_runtime_bundle(
     path: String,
     password: Option<String>,
     allow_downgrade: Option<bool>,
+    expected_sha256: Option<String>,
 ) -> Result<SessionState, AppError> {
-    let (signed, archive) = admit(&installations_root(), &path, password.as_deref())?;
+    let (signed, archive) = admit(
+        &installations_root(),
+        &path,
+        password.as_deref(),
+        expected_sha256.as_deref(),
+    )?;
     install_and_open(
         &window_label,
         &signed,
@@ -174,15 +211,17 @@ pub fn open_runtime_bundle(
 
 /// Manual update of an installed bundle ("Check for update…"). The version must be newer
 /// unless `allow_downgrade`; installation records are kept and migrated.
+/// `expected_sha256` is the hash `inspect_runtime_bundle` returned for the file.
 #[tauri::command]
 pub fn update_runtime_installation(
     window_label: String,
     path: String,
     password: Option<String>,
     allow_downgrade: Option<bool>,
+    expected_sha256: String,
 ) -> Result<SessionState, AppError> {
     let root = installations_root();
-    let (signed, archive) = admit(&root, &path, password.as_deref())?;
+    let (signed, archive) = admit(&root, &path, password.as_deref(), Some(&expected_sha256))?;
     let m = crate::manager()?;
     if let Some(rt) = m
         .state(&window_label)
@@ -286,5 +325,87 @@ mod tests {
         );
         assert_eq!(fs::read_dir(root.join(".incoming")).unwrap().count(), 0);
         fs::remove_dir_all(root).unwrap();
+    }
+
+    struct Setup {
+        root: std::path::PathBuf,
+        key: ed25519_dalek::SigningKey,
+        doc: crate::archive::ArchiveDocument,
+    }
+
+    impl Setup {
+        fn new() -> Self {
+            let root = std::env::temp_dir().join(format!("ixtable-inspect-{}", Uuid::new_v4()));
+            fs::create_dir_all(&root).unwrap();
+            Self {
+                root,
+                key: ed25519_dalek::SigningKey::generate(&mut rand_core::OsRng),
+                doc: crate::archive::create_document("CRM").unwrap(),
+            }
+        }
+        fn write(&self, version: &str, min_runtime: Option<&str>) -> String {
+            let archive = bundle::archive_bytes(&self.doc, &self.root.join(".tmp")).unwrap();
+            let meta = bundle::BundleMeta {
+                bundle_id: self.doc.metadata.document_id.clone(),
+                name: "CRM".into(),
+                version: version.into(),
+                min_runtime_version: min_runtime.map(Into::into),
+                ..Default::default()
+            };
+            let bytes = bundle::build_bundle(&archive, &meta, None, &self.key).unwrap();
+            let path = self.root.join(format!("{version}-{}.ixtr", Uuid::new_v4()));
+            fs::write(&path, bytes).unwrap();
+            path.to_str().unwrap().to_string()
+        }
+        fn install(&self, version: &str) {
+            let signed = receive(&self.root, &self.write(version, None)).unwrap();
+            let archive = signed.archive_bytes(None).unwrap();
+            apply_bundle(&self.root, &signed, &archive, false).unwrap();
+        }
+    }
+
+    impl Drop for Setup {
+        fn drop(&mut self) {
+            let _ = fs::remove_dir_all(&self.root);
+        }
+    }
+
+    #[test]
+    fn inspect_reports_incompatible_runtime_before_reading_the_archive() {
+        let s = Setup::new();
+        s.install("1.0.0");
+        let err = inspect(&s.root, &s.write("2.0.0", Some("999.0.0"))).unwrap_err();
+        assert_eq!(err.code, "BUNDLE_INCOMPATIBLE");
+        assert!(err.message.contains("999.0.0"), "{}", err.message);
+    }
+
+    #[test]
+    fn inspect_survives_an_unreadable_migration_preview() {
+        let s = Setup::new();
+        s.install("1.0.0");
+        let dir = installation::installation_dir(&s.root, &s.doc.metadata.document_id).unwrap();
+        fs::write(dir.join("data.db"), b"not a database").unwrap();
+        let summary = inspect(&s.root, &s.write("2.0.0", None)).unwrap();
+        assert_eq!(summary.action, "update");
+        assert!(summary.pending_migrations.is_none());
+        assert!(summary.migrations_unavailable.is_some());
+        let ok = inspect(&s.root, &s.write("1.0.0", None)).unwrap();
+        assert!(ok.migrations_unavailable.is_none());
+    }
+
+    #[test]
+    fn apply_refuses_a_file_changed_after_inspection() {
+        let s = Setup::new();
+        let path = s.write("1.0.0", None);
+        let summary = inspect(&s.root, &path).unwrap();
+        assert_eq!(
+            summary.sha256,
+            bundle::sha256_hex(&fs::read(&path).unwrap())
+        );
+        assert!(admit(&s.root, &path, None, Some(&summary.sha256)).is_ok());
+        fs::copy(s.write("1.0.1", None), &path).unwrap();
+        let err = admit(&s.root, &path, None, Some(&summary.sha256)).unwrap_err();
+        assert_eq!(err.code, "BUNDLE_CHANGED");
+        assert!(err.message.contains("changed after it was inspected"));
     }
 }

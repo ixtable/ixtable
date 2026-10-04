@@ -5,16 +5,24 @@ import type { PendingMigration } from "./types";
 export function UpdateDetails({
   releaseNotes,
   migrations,
+  migrationsUnavailable,
 }: {
   releaseNotes: string;
-  migrations: PendingMigration[];
+  migrations: PendingMigration[] | null;
+  migrationsUnavailable?: string | null;
 }) {
   return (
     <>
       <h3>Release notes</h3>
-      <p className="release-notes">{releaseNotes.trim() || "No release notes."}</p>
+      <div className="release-notes">{releaseNotes.trim() || "No release notes."}</div>
       <h3>Migrations</h3>
-      {migrations.length === 0 ? (
+      {migrations === null ? (
+        <p role="note">
+          The migration preview is unavailable
+          {migrationsUnavailable ? ` (${migrationsUnavailable})` : ""}. Pending migrations still run
+          when you apply.
+        </p>
+      ) : migrations.length === 0 ? (
         <p>No migrations will run on your records.</p>
       ) : (
         <ul aria-label="Migrations">
@@ -33,13 +41,15 @@ export function UpdateDetails({
   );
 }
 
-/** Confirm step before a manual update is applied. */
+/** Confirm step before a manual update or downgrade is applied. */
 export function UpdateConfirm({
   name,
   version,
   installedVersion,
   releaseNotes,
   migrations,
+  migrationsUnavailable,
+  downgrade = false,
   busy,
   onApply,
   onCancel,
@@ -48,7 +58,9 @@ export function UpdateConfirm({
   version: string;
   installedVersion?: string | null;
   releaseNotes: string;
-  migrations: PendingMigration[];
+  migrations: PendingMigration[] | null;
+  migrationsUnavailable?: string | null;
+  downgrade?: boolean;
   busy: boolean;
   onApply: () => void;
   onCancel: () => void;
@@ -57,13 +69,19 @@ export function UpdateConfirm({
   return (
     <div className="bundle-password" role="dialog" aria-labelledby={titleId}>
       <h2 id={titleId}>
-        Update {name} to {version}?
+        {downgrade
+          ? `Install older version ${version} of ${name}?`
+          : `Update ${name} to ${version}?`}
       </h2>
       {installedVersion && <p>Installed version: {installedVersion}. Your records are kept.</p>}
-      <UpdateDetails releaseNotes={releaseNotes} migrations={migrations} />
+      <UpdateDetails
+        releaseNotes={releaseNotes}
+        migrations={migrations}
+        migrationsUnavailable={migrationsUnavailable}
+      />
       <div className="settings-actions">
         <button type="button" className="save" disabled={busy} onClick={onApply}>
-          Apply update
+          {downgrade ? `Install older version ${version} anyway` : "Apply update"}
         </button>
         <button type="button" onClick={onCancel}>
           Cancel

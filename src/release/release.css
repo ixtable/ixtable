@@ -157,6 +157,10 @@
 .runtime-diagnostics [aria-selected="true"] {
   font-weight: 700;
 }
+.release-notes {
+  white-space: pre-wrap;
+}
+
 .bundle-password pre {
   white-space: pre-wrap;
   max-height: 160px;

@@ -188,6 +188,31 @@ fn migrations_apply_to_installation_data_on_update() {
 }
 
 #[test]
+fn applied_migrations_record_only_the_latest_apply() {
+    let mut f = Fixture::new();
+    f.add_migration("m-email", "ALTER TABLE Customers ADD COLUMN email TEXT");
+    f.apply("1.0.0", false).unwrap();
+    let fresh = read_installed(&f.dir()).unwrap();
+    assert_eq!(fresh.last_action.as_deref(), Some("install"));
+    assert!(fresh.applied_migrations.is_empty());
+    f.add_migration("m-phone", "ALTER TABLE Customers ADD COLUMN phone TEXT");
+    f.apply("1.1.0", false).unwrap();
+    let updated = read_installed(&f.dir()).unwrap();
+    assert_eq!(updated.last_action.as_deref(), Some("update"));
+    assert_eq!(updated.applied_migrations, ["m-phone"]);
+    assert_eq!(f.apply("1.1.0", false).unwrap().1, Action::Open);
+    let reopened = read_installed(&f.dir()).unwrap();
+    assert_eq!(reopened.last_action.as_deref(), Some("open"));
+    assert!(reopened.applied_migrations.is_empty());
+    assert_eq!(reopened.version, "1.1.0");
+    f.apply("1.0.0", true).unwrap();
+    assert_eq!(
+        read_installed(&f.dir()).unwrap().last_action.as_deref(),
+        Some("downgrade")
+    );
+}
+
+#[test]
 fn pending_migrations_preview_what_an_update_will_run_without_writing() {
     use crate::installation_checks::pending_migrations;
     let mut f = Fixture::new();
@@ -291,7 +316,9 @@ thread_local! {
 
 #[test]
 fn windows_reserved_bundle_ids_are_rejected() {
-    for id in ["CON", "con", "Prn", "aux", "NUL", "COM1", "com9", "LPT1", "lpt9"] {
+    for id in [
+        "CON", "con", "Prn", "aux", "NUL", "COM1", "com9", "LPT1", "lpt9",
+    ] {
         assert!(installation_dir(Path::new("/tmp"), id).is_err(), "{id}");
     }
     for id in ["CON.txt", "nul.", "abc.", "abc "] {

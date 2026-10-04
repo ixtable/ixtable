@@ -45,6 +45,9 @@ pub struct InstalledBundle {
     /// Names of the migrations the last install or update ran on the records.
     #[serde(default)]
     pub applied_migrations: Vec<String>,
+    /// What the last apply did: `install`, `open`, `update`, or `downgrade`.
+    #[serde(default)]
+    pub last_action: Option<String>,
 }
 
 /// What opening a bundle would do, for the confirmation UI.
@@ -63,6 +66,10 @@ pub struct BundleSummary {
     pub action: String,
     /// Migrations an update would run; `None` if encrypted (`preview_runtime_update`) or not an update.
     pub pending_migrations: Option<Vec<crate::installation_checks::PendingMigration>>,
+    /// Why the migration preview could not be read (the bundle can still be applied).
+    pub migrations_unavailable: Option<String>,
+    /// sha256 of the inspected file; pass it back when applying.
+    pub sha256: String,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -290,6 +297,7 @@ fn info_for(signed: &SignedBundle, previous: Option<&InstalledBundle>) -> Instal
         updated_at: now,
         previous_version: previous.map(|p| p.version.clone()),
         applied_migrations: vec![],
+        last_action: Some("install".into()),
     }
 }
 
@@ -387,6 +395,17 @@ pub fn apply_bundle(
     let dir = installation_dir(root, &signed.header.bundle_id)?;
     let action = plan(signed, installed.as_ref())?;
     if action == Action::Open {
+        // Clear the previous update's record so it is not reported again.
+        if let Some(info) = installed.filter(|i| i.last_action.as_deref() != Some("open")) {
+            write_installed(
+                &dir,
+                &InstalledBundle {
+                    applied_migrations: vec![],
+                    last_action: Some("open".into()),
+                    ..info
+                },
+            )?;
+        }
         return Ok((dir, action));
     }
     if action == Action::Downgrade && !allow_downgrade {
@@ -409,7 +428,14 @@ pub fn apply_bundle(
     if action == Action::Install {
         install_fresh(root, &dir, signed, archive_bytes, &doc)?;
     } else {
-        update_existing(&dir, signed, archive_bytes, &doc.config, installed.as_ref())?;
+        update_existing(
+            &dir,
+            signed,
+            archive_bytes,
+            &doc.config,
+            installed.as_ref(),
+            action,
+        )?;
     }
     crate::logging::info(
         "bundle",
@@ -453,6 +479,7 @@ fn update_existing(
     archive_bytes: &[u8],
     config: &DocumentConfig,
     installed: Option<&InstalledBundle>,
+    action: Action,
 ) -> Result<(), AppError> {
     let failed = |e: String| {
         AppError::new(
@@ -474,6 +501,7 @@ fn update_existing(
         let applied_migrations = prepare(&staging, config).map_err(&failed)?;
         let info = InstalledBundle {
             applied_migrations,
+            last_action: Some(action.label().into()),
             ..info_for(signed, installed)
         };
         let retired = dir.join(format!(".retired-{}", Uuid::new_v4()));

@@ -126,9 +126,23 @@ it("exports from Studio, opens runtime-only, and updates while keeping runtime r
 
   dialogMock.open.mockResolvedValueOnce(v1);
   await user.click(screen.getByRole("button", { name: "Check for update…" }));
-  expect(await screen.findByText("BUNDLE_DOWNGRADE", {}, LONG)).toBeInTheDocument();
-  expect(screen.getByRole("button", { name: /Install older version 1.0.0 anyway/ })).toBeEnabled();
-});
+  const older = await screen.findByRole(
+    "dialog",
+    { name: /Install older version 1.0.0 of .*\?/ },
+    LONG,
+  );
+  await user.click(
+    within(older).getByRole("button", { name: "Install older version 1.0.0 anyway" }),
+  );
+  await waitFor(
+    () =>
+      expect(
+        within(screen.getByRole("region", { name: "Runtime bundle" })).getByText("Version 1.0.0"),
+      ).toBeInTheDocument(),
+    LONG,
+  );
+  expect(await customerNames()).toEqual(["Ada", "Runtime Rita"]);
+}, 120_000);
 
 it("asks for the password of a protected bundle and explains a wrong one", async () => {
   const user = await seedStudioDocument();

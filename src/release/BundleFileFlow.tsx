@@ -8,14 +8,19 @@ import { BundleError } from "./BundleError";
 import type { BundleSummary, PendingMigration } from "./types";
 import { UpdateConfirm } from "./UpdateConfirm";
 
-type Act = (path: string, password: string, allowDowngrade: boolean) => Promise<SessionState>;
+type Act = (
+  path: string,
+  password: string,
+  allowDowngrade: boolean,
+  sha256: string,
+) => Promise<SessionState>;
 type Pending = { path: string; summary: BundleSummary };
-type Confirm = Pending & { secret: string; migrations: PendingMigration[] };
+type Confirm = Pending & { secret: string; migrations: PendingMigration[] | null };
 
 /**
  * Choose a `.ixtr` file, verify it, ask for its password when protected, then run `act`
- * (open or update). An update first shows its release notes and pending migrations for
- * confirmation. Errors are explained per code; a downgrade needs a second, explicit click.
+ * (open or update). An update or downgrade first shows its release notes and pending
+ * migrations for confirmation; a downgrade is applied only from its explicit button.
  */
 export function BundleFileFlow({
   act,
@@ -49,7 +54,7 @@ export function BundleFileFlow({
     setBusy(true);
     setError(null);
     try {
-      const state = await act(pending.path, secret, allowDowngrade);
+      const state = await act(pending.path, secret, allowDowngrade, pending.summary.sha256);
       setPrompt(null);
       setDowngrade(null);
       setConfirm(null);
@@ -67,14 +72,16 @@ export function BundleFileFlow({
     }
   };
 
-  // Updates stop at the confirm step; everything else runs `act` right away.
+  // Updates and downgrades stop at the confirm step; everything else runs `act` right away.
   const proceed = async (pending: Pending, secret: string) => {
-    if (pending.summary.action !== "update") return attempt(pending, secret);
+    const { action, pendingMigrations, migrationsUnavailable } = pending.summary;
+    if (action !== "update" && action !== "downgrade") return attempt(pending, secret);
     setBusy(true);
     setError(null);
     try {
       const migrations =
-        pending.summary.pendingMigrations ?? (await previewRuntimeUpdate(pending.path, secret));
+        pendingMigrations ??
+        (migrationsUnavailable ? null : await previewRuntimeUpdate(pending.path, secret));
       setPrompt(null);
       setConfirm({ ...pending, secret, migrations });
     } catch (reason) {
@@ -185,9 +192,13 @@ export function BundleFileFlow({
           installedVersion={confirm.summary.installedVersion}
           releaseNotes={confirm.summary.releaseNotes}
           migrations={confirm.migrations}
+          migrationsUnavailable={confirm.summary.migrationsUnavailable}
+          downgrade={confirm.summary.action === "downgrade"}
           busy={busy}
           onApply={() => {
-            attempt(confirm, confirm.secret).catch(() => undefined);
+            attempt(confirm, confirm.secret, confirm.summary.action === "downgrade").catch(
+              () => undefined,
+            );
           }}
           onCancel={() => {
             setConfirm(null);

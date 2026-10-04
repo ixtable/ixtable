@@ -17,17 +17,18 @@ const OFFLINE = new Set(["CLOUD_OFFLINE", "CLOUD_TIMEOUT", "CLOUD_UNAVAILABLE"])
  * effort; the update itself already succeeded.
  */
 export async function updateNotice(versionId: string | null, version: string): Promise<string> {
-  const [notes, migrations] = await Promise.all([
-    versionId ? versionReleaseNotes(versionId).catch(() => "") : "",
-    runtimeInstallationInfo()
-      .then((info) => info.appliedMigrations ?? [])
-      .catch(() => [] as string[]),
-  ]);
+  const info = await runtimeInstallationInfo().catch(() => null);
+  // The record says this apply did not change versions (e.g. already installed).
+  if (info && info.lastAction !== "update" && info.lastAction !== "downgrade") {
+    return `Running version ${info.version}.`;
+  }
+  const notes = versionId ? await versionReleaseNotes(versionId).catch(() => "") : "";
+  const migrations = info?.appliedMigrations ?? [];
   let text = `Updated to version ${version}. Your records were kept.`;
   text += migrations.length
     ? ` Migrations applied: ${migrations.join(", ")}.`
     : " No migrations were needed.";
-  if (notes.trim()) text += ` Release notes: ${notes.trim()}`;
+  if (notes.trim()) text += `\nRelease notes:\n${notes.trim()}`;
   return text;
 }
 

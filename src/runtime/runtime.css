@@ -29,7 +29,7 @@
   background: transparent;
   padding: 7px 10px;
   border-radius: 5px;
-  color: #3c4047;
+  color: var(--ix-muted);
   font-size: 13px;
 }
 .rt-nav summary {
@@ -102,9 +102,9 @@
   font-size: 13px;
 }
 .rt-actions .primary {
-  background: #292c32;
-  color: #fff;
-  border-color: #292c32;
+  background: var(--ix-primary);
+  color: var(--ix-on-primary);
+  border-color: var(--ix-primary);
 }
 .rt-footer {
   justify-content: flex-end;
@@ -151,7 +151,7 @@
   gap: 8px;
   margin-top: 12px;
   font-size: 12px;
-  color: #6d737b;
+  color: var(--ix-subtle);
 }
 .rt-field {
   display: flex;
@@ -172,16 +172,16 @@
   border-color: #c2412d;
 }
 .rt-error {
-  color: #b3261e;
+  color: var(--ix-danger);
   font-size: 12px;
   margin: 2px 0;
 }
 .rt-status {
-  color: #2f6b3a;
+  color: var(--ix-accent);
   font-size: 12px;
 }
 .rt-muted {
-  color: #7a8089;
+  color: var(--ix-muted);
   font-size: 12px;
 }
 .rt-static {
@@ -252,7 +252,7 @@
   min-height: 80px;
   border: 1px dashed #c7ccd3;
   border-radius: 5px;
-  color: #818791;
+  color: var(--ix-subtle);
   font-size: 12px;
 }
 .rt-image img {
@@ -264,7 +264,7 @@
 }
 .rt-image figcaption {
   font-size: 11px;
-  color: #818791;
+  color: var(--ix-subtle);
 }
 .rt-dialog {
   position: fixed;
@@ -311,7 +311,7 @@
   padding: 3px 0;
 }
 .rt-form-errors {
-  color: #b3261e;
+  color: var(--ix-danger);
   font-size: 12px;
 }
 .rt-crumbs {
@@ -323,7 +323,7 @@
   background: transparent;
   padding: 4px 2px;
   border-radius: 4px;
-  color: #2f6b3a;
+  color: var(--ix-accent);
   font-size: 13px;
   font-weight: 600;
   cursor: pointer;
@@ -359,14 +359,14 @@
   align-items: center;
 }
 .rt-bool-yes {
-  color: #2f6b3a;
+  color: var(--ix-accent);
 }
 .rt-bool-yes svg {
   width: 16px;
   height: 16px;
 }
 .rt-bool-no {
-  color: #8a8f98;
+  color: var(--ix-subtle);
 }
 /* Messages inside a record or related list sit above the fields they are about. */
 .rt-record > .rt-status,
@@ -374,6 +374,18 @@
 .rt-related > .rt-status {
   margin: 0 0 12px;
 }
+@media print {
+  .rt-nav,
+  .rt-actions,
+  .rt-pager {
+    display: none;
+  }
+  .rt-app {
+    display: block;
+    background: #fff;
+  }
+}
+
 .rt-empty {
   display: flex;
   flex-direction: column;

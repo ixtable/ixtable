@@ -1,5 +1,6 @@
 import { AlertTriangle } from "lucide-react";
-import { type KeyboardEvent, useEffect, useId, useRef, useState } from "react";
+import { useId, useState } from "react";
+import { DialogFrame } from "../components/DialogFrame";
 import { modeLabel } from "./logical";
 import type { ChangePlan, TableImpact } from "./types";
 
@@ -32,26 +33,18 @@ export function ImpactDialog({
   const titleId = useId();
   const confirmId = useId();
   const [acknowledged, setAcknowledged] = useState(false);
-  const panel = useRef<HTMLDivElement>(null);
   const shown = impact ?? plan?.impact ?? null;
   const destructive = plan ? plan.destructive || plan.rebuild : true;
   const confirmRequired = destructive || !!acknowledgement;
   const statements = plan?.statements ?? shown?.statements ?? [];
-  useEffect(() => {
-    panel.current?.querySelector<HTMLElement>("button, input")?.focus();
-  }, []);
-  const onKeyDown = (event: KeyboardEvent) => {
-    if (event.key === "Escape") onCancel();
-  };
   return (
     <div className="schema-dialog-backdrop">
-      <div
-        ref={panel}
+      <DialogFrame
         className="schema-dialog"
         role="dialog"
         aria-modal="true"
         aria-labelledby={titleId}
-        onKeyDown={onKeyDown}
+        onClose={onCancel}
       >
         <h2 id={titleId}>
           <AlertTriangle aria-hidden="true" />
@@ -140,7 +133,7 @@ export function ImpactDialog({
             {confirmLabel}
           </button>
         </div>
-      </div>
+      </DialogFrame>
     </div>
   );
 }

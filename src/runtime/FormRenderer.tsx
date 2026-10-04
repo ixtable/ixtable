@@ -25,6 +25,8 @@ export type FormRendererProps = {
   onNotify?: (text: string, tone: "info" | "error") => void;
   /** Page parameters (navigation `params`, dashboard filter values) for query source bindings. */
   params?: Record<string, unknown>;
+  /** Told whether the shown record has unsaved edits. */
+  onDirty?: (dirty: boolean) => void;
 };
 
 type View = { formId: string; mode: FormMode; recordId?: unknown };
@@ -48,6 +50,7 @@ function FormStack({
   back = null,
   onNotify,
   params,
+  onDirty,
 }: FormRendererProps) {
   const { config } = useDocumentConfig();
   const runtime = useRuntimeNavigation();
@@ -126,6 +129,7 @@ function FormStack({
         onClose={close}
         onNavigate={navigate}
         onNotify={onNotify}
+        onDirty={onDirty}
       />
     </div>
   );

@@ -146,8 +146,7 @@ pub struct DashboardComponent {
     pub form_id: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub mode: Option<FormMode>,
-    /// form (detail, edit): expression over `params` and `app` giving the record
-    /// id; blank opens the first row of the form's source.
+    /// form (detail, edit): record id expression over `params` and `app`; blank opens the source's first row.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub record_id: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -424,8 +423,9 @@ impl Checker<'_> {
                                         == Some("form")
                             })
                         });
+                        // A warning: the step may sit in a branch that never runs here.
                         if sets_form {
-                            self.error(
+                            self.warning(
                                 kind,
                                 id,
                                 format!("button \"{title}\" runs an action that sets form state, but a dashboard button has no form"),

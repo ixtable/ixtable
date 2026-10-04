@@ -77,9 +77,13 @@ parameters and binds the values, so values are never spliced into SQL text.
 Forms whose source is a saved query page through `run_saved_query_page`
 (`queries::page`). The saved SQL runs as a subquery
 (`SELECT * FROM (<sql>) AS ixt_page`), and the filters, sort, `LIMIT`/`OFFSET`
-and a `count(*)` for the exact total wrap it in DuckDB. There is no row cap, and
-the total counts every matching row. Sort and filter columns must be result
-columns of the query and are quoted. Filter values, limit and offset bind as
+wrap it in DuckDB, and a `count(*) OVER ()` column returns the exact total with
+the page, so the saved query runs once per page (a separate count runs only
+for an empty page past the first). There is no row cap, and the total counts
+every matching row. Sort and filter columns must be result columns of the
+query and are quoted; an unknown name is reported after a `LIMIT 0` probe.
+Text search on tables and saved queries is the same case-insensitive `ILIKE`,
+with `\`, `%` and `_` in the typed text escaped so they match literally. Filter values, limit and offset bind as
 further positional parameters after the query's own, so the same guard and
 binding rules apply. Without a sort, the order is whatever the saved query
 produces. The form binds each query parameter to an expression over `app` and

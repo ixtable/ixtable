@@ -144,6 +144,23 @@ pub fn q(s: &str) -> String {
     format!("\"{}\"", s.replace('"', "\"\""))
 }
 
+/// ILIKE pattern for a contains/starts-with search: `\`, `%` and `_` in the
+/// typed text match literally (pair it with `ESCAPE '\'`).
+pub fn like_pattern(text: &str, contains: bool) -> String {
+    let mut escaped = String::with_capacity(text.len());
+    for ch in text.chars() {
+        if matches!(ch, '\\' | '%' | '_') {
+            escaped.push('\\');
+        }
+        escaped.push(ch);
+    }
+    if contains {
+        format!("%{escaped}%")
+    } else {
+        format!("{escaped}%")
+    }
+}
+
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct DbObject {

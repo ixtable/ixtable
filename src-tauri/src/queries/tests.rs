@@ -433,3 +433,45 @@ fn paged_filters_are_bound_and_columns_checked() {
     assert_eq!(err.code, "VALIDATION_ERROR");
     assert!(page(&c, "DELETE FROM orders", &[], &[], &spec).is_err());
 }
+
+#[test]
+fn paged_search_is_literal_case_insensitive_and_counts_with_the_page() {
+    let c = conn();
+    c.execute_batch(
+        "CREATE TABLE notes(id INTEGER, body TEXT);
+         INSERT INTO notes VALUES (1,'50% off'),(2,'500 units'),(3,'a_b'),(4,'axb'),(5,'Acme'),(6,'ACME co');",
+    )
+    .unwrap();
+    let sql = "SELECT id, body FROM notes";
+    let search = |text: &str, offset: u64| {
+        let filters = [crate::data::Filter {
+            column: "body".into(),
+            operator: crate::data::FilterOperator::Contains,
+            value: Some(DataValue::Text(text.into())),
+        }];
+        let sorts = [crate::data::Sort {
+            column: "id".into(),
+            descending: false,
+        }];
+        let spec = PageSpec {
+            offset,
+            limit: 1,
+            sorts: &sorts,
+            filters: &filters,
+        };
+        page(&c, sql, &[], &[], &spec).unwrap()
+    };
+    assert_eq!(search("50%", 0).total, 1);
+    assert_eq!(search("a_b", 0).total, 1);
+    let r = search("acme", 1);
+    assert_eq!(r.columns, vec!["id", "body"]);
+    assert_eq!(r.total, 2);
+    assert_eq!(
+        r.rows,
+        vec![vec![DataValue::Integer(6), DataValue::Text("ACME co".into())]]
+    );
+    let past = search("acme", 5);
+    assert!(past.rows.is_empty());
+    assert_eq!(past.total, 2);
+    assert_eq!(past.columns, vec!["id", "body"]);
+}

@@ -278,6 +278,7 @@ fn embedded_form_modes_and_button_form_state_are_checked() {
         "{warnings}"
     );
     assert!(!warnings.contains("\"Show\" opens"), "{warnings}");
+    assert!(warnings.contains("sets form state"), "{warnings}");
     let errors = messages(&issues, Severity::Error).join("\n");
-    assert!(errors.contains("sets form state"), "{errors}");
+    assert!(!errors.contains("sets form state"), "{errors}");
 }

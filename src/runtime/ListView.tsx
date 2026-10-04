@@ -70,6 +70,12 @@ export function ListView({ form, onOpen, onCreate, params = NO_PARAMS }: Props) 
       return { json: "{}", error: reason instanceof Error ? reason.message : String(reason) };
     }
   }, [form, app, params]);
+  // New parameter values start again at the first page.
+  const [boundFor, setBoundFor] = useState(bound.json);
+  if (boundFor !== bound.json) {
+    setBoundFor(bound.json);
+    if (offset !== 0) setOffset(0);
+  }
   const [page, setPage] = useState<RecordPage | null>(() =>
     cachedPage(form, request, JSON.parse(bound.json)),
   );
@@ -78,6 +84,7 @@ export function ListView({ form, onOpen, onCreate, params = NO_PARAMS }: Props) 
     let live = true;
     if (bound.error) {
       setError(bound.error);
+      setPage(null);
       return;
     }
     const values = JSON.parse(bound.json) as Record<string, unknown>;

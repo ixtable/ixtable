@@ -38,6 +38,8 @@ type Props = {
   onClose: () => void;
   onNavigate: (target: { kind: string; id: string; mode?: string; recordId?: unknown }) => void;
   onNotify?: (text: string, tone: Notice["tone"]) => void;
+  /** Told whether edit mode holds unsaved changes. */
+  onDirty?: (dirty: boolean) => void;
 };
 
 const message = (reason: unknown) => {
@@ -57,6 +59,7 @@ export function RecordView({
   onClose,
   onNavigate,
   onNotify,
+  onDirty,
 }: Props) {
   const { config } = useDocumentConfig();
   const runtime = useRuntimeNavigation();
@@ -136,7 +139,15 @@ export function RecordView({
       };
     }
     if (!table) {
-      setRecord((recordId as RecordValues) ?? {});
+      // A query-sourced form receives its whole row, never a key.
+      const row =
+        recordId != null && typeof recordId === "object" ? (recordId as RecordValues) : null;
+      setRecord(row ?? {});
+      if (recordId != null && !row)
+        setStatus({
+          text: "This form shows query rows, so it cannot open a record by id.",
+          tone: "error",
+        });
       done();
       return () => {
         live = false;
@@ -176,6 +187,19 @@ export function RecordView({
       schema.columns.filter((c) => c.primaryKeyPosition > 0).forEach((c) => set.add(c.name));
     return set;
   }, [link, mode, schema]);
+
+  const dirty =
+    mode === "edit" &&
+    !loading &&
+    Object.keys(record).some((k) => !sameValue(record[k], original[k]));
+  const onDirtyRef = useRef(onDirty);
+  useEffect(() => {
+    onDirtyRef.current = onDirty;
+  });
+  useEffect(() => {
+    onDirtyRef.current?.(dirty);
+  }, [dirty]);
+  useEffect(() => () => onDirtyRef.current?.(false), []);
 
   const setField = useCallback((column: string, value: unknown) => {
     setRecord((current) => ({ ...current, [column]: value }));

@@ -3,7 +3,7 @@
 //! Column names are checked against the query's result columns and quoted;
 //! every value (query parameters, filter values, limit, offset) is bound.
 use super::*;
-use crate::data::{q, Filter, FilterOperator, Sort};
+use crate::data::{like_pattern, q, Filter, FilterOperator, Sort};
 
 /// Largest page one call returns (matches table pages).
 pub const MAX_PAGE_SIZE: u64 = 1000;
@@ -44,12 +44,10 @@ fn predicates(filters: &[Filter], first: usize) -> Result<(String, Vec<DuckValue
                     Some(DataValue::Text(v)) => v,
                     _ => return Err(invalid("Text filter value is required")),
                 };
-                let pattern = if matches!(f.operator, FilterOperator::Contains) {
-                    format!("%{text}%")
-                } else {
-                    format!("{text}%")
-                };
-                binds.push(DuckValue::Text(pattern));
+                binds.push(DuckValue::Text(like_pattern(
+                    text,
+                    matches!(f.operator, FilterOperator::Contains),
+                )));
                 format!("CAST({col} AS VARCHAR) ILIKE ${slot} ESCAPE '\\'")
             }
             _ => {
@@ -109,36 +107,34 @@ pub fn page_on(
             AppError::new("DATABASE_ERROR", e)
         }
     };
-    let columns = execute(
-        connection,
-        &format!("SELECT * FROM {from} LIMIT 0"),
-        &values,
-        1,
-    )
-    .map_err(fail)?
-    .columns;
-    for name in spec
-        .sorts
-        .iter()
-        .map(|s| &s.column)
-        .chain(spec.filters.iter().map(|f| &f.column))
-    {
-        if !columns.contains(name) {
-            return Err(AppError::new(
-                "VALIDATION_ERROR",
-                format!("Unknown column {name:?}"),
-            ));
+    // Sort/filter names must be result columns; a LIMIT 0 probe checks them only after the page query fails.
+    let unknown_column = |values: &[DuckValue]| -> Result<(), AppError> {
+        let columns = execute(
+            connection,
+            &format!("SELECT * FROM {from} LIMIT 0"),
+            values,
+            1,
+        )
+        .map_err(fail)?
+        .columns;
+        for name in spec
+            .sorts
+            .iter()
+            .map(|s| &s.column)
+            .chain(spec.filters.iter().map(|f| &f.column))
+        {
+            if !columns.contains(name) {
+                return Err(AppError::new(
+                    "VALIDATION_ERROR",
+                    format!("Unknown column {name:?}"),
+                ));
+            }
         }
-    }
+        Ok(())
+    };
+    let query_values = values.clone();
     let (wh, binds) = predicates(spec.filters, values.len() + 1)?;
     values.extend(binds);
-    let total = connection
-        .query_row(
-            &format!("SELECT count(*) FROM {from}{wh}"),
-            duckdb::params_from_iter(values.iter()),
-            |r| r.get::<_, u64>(0),
-        )
-        .map_err(|e| fail(e.to_string()))?;
     let order = spec
         .sorts
         .iter()
@@ -158,14 +154,43 @@ pub fn page_on(
     let n = values.len();
     values.push(DuckValue::BigInt(spec.limit as i64));
     values.push(DuckValue::BigInt(spec.offset as i64));
+    // The filtered total rides along with the page as a window count.
     let sql = format!(
-        "SELECT * FROM {from}{wh}{order} LIMIT ${} OFFSET ${}",
+        "SELECT *, count(*) OVER () AS ixt_page_total FROM {from}{wh}{order} LIMIT ${} OFFSET ${}",
         n + 1,
         n + 2
     );
-    let run = execute(connection, &sql, &values, spec.limit).map_err(fail)?;
+    let mut run = match execute(connection, &sql, &values, spec.limit) {
+        Ok(run) => run,
+        Err(e) => {
+            unknown_column(&query_values)?;
+            return Err(fail(e));
+        }
+    };
+    run.columns.pop();
+    let mut total = None;
+    for row in &mut run.rows {
+        if let Some(DataValue::Integer(n)) = row.pop() {
+            total = Some(n.max(0) as u64);
+        }
+    }
+    let total = match total {
+        Some(total) => total,
+        // An empty page (offset past the end) still needs the filtered total.
+        None if spec.offset == 0 => 0,
+        None => {
+            let count_values = &values[..n];
+            connection
+                .query_row(
+                    &format!("SELECT count(*) FROM {from}{wh}"),
+                    duckdb::params_from_iter(count_values.iter()),
+                    |r| r.get::<_, u64>(0),
+                )
+                .map_err(|e| fail(e.to_string()))?
+        }
+    };
     Ok(QueryPage {
-        columns,
+        columns: run.columns,
         rows: run.rows,
         total,
         offset: spec.offset,

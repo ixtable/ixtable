@@ -175,7 +175,10 @@ export function ComponentProperties({
   const discovered = useQueryColumns(usesQuery ? component.queryId : null, params);
   const columns = discovered.columns;
   const c = component;
-  const formModes = embeddableModes((config.design?.forms ?? []).find((f) => f.id === c.formId));
+  const chosenForm = (config.design?.forms ?? []).find((f) => f.id === c.formId);
+  const formModes = embeddableModes(chosenForm);
+  // A query-sourced form opens its first row; it has no record key to bind.
+  const querySourced = !!chosenForm && chosenForm.source?.kind !== "table";
   return (
     <>
       <small>{KIND_LABELS[c.kind].toUpperCase()} PROPERTIES</small>
@@ -363,6 +366,7 @@ export function ComponentProperties({
                   change({
                     formId: e.target.value || null,
                     mode: c.mode && modes.includes(c.mode) ? c.mode : (modes[0] ?? null),
+                    ...(next && next.source?.kind !== "table" && { recordId: null }),
                   });
                 }}
               >
@@ -390,7 +394,7 @@ export function ComponentProperties({
               </select>
             )}
           </Field>
-          {(c.mode === "detail" || c.mode === "edit") && (
+          {(c.mode === "detail" || c.mode === "edit") && !querySourced && (
             <ExpressionInput
               label="Record id"
               value={c.recordId}

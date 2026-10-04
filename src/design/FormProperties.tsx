@@ -25,6 +25,12 @@ export function FormProperties({
   const queries = config.savedQueries ?? [];
   const boundQuery =
     source?.kind === "query" ? queries.find((q) => q.id === source.queryId) : undefined;
+  // Bindings left behind by a renamed or removed parameter; checks.rs flags them.
+  const declared = new Set((boundQuery?.parameters ?? []).map((p) => p.name));
+  const orphanParams =
+    source?.kind === "query"
+      ? Object.keys(source.params ?? {}).filter((n) => !declared.has(n))
+      : [];
   const toggleMode = (mode: FormMode, on: boolean) =>
     change({
       modes: on
@@ -101,26 +107,43 @@ export function FormProperties({
           </select>
         </label>
       )}
-      {source?.kind === "query" && (boundQuery?.parameters?.length ?? 0) > 0 && (
-        <fieldset className="fd-fieldset">
-          <legend>Query parameters</legend>
-          {(boundQuery?.parameters ?? []).map((p) => (
-            <ExpressionField
-              key={p.name}
-              label={`$${p.name}`}
-              value={source.params?.[p.name]}
-              names={["app", "params"]}
-              placeholder={p.required ? "Required" : "Default value"}
-              onChange={(expr) => {
-                const params = { ...source.params };
-                if (expr?.trim()) params[p.name] = expr;
-                else delete params[p.name];
-                change({ source: { ...source, params } }, "Bind query parameter");
-              }}
-            />
-          ))}
-        </fieldset>
-      )}
+      {source?.kind === "query" &&
+        ((boundQuery?.parameters?.length ?? 0) > 0 || orphanParams.length > 0) && (
+          <fieldset className="fd-fieldset">
+            <legend>Query parameters</legend>
+            {(boundQuery?.parameters ?? []).map((p) => (
+              <ExpressionField
+                key={p.name}
+                label={`$${p.name}`}
+                value={source.params?.[p.name]}
+                names={["app", "params"]}
+                placeholder={p.required ? "Required" : "Default value"}
+                onChange={(expr) => {
+                  const params = { ...source.params };
+                  if (expr?.trim()) params[p.name] = expr;
+                  else delete params[p.name];
+                  change({ source: { ...source, params } }, "Bind query parameter");
+                }}
+              />
+            ))}
+            {orphanParams.map((name) => (
+              <div key={name} className="fd-orphan">
+                <span>${name} is no longer a parameter of this query.</span>
+                <button
+                  type="button"
+                  aria-label={`Remove binding $${name}`}
+                  onClick={() => {
+                    const params = { ...source.params };
+                    delete params[name];
+                    change({ source: { ...source, params } }, "Remove query parameter binding");
+                  }}
+                >
+                  Remove
+                </button>
+              </div>
+            ))}
+          </fieldset>
+        )}
       <fieldset className="fd-fieldset">
         <legend>Modes</legend>
         {FORM_MODES.map((mode) => (

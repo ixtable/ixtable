@@ -136,6 +136,7 @@ it.skipIf(!postgresUrl)(
   "switches reads and writes to PostgreSQL without storing the password in the document",
   async () => {
     const url = new URL(postgresUrl!);
+    const secret = decodeURIComponent(url.password) || "not-needed-with-trust-auth";
     const table = `ixt_ui_${Date.now()}`;
     const user = await renderNewDocument();
     await openTab(user, "Datasource");
@@ -145,11 +146,10 @@ it.skipIf(!postgresUrl)(
     await user.clear(port);
     await user.type(port, url.port || "5432");
     await user.type(screen.getByRole("textbox", { name: "Database" }), url.pathname.slice(1));
-    await user.type(
-      screen.getByRole("textbox", { name: "User" }),
-      decodeURIComponent(url.username),
-    );
-    await user.type(screen.getByLabelText("Password"), "not-needed-with-trust-auth");
+    await user.click(screen.getByRole("textbox", { name: "User" }));
+    await user.paste(decodeURIComponent(url.username));
+    await user.click(screen.getByLabelText("Password"));
+    await user.paste(secret);
     await user.selectOptions(screen.getByRole("combobox", { name: "TLS (sslmode)" }), "disable");
     await user.click(screen.getByRole("checkbox", { name: /accept connecting without TLS/ }));
     await user.click(screen.getByRole("button", { name: "Test connection" }));
@@ -163,10 +163,10 @@ it.skipIf(!postgresUrl)(
       windowLabel: "main",
     });
     expect(config.datasource.passwordRef).toMatch(/^datasource:/);
-    expect(JSON.stringify(config)).not.toContain("not-needed-with-trust-auth");
+    expect(JSON.stringify(config)).not.toContain(secret);
     expect(config.datasource.insecureTransportConfirmedAt).toBeTruthy();
     const yaml = await invoke<string>("read_document_config_yaml", { windowLabel: "main" });
-    expect(yaml).not.toContain("not-needed-with-trust-auth");
+    expect(yaml).not.toContain(secret);
 
     await invoke("create_database_table", {
       windowLabel: "main",

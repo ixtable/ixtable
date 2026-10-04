@@ -126,7 +126,8 @@ jobs:
         image: postgres:16
         env:
           POSTGRES_USER: ixtable
-          POSTGRES_PASSWORD: ixtable
+          # Distinct from every other value so tests can assert it never lands in a document.
+          POSTGRES_PASSWORD: pg-secret-7f3a
           POSTGRES_DB: ixtable_test
         ports:
           - 5432:5432
@@ -136,7 +137,7 @@ jobs:
           --health-timeout 5s
           --health-retries 10
     env:
-      IXTABLE_TEST_POSTGRES_URL: postgresql://ixtable:ixtable@localhost:5432/ixtable_test?sslmode=disable
+      IXTABLE_TEST_POSTGRES_URL: postgresql://ixtable:pg-secret-7f3a@localhost:5432/ixtable_test?sslmode=disable
     steps:
       - uses: actions/checkout@v4
       - uses: ./.github/actions/setup-desktop

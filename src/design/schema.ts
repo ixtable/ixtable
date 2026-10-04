@@ -201,6 +201,9 @@ const LABELS: Record<ControlKind, string> = {
 export const controlKindLabel = (kind: ControlKind) => LABELS[kind];
 export const CONTROL_KINDS = Object.keys(LABELS) as ControlKind[];
 
+/** Static kinds have nothing to enable or disable, so `enabledWhen` does not apply to them. */
+export const hasEnabledState = (kind: ControlKind) => kind !== "label" && kind !== "image";
+
 /** Kinds that hold a record value bound to a column. */
 export const isInputKind = (kind: ControlKind) =>
   [

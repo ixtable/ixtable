@@ -4,6 +4,8 @@ import {
   compute,
   condition,
   defaultRecord,
+  disabledColumns,
+  enabledControls,
   expressionProblem,
   hasErrors,
   validateControl,
@@ -131,5 +133,60 @@ describe("form validation and expressions", () => {
       { column: "a", value: { type: "text", value: "x" } },
       { column: "b", value: { type: "integer", value: 2 } },
     ]);
+  });
+
+  it("passes a container's disabled state to everything inside it", () => {
+    const f = newForm("Orders", { kind: "table", table: "orders" });
+    const tabs = { ...newControl("tabs", f), enabledWhen: "record.open" };
+    f.controls.push(tabs);
+    const page = { id: tabs.id, tab: tabs.tabs?.[0]?.id };
+    const section = newControl("section", f, page);
+    f.controls.push(section);
+    const inner = { ...newControl("text", f, { id: section.id }), binding: { column: "name" } };
+    const button = newControl("button", f, { id: section.id });
+    const list = newControl("relatedList", f, page);
+    const own = { ...newControl("number", f), enabledWhen: "record.qty > 1" };
+    const outside = newControl("text", f);
+    f.controls.push(inner, button, list, own, outside);
+    const nested = [tabs, section, inner, button, list].map((c) => c.id);
+    const closed = enabledControls(f, scope({ open: false, qty: 5 }));
+    expect(nested.filter((id) => closed.has(id))).toEqual([]);
+    expect(closed.has(own.id)).toBe(true);
+    expect(closed.has(outside.id)).toBe(true);
+    const open = enabledControls(f, scope({ open: true, qty: 0 }));
+    expect(nested.filter((id) => open.has(id))).toEqual(nested);
+    expect(open.has(own.id)).toBe(false);
+    expect(visibleControls(f, scope({ open: false })).has(inner.id)).toBe(true);
+  });
+
+  it("does not validate controls the user cannot change", () => {
+    const f = newForm("Orders", { kind: "table", table: "orders" });
+    const section = { ...newControl("section", f), enabledWhen: "record.open" };
+    const name = { ...newControl("text", f, { id: section.id }), binding: { column: "name" } };
+    f.controls.push(section, { ...name, validation: { ...name.validation, required: true } });
+    expect(hasErrors(validateForm(f, scope({ open: false })))).toBe(false);
+    expect(Object.keys(validateForm(f, scope({ open: true })).fields)).toEqual([name.id]);
+  });
+
+  it("finds columns whose only controls are disabled", () => {
+    const f = newForm("Orders", { kind: "table", table: "orders" });
+    const a = { ...newControl("boolean", f), binding: { column: "a" } };
+    const b = { ...newControl("text", f), binding: { column: "b" }, enabledWhen: "not record.a" };
+    const section = { ...newControl("section", f), enabledWhen: "not record.a" };
+    const c = { ...newControl("text", f, { id: section.id }), binding: { column: "c" } };
+    const shared = [
+      { ...newControl("text", f, { id: section.id }), binding: { column: "d" } },
+      { ...newControl("text", f), binding: { column: "d" } },
+    ];
+    f.controls.push(a, b, section, c, ...shared);
+    expect([...disabledColumns(f, scope({ a: true }))].sort()).toEqual(["b", "c"]);
+    expect(disabledColumns(f, scope({ a: false })).size).toBe(0);
+  });
+
+  it("ignores enabledWhen on static kinds", () => {
+    const f = newForm("Orders", { kind: "table", table: "orders" });
+    const label = { ...newControl("label", f), enabledWhen: "false" };
+    f.controls.push(label);
+    expect(enabledControls(f, scope()).has(label.id)).toBe(true);
   });
 });

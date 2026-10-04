@@ -26,8 +26,19 @@ import {
 type Rows = { records: RecordValues[]; identities: DataValue[][] };
 type Editing = { mode: FormMode; recordId?: unknown } | null;
 
-/** One-level master/detail: child rows whose foreign key matches the current record. */
-export function RelatedRecords({ ctx, control }: { ctx: BodyContext; control: DesignControl }) {
+/**
+ * One-level master/detail: child rows whose foreign key matches the current record.
+ * `disabled` (the control's or a container's `enabledWhen`) makes the list read-only.
+ */
+export function RelatedRecords({
+  ctx,
+  control,
+  disabled = false,
+}: {
+  ctx: BodyContext;
+  control: DesignControl;
+  disabled?: boolean;
+}) {
   const related = control.related;
   const { config } = useDocumentConfig();
   const { roleId } = useRuntimeNavigation();
@@ -103,7 +114,7 @@ export function RelatedRecords({ ctx, control }: { ctx: BodyContext; control: De
       ? { kind: "form", id: childForm.id }
       : { kind: "table", id: related.table };
   const allowed = (op: "create" | "update" | "delete") =>
-    can(config, roleId, subject.kind, subject.id, op);
+    !disabled && can(config, roleId, subject.kind, subject.id, op);
   const booleanColumn = (column: string) =>
     isBooleanColumn(
       childForm?.controls.filter((c) => c.binding?.column === column) ?? [],
@@ -217,7 +228,7 @@ export function RelatedRecords({ ctx, control }: { ctx: BodyContext; control: De
           )}
         </tbody>
       </table>
-      {editing && childForm && (
+      {editing && childForm && !disabled && (
         <div className="rt-embedded" role="group" aria-label={`${label} record`}>
           <FormRenderer
             formId={childForm.id}

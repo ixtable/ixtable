@@ -1,24 +1,68 @@
 import { Plus, Trash2 } from "lucide-react";
-import type { GridLayout } from "../grid/types";
-import { withColumnCount } from "./operations";
+import { validateLayout } from "../grid/engine";
+import { clampRegions, type RegionRenames } from "../grid/regions";
+import type { GridAlign, GridIssue, GridItemRef, GridLayout } from "../grid/types";
+import { resizeTracks, withColumnCount } from "./operations";
+import { RegionEditor } from "./RegionEditor";
+import { TrackList } from "./TrackList";
 
 const num = (value: string, fallback: number) => {
   const parsed = Number(value);
   return Number.isFinite(parsed) && parsed >= 0 ? Math.round(parsed) : fallback;
 };
 
-/** Grid settings: base column tracks, gaps, padding, and breakpoints (column count per width). */
+const errorCount = (layout: GridLayout) =>
+  validateLayout(layout, []).filter((issue) => issue.severity === "error").length;
+
+const ALIGNS: GridAlign[] = ["stretch", "start", "center", "end"];
+
+/**
+ * Grid settings shared by the form and dashboard designers: column and row tracks, gaps,
+ * padding, item alignment, named regions, and breakpoints. When `items` is given, the
+ * problems `validateLayout` finds (the same rules as Rust `design::validate_layout`) are listed.
+ * Regions are kept inside the columns, and a layout with an error is never passed to
+ * `onChange`, so the editor cannot send a grid the backend would refuse.
+ */
 export function LayoutSettings({
   layout,
-  onChange,
+  onChange: emit,
   title = "Grid",
+  items,
 }: {
   layout: GridLayout;
-  onChange: (layout: GridLayout) => void;
+  onChange: (layout: GridLayout, renames?: RegionRenames) => void;
   title?: string;
+  items?: readonly (GridItemRef & { label?: string })[];
 }) {
+  const onChange = (next: GridLayout, renames?: RegionRenames) => {
+    const clamped = { ...next, namedRegions: clampRegions(next.namedRegions, next.columns.length) };
+    // An already-invalid stored grid can still be repaired one edit at a time.
+    if (errorCount(clamped) > errorCount(layout)) return;
+    emit(clamped, renames);
+  };
+  const issues = items ? validateLayout(layout, items) : [];
+  const labelOf = (id: string) => items?.find((item) => item.id === id)?.label ?? id;
+  const text = (issue: GridIssue) =>
+    issue.objectKind === "item"
+      ? `${labelOf(issue.objectId)}: ${issue.message.replace(/^overlaps (.+)$/, (_, other) => `overlaps ${labelOf(other)}`)}`
+      : issue.message;
+  const align = (key: "justifyItems" | "alignItems", label: string) => (
+    <label>
+      {label}
+      <select
+        value={layout[key]}
+        onChange={(e) => onChange({ ...layout, [key]: e.target.value as GridAlign })}
+      >
+        {ALIGNS.map((a) => (
+          <option key={a} value={a}>
+            {a}
+          </option>
+        ))}
+      </select>
+    </label>
+  );
   return (
-    <fieldset className="fd-fieldset">
+    <fieldset className="fd-fieldset" aria-label={title}>
       <legend>{title}</legend>
       <div className="fd-row">
         <label>
@@ -65,6 +109,30 @@ export function LayoutSettings({
           />
         </label>
       </div>
+      <div className="fd-row">
+        {align("justifyItems", "Horizontal alignment")}
+        {align("alignItems", "Vertical alignment")}
+      </div>
+      <small>Column tracks</small>
+      <TrackList
+        name="Column"
+        tracks={layout.columns}
+        minCount={1}
+        onChange={(columns) => onChange({ ...layout, columns })}
+      />
+      <small>Row tracks</small>
+      <p className="fd-hint">Rows without a track size to their content.</p>
+      <TrackList
+        name="Row"
+        tracks={layout.rows}
+        onChange={(rows) => onChange({ ...layout, rows })}
+      />
+      <small>Named regions</small>
+      <RegionEditor
+        layout={layout}
+        onChange={(namedRegions, renames) => onChange({ ...layout, namedRegions }, renames)}
+      />
+      <small>Breakpoints</small>
       <p className="fd-hint">
         Breakpoints change the column count at a minimum width; items wrap to fit.
       </p>
@@ -100,10 +168,7 @@ export function LayoutSettings({
                   ...layout,
                   breakpoints: layout.breakpoints.map((b, i) =>
                     i === index
-                      ? {
-                          ...b,
-                          columns: withColumnCount(layout, num(e.target.value, 1) || 1).columns,
-                        }
+                      ? { ...b, columns: resizeTracks(b.columns, num(e.target.value, 1) || 1) }
                       : b,
                   ),
                 })
@@ -126,16 +191,22 @@ export function LayoutSettings({
         onClick={() =>
           onChange({
             ...layout,
-            breakpoints: [
-              ...layout.breakpoints,
-              { minWidth: 960, columns: withColumnCount(layout, layout.columns.length).columns },
-            ],
+            breakpoints: [...layout.breakpoints, { minWidth: 960, columns: [...layout.columns] }],
           })
         }
       >
         <Plus aria-hidden="true" />
         Add breakpoint
       </button>
+      {issues.length > 0 && (
+        <ul className="fd-issues" aria-label={`${title} problems`}>
+          {issues.map((issue, i) => (
+            <li key={i} className={issue.severity}>
+              {text(issue)}
+            </li>
+          ))}
+        </ul>
+      )}
     </fieldset>
   );
 }

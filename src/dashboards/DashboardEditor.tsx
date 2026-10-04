@@ -177,7 +177,9 @@ export function DashboardEditor({ dashboard, edit }: { dashboard: Dashboard; edi
             <LayoutSettings
               title="Dashboard grid"
               layout={dashboard.layout}
-              onChange={(layout) => edit((d) => withLayout(d, layout), "Edit dashboard grid")}
+              onChange={(layout, renames) =>
+                edit((d) => withLayout(d, layout, renames), "Edit dashboard grid")
+              }
             />
           </>
         )}

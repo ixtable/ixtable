@@ -278,6 +278,43 @@
 .fd-preview {
   padding: 0;
 }
+.fd-tracks,
+.fd-regions {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.fd-track {
+  display: grid;
+  grid-template-columns: minmax(0, 1.4fr) repeat(3, minmax(0, 1fr)) auto;
+  gap: 4px;
+  align-items: center;
+}
+.fd-track input,
+.fd-track select {
+  min-width: 0;
+}
+.fd-region {
+  border-top: 1px solid #e3e5e8;
+  padding-top: 4px;
+}
+.fd-issues {
+  margin: 4px 0 0;
+  padding: 6px 10px 6px 24px;
+  border: 1px solid #e6d3b8;
+  border-radius: 5px;
+  background: #fffaf2;
+  font-size: 11px;
+  color: #6a4a10;
+}
+.fd-issues li.error {
+  color: #9b1c1c;
+}
+.fd-asset-preview img {
+  max-width: 100%;
+  max-height: 120px;
+
+
 .create-forms-offer {
   display: flex;
   flex-wrap: wrap;

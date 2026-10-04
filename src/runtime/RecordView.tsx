@@ -11,11 +11,13 @@ import { loadRecord, recordIdFor, tableSchema } from "./data";
 import {
   compute,
   defaultRecord,
+  disabledColumns,
   type FormErrors,
   type FormScope,
   hasErrors,
   validateControl,
   validateForm,
+  enabledControls,
   visibleControls,
 } from "./formState";
 import { useRuntimeNavigation } from "./navigation";
@@ -129,7 +131,8 @@ export function RecordView({
       const initial = defaultRecord(form, { form: {}, app });
       Object.assign(initial, link);
       setRecord(initial);
-      setOriginal({});
+      // In create mode the defaults are the stored values a disabled field keeps.
+      setOriginal({ ...initial });
       setIdentity(null);
       done();
       return () => {
@@ -169,6 +172,7 @@ export function RecordView({
     [record, formState, app],
   );
   const visible = useMemo(() => visibleControls(form, scope), [form, scope]);
+  const enabled = useMemo(() => enabledControls(form, scope), [form, scope]);
   const readOnly = mode === "detail" || readOnlySource;
   const locked = useMemo(() => {
     const set = new Set<string>();
@@ -193,13 +197,20 @@ export function RecordView({
     });
   };
 
-  /** Record values to write: bound inputs plus derived (computed) bound fields. */
+  /**
+   * Record values to write: bound inputs plus derived (computed) bound fields. Fields whose
+   * controls are disabled keep their stored value (or default, when creating).
+   */
   const valuesToWrite = (): RecordValues => {
     const values: RecordValues = { ...record };
     for (const control of form.controls) {
       const column = control.binding?.column;
       if (column && control.computed && isInputKind(control.kind))
         values[column] = compute(control.computed, scope).value;
+    }
+    for (const column of disabledColumns(form, scope)) {
+      if (column in original) values[column] = original[column];
+      else delete values[column];
     }
     return values;
   };
@@ -322,6 +333,7 @@ export function RecordView({
     form,
     scope,
     visible,
+    enabled,
     errors: errors.fields,
     readOnly,
     locked,

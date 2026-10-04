@@ -1,8 +1,9 @@
 import { useCallback, useEffect, useState, useSyncExternalStore } from "react";
-import { keyGrant, releaseCredentials, runtimeInfo, uploadArchive } from "./api";
-import { getApp, invokeFunction, requireSession } from "./client";
+import { keyGrant, releaseCredentials, runtimeInfo } from "./api";
+import { getApp, requireSession } from "./client";
 import { CloudErrorNotice } from "./CloudErrorNotice";
 import { type CloudError, toCloudError } from "./errors";
+import { InstallationBackups } from "./InstallationBackups";
 import { openCloudApp } from "./open";
 import {
   cloudRuntime,
@@ -11,7 +12,7 @@ import {
   subscribeCloudRuntime,
 } from "./session";
 import { TransferBar } from "./TransferBar";
-import { formatBytes, useTransfer } from "./transfer";
+import { useTransfer } from "./transfer";
 import "./cloud.css";
 
 /** Renew the 24-hour key grant this long before it expires. */
@@ -94,19 +95,6 @@ export function CloudRuntimeBar() {
       if (state.sessionId !== active?.sessionId) requestOpenSession(state);
       else setCloudRuntime(state.sessionId, await runtimeInfo());
     });
-  const backup = () =>
-    run("Backing up…", async () => {
-      const session = await requireSession();
-      const upload = await track((id) =>
-        uploadArchive(session.access_token, info.appId, "backup", id),
-      );
-      await invokeFunction("backup-commit", {
-        appId: info.appId,
-        uploadId: upload.uploadId,
-        installationId: upload.installationId ?? info.installationId,
-      });
-      setNotice(`Backed up ${formatBytes(upload.size)} of this installation.`);
-    });
 
   return (
     <section className="runtime-bar cloud-runtime-bar" aria-label="Cloud application">
@@ -136,14 +124,14 @@ export function CloudRuntimeBar() {
       <button type="button" className="runtime-bar-action" disabled={!!busy} onClick={sync}>
         Sync now
       </button>
-      {backups && (
-        <button type="button" className="runtime-bar-action" disabled={!!busy} onClick={backup}>
-          Back up installation
-        </button>
-      )}
+      {backups && <InstallationBackups appId={info.appId} installationId={info.installationId} />}
       {busy && <p role="status">{busy}</p>}
       <TransferBar progress={progress} label="Transfer progress" />
-      {notice && <p role="status">{notice}</p>}
+      {notice && (
+        <p role="status" className="cloud-update-notice">
+          {notice}
+        </p>
+      )}
       {error && !revoked && <CloudErrorNotice error={error} />}
     </section>
   );

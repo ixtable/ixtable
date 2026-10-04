@@ -32,6 +32,19 @@ export interface BundleSummary {
   signerFingerprint: string;
   installedVersion?: string | null;
   action: "install" | "open" | "update" | "downgrade";
+  // Migrations an update would run; null for encrypted bundles (see previewRuntimeUpdate).
+  pendingMigrations?: PendingMigration[] | null;
+  // Why the migration preview could not be read; the bundle can still be applied.
+  migrationsUnavailable?: string | null;
+  // sha256 of the inspected file, passed back when applying it.
+  sha256: string;
+}
+
+/** A migration an update would run on the installation's records. */
+export interface PendingMigration {
+  id: string;
+  name: string;
+  sql: string;
 }
 
 export interface InstalledBundle {
@@ -43,6 +56,10 @@ export interface InstalledBundle {
   installedAt: string;
   updatedAt: string;
   previousVersion?: string | null;
+  // Migrations the last install or update ran on the records.
+  appliedMigrations?: string[];
+  // What the last apply did: install, open, update, or downgrade.
+  lastAction?: "install" | "open" | "update" | "downgrade" | null;
 }
 
 export interface TableCount {

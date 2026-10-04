@@ -441,6 +441,7 @@ pub fn run() {
             installation_commands::inspect_runtime_bundle,
             installation_commands::open_runtime_bundle,
             installation_commands::update_runtime_installation,
+            installation_commands::preview_runtime_update,
             installation_commands::runtime_installation_info,
             installation_commands::preview_installation_reset,
             installation_commands::reset_runtime_installation_data,

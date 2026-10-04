@@ -107,6 +107,12 @@ The repository variables `IXTABLE_CLOUD_BUILD_URL`,
 into release builds (`cloud/config.rs`). The URL's origin is also added to the
 release CSP (see [security.md](./security.md)).
 
+`IXTABLE_CLOUD_PUBLIC_KEY_RAW` (repository variable) pins the cloud
+bundle-signing public key: the raw 32-byte Ed25519 key in base64, matching the
+production `IXTABLE_CLOUD_SIGNING_KEY` Edge Function secret. A build without it
+refuses every cloud install. Beta and stable runs fail when the URL, anon key or
+public key is missing.
+
 ## Local builds
 
 `bundle.createUpdaterArtifacts` is on, so a full local `npm run tauri build`

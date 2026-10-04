@@ -114,6 +114,8 @@ jobs:
       IXTABLE_CLOUD_BUILD_URL: ${{ vars.IXTABLE_CLOUD_BUILD_URL }}
       IXTABLE_CLOUD_BUILD_ANON_KEY: ${{ vars.IXTABLE_CLOUD_BUILD_ANON_KEY }}
       IXTABLE_CLOUD_BUILD_SITE_URL: ${{ vars.IXTABLE_CLOUD_BUILD_SITE_URL }}
+      # Pinned bundle-signing public key (raw 32 bytes, base64). Without it cloud installs fail closed.
+      IXTABLE_CLOUD_PUBLIC_KEY_RAW: ${{ vars.IXTABLE_CLOUD_PUBLIC_KEY_RAW }}
     steps:
       - name: Disable CRLF conversion
         if: runner.os == 'Windows'
@@ -144,6 +146,14 @@ jobs:
             for ext in sqlite_scanner postgres_scanner; do
               test -s "src-tauri/resources/duckdb/$d/$ext.duckdb_extension.gz" || { echo "::error::missing $d/$ext.duckdb_extension.gz"; exit 1; }
             done
+          done
+
+      # A beta/stable build without the cloud settings ships a desktop that refuses every cloud install.
+      - name: Check cloud build settings
+        if: env.CHANNEL != 'draft'
+        run: |
+          for v in IXTABLE_CLOUD_BUILD_URL IXTABLE_CLOUD_BUILD_ANON_KEY IXTABLE_CLOUD_PUBLIC_KEY_RAW; do
+            test -n "${!v}" || { echo "::error::repository variable $v is not set"; exit 1; }
           done
 
       # Fails beta/stable runs with missing secrets; exports only the set ones.

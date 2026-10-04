@@ -28,6 +28,7 @@ fn check_bundle_size(len: u64) -> Result<(), AppError> {
 }
 
 /// Copies the chosen file into a private temporary location, then verifies it there.
+#[cfg(test)]
 fn receive(root: &Path, path: &str) -> Result<SignedBundle, AppError> {
     receive_checked(root, path, None).map(|(signed, _)| signed)
 }

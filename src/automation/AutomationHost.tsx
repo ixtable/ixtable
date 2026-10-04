@@ -27,11 +27,12 @@ export function AutomationHost() {
     () =>
       installTriggers({
         getConfig: () => configRef.current,
-        // Sync trigger actions act with the role of the user whose write fired them.
+        // User-mode triggers act with the role of the user whose write fired them;
+        // app-mode ones (triggerAuth set) are authorized by Rust per declared step.
         context: (base) =>
           browserContext(configRef.current, (m, t) => notifyRef.current(m, t), {
             ...base,
-            authorize: authorizer(configRef.current),
+            ...(!base.triggerAuth && { authorize: authorizer(configRef.current) }),
           }),
       }),
     [],

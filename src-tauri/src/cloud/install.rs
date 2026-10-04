@@ -191,11 +191,16 @@ pub fn manifest_role(m: &Manifest) -> Option<crate::roles::Role> {
 }
 
 /// Opens the installation in `dir` with the role its verified record grants.
-fn open_with_role(
+/// Opens an installation and applies its role: the signed manifest's role
+/// for a cloud installation, developer access (unset) for a local one.
+pub(crate) fn open_with_role(
     mgr: &DocumentManager,
     window: &str,
     dir: &Path,
 ) -> Result<SessionState, AppError> {
+    if !dir.starts_with(cloud_root()) {
+        return installation::open_session(mgr, window, dir);
+    }
     let role = manifest_role(&verified_record(dir)?.manifest);
     let state = installation::open_session(mgr, window, dir)?;
     crate::authz::set_role(window, role)?;

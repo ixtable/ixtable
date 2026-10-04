@@ -84,6 +84,8 @@ pub struct Session {
     pub(crate) workspace_lock: Option<crate::recovery::WorkspaceLock>,
     /// Runtime role enforced at command entry points (see `authz`).
     pub access: crate::authz::Access,
+    /// Tables the current role may read (see `authz::ReadableCache`).
+    pub(crate) authz_cache: crate::authz::ReadableCache,
 }
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -273,6 +275,7 @@ impl DocumentManager {
             save_lock: Arc::default(),
             workspace_lock,
             access: Default::default(),
+            authz_cache: Default::default(),
         };
         let state = s.state();
         // Registered under the sessions lock so recovery listing never sees it as abandoned.
@@ -510,6 +513,7 @@ impl DocumentManager {
         }
         s.doc.config = c;
         s.config_revision += 1;
+        s.authz_cache.clear();
         self.touch(s);
         archive_io::write_config_files(&s.workspace, &s.doc.config)?;
         Ok(s.state())
@@ -731,6 +735,7 @@ impl DocumentManager {
             .ok_or_else(|| AppError::new("NO_DOCUMENT", "No document is open"))?;
         let extracted = std::mem::replace(&mut s.workspace, installation.to_owned());
         s.reader = reader;
+        s.authz_cache.clear();
         let _ = fs::remove_dir_all(extracted);
         let _ = self.global.remove_recovery(&state.session_id);
         crate::installation::register_runtime(&state.session_id, runtime);
@@ -744,6 +749,8 @@ pub const READ_REFRESH_FAILED: &str = "READ_REFRESH_FAILED";
 /// write: it is surfaced as `lastError` (`READ_REFRESH_FAILED`) and cleared by the
 /// next successful refresh.
 pub(crate) fn refresh_after_write(s: &mut Session) {
+    // A write may have changed the schema (foreign keys feed `readable_tables`).
+    s.authz_cache.clear();
     match s.reader.refresh() {
         Ok(()) => {
             if s.last_error

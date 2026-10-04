@@ -2,6 +2,7 @@ import { createContext, useCallback, useContext, useEffect, useMemo, useState } 
 import { humanize } from "../design/generate";
 import type { FormMode, NavigationItem } from "../design/schema";
 import type { DocumentConfig } from "../lib/types";
+import { asTauriError } from "../lib/api";
 import { setRuntimeRolePreview } from "./api";
 import { assignedRuntimeRole, can, findRole, setPreviewedRole } from "./rbac";
 
@@ -94,11 +95,24 @@ export function visibleNavigation(
   });
 }
 
-/** Leaving Run mode ends any role preview (Studio modes run with full access). */
-function endPreview() {
-  if (assignedRuntimeRole()) return;
-  setPreviewedRole(null);
-  setRuntimeRolePreview(null).catch(() => undefined);
+/**
+ * Outside Run mode (and when a window loads), Rust must not keep enforcing a
+ * role preview: Studio modes run with full access. Clears it and reports a
+ * failure through `report`. Cloud sessions keep their assigned role.
+ */
+export function useRolePreviewResync(
+  sessionId: string,
+  inRunMode: boolean,
+  report: (message: string) => void,
+) {
+  useEffect(() => {
+    if (inRunMode || assignedRuntimeRole()) return;
+    setPreviewedRole(null);
+    setRuntimeRolePreview(null).catch((reason: unknown) => {
+      const error = asTauriError(reason);
+      if (error.code !== "FORBIDDEN") report(`Could not end the role preview: ${error.message}`);
+    });
+  }, [sessionId, inRunMode, report]);
 }
 
 /** State behind `RuntimeContext` for Run mode. */
@@ -108,15 +122,24 @@ export function useRuntimeState(config: DocumentConfig): RuntimeNavigation {
   const assigned = assignedRuntimeRole();
   const [previewRole, setRole] = useState<string | null>(null);
   const roleId = assigned ? assigned.id : previewRole;
+  const [notice, setNotice] = useState<Notice | null>(null);
   // Rust enforces the previewed role too, so a preview behaves like the installed runtime.
+  // If Rust refuses, the UI falls back to developer access and says why.
   useEffect(() => {
     if (assigned) return;
+    let current = true;
     setPreviewedRole(previewRole);
-    setRuntimeRolePreview(previewRole).catch(() => undefined);
+    setRuntimeRolePreview(previewRole).catch((reason: unknown) => {
+      if (!current) return;
+      const { message } = asTauriError(reason);
+      setNotice({ message: `Could not preview this role: ${message}`, tone: "error" });
+      if (previewRole !== null) setRole(null);
+    });
+    return () => {
+      current = false;
+    };
   }, [previewRole, assigned]);
-  useEffect(() => endPreview, []);
   const [state, setState] = useState<Record<string, unknown>>({});
-  const [notice, setNotice] = useState<Notice | null>(null);
   const [visit, setVisit] = useState(0);
   // Choosing a navigation item starts a new trail; pages opened from content (actions) stack on it.
   const navigate = useCallback((page: RuntimePage) => {

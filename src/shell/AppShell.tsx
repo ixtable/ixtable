@@ -24,6 +24,7 @@ import { RuntimeBar } from "../release";
 import type { OpenRequest } from "../lib/launch";
 import { useOpenRequestInShell } from "./openRequests";
 import { UpdateNotice } from "../updates";
+import { useRolePreviewResync } from "../runtime/navigation";
 
 const fromSession = (state: SessionState): Doc => ({
   name: state.name,
@@ -252,6 +253,11 @@ function ShellFrame({
   const mode = findMode(doc.mode);
   const shownError = error ?? (store.error === dismissed ? null : store.error);
   const cloudSession = useIsCloudSession(doc.sessionId);
+  const reportPreview = useCallback(
+    (message: string) => setError({ code: "ROLE_PREVIEW", message }),
+    [setError],
+  );
+  useRolePreviewResync(doc.sessionId, doc.mode === "run", reportPreview);
   const run = (action: () => Promise<unknown>) => {
     action().catch((reason: unknown) => setError(asTauriError(reason)));
   };

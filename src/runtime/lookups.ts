@@ -63,23 +63,19 @@ export async function columnLookups(
 }
 
 /**
- * `[key, display]` rows read one key at a time through `read_table_page`, for a
+ * `[key, display]` rows read with one `in` filtered `read_table_page`, for a
  * runtime role (Rust refuses it ad hoc SQL but authorizes lookup table reads).
  */
 async function labelsByKey(lookup: Relationship, keys: unknown[]) {
-  const rows = await Promise.all(
-    keys.map(async (key): Promise<DataValue[] | null> => {
-      const page = await readTablePage(lookup.table, {
-        limit: 1,
-        filters: [{ column: lookup.valueColumn, operator: "eq", value: toDataValue(key) }],
-      });
-      const row = page.rows[0];
-      if (!row) return null;
-      const at = (name: string) => row[page.columns.findIndex((c) => c.name === name)];
-      return [at(lookup.valueColumn), at(lookup.displayColumn)];
-    }),
-  );
-  return { rows: rows.filter((row): row is DataValue[] => row !== null) };
+  const page = await readTablePage(lookup.table, {
+    limit: keys.length,
+    filters: [{ column: lookup.valueColumn, operator: "in", values: keys.map(toDataValue) }],
+  });
+  const at = (row: DataValue[], name: string) =>
+    row[page.columns.findIndex((c) => c.name === name)];
+  return {
+    rows: page.rows.map((row) => [at(row, lookup.valueColumn), at(row, lookup.displayColumn)]),
+  };
 }
 
 /** Display labels for the keys in `rows`: one bound `IN (...)` query per lookup, through DuckDB. */

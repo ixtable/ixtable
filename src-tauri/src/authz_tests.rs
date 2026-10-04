@@ -227,3 +227,36 @@ fn sessions_are_unrestricted_until_a_role_is_previewed_and_guard_every_command_f
     let _ = m.close("w", true);
     let _ = std::fs::remove_dir_all(base);
 }
+
+#[test]
+fn the_readable_table_set_is_cached_per_role_until_cleared() {
+    let cache = ReadableCache::default();
+    let calls = std::cell::Cell::new(0);
+    let compute = || {
+        calls.set(calls.get() + 1);
+        HashSet::from(["orders".to_string()])
+    };
+    let clerk = role(vec![], &[]);
+    assert!(cache.get_or(&clerk, compute).contains("orders"));
+    assert!(cache.get_or(&clerk, compute).contains("orders"));
+    assert_eq!(calls.get(), 1);
+    cache.get_or(&deny_all(), compute);
+    assert_eq!(calls.get(), 2);
+    cache.clear();
+    cache.get_or(&deny_all(), compute);
+    assert_eq!(calls.get(), 3);
+}
+
+#[test]
+fn listing_and_inspecting_tables_follow_read_access() {
+    let (m, base) = session();
+    m.with_session("w", |s| preview_role(s, Some("clerk".into())))
+        .unwrap();
+    let readable = |t: &str| m.with_session("w", |s| Ok(can_read_table(s, t))).unwrap();
+    assert!(readable("orders"));
+    assert!(!readable("secrets"));
+    m.with_session("w", |s| preview_role(s, None)).unwrap();
+    assert!(readable("secrets"));
+    let _ = m.close("w", true);
+    let _ = std::fs::remove_dir_all(base);
+}

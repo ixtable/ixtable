@@ -18,6 +18,35 @@ use crate::manager::{AppError, Session};
 use crate::reports::{Band, Report};
 use crate::roles::Role;
 use std::collections::HashSet;
+use std::sync::Mutex;
+
+/// The readable-table set of one role, cached per session. Computing it runs
+/// one DuckDB schema query per granted base table, so it is kept until the
+/// role, the config or the data (schema) changes (`clear`).
+#[derive(Debug, Default)]
+pub struct ReadableCache(Mutex<Option<(Role, HashSet<String>)>>);
+
+impl ReadableCache {
+    pub fn clear(&self) {
+        *self.0.lock().unwrap_or_else(|e| e.into_inner()) = None;
+    }
+    /// The cached set for `role`, computing it with `compute` on a miss.
+    pub fn get_or(
+        &self,
+        role: &Role,
+        compute: impl FnOnce() -> HashSet<String>,
+    ) -> HashSet<String> {
+        let mut slot = self.0.lock().unwrap_or_else(|e| e.into_inner());
+        match slot.as_ref() {
+            Some((cached, set)) if cached == role => set.clone(),
+            _ => {
+                let set = compute();
+                *slot = Some((role.clone(), set.clone()));
+                set
+            }
+        }
+    }
+}
 
 /// Role id of a cloud user whose manifest assigns no role.
 pub const NO_ROLE: &str = "cloud:no-role";
@@ -205,6 +234,20 @@ pub fn allows(
     op: Op,
     fk_targets: &dyn Fn(&str) -> Vec<String>,
 ) -> bool {
+    allows_with(config, role, kind, id, op, &|| {
+        readable_tables(config, role, fk_targets)
+    })
+}
+
+/// `allows`, with the readable-table set supplied (possibly cached).
+fn allows_with(
+    config: &DocumentConfig,
+    role: &Role,
+    kind: &str,
+    id: &str,
+    op: Op,
+    readable: &dyn Fn() -> HashSet<String>,
+) -> bool {
     if explicit(role, kind, id, op) {
         return true;
     }
@@ -215,7 +258,7 @@ pub fn allows(
                 .forms
                 .iter()
                 .any(|f| source_table(f) == Some(id) && explicit(role, "form", &f.id, op));
-            by_form || (op == Op::Read && readable_tables(config, role, fk_targets).contains(id))
+            by_form || (op == Op::Read && readable().contains(id))
         }
         ("query", Op::Read) => readable_query(config, role, id),
         _ => false,
@@ -235,13 +278,9 @@ pub fn check_session(s: &Session, kind: &str, id: &str, op: Op) -> Result<(), Ap
     let Some(role) = effective_role(s) else {
         return Ok(());
     };
-    let fk = |table: &str| {
-        s.reader
-            .schema(table)
-            .map(|t| t.foreign_keys.into_iter().map(|k| k.target_table).collect())
-            .unwrap_or_default()
-    };
-    if allows(&s.doc.config, &role, kind, id, op, &fk) {
+    if allows_with(&s.doc.config, &role, kind, id, op, &|| {
+        readable_set(s, &role)
+    }) {
         Ok(())
     } else {
         Err(forbidden(
@@ -249,6 +288,24 @@ pub fn check_session(s: &Session, kind: &str, id: &str, op: Op) -> Result<(), Ap
             format!("cannot {} {kind} \"{id}\"", op.label()),
         ))
     }
+}
+
+/// The tables `role` may read in this session (cached, see `ReadableCache`).
+fn readable_set(s: &Session, role: &Role) -> HashSet<String> {
+    s.authz_cache.get_or(role, || {
+        let fk = |table: &str| {
+            s.reader
+                .schema(table)
+                .map(|t| t.foreign_keys.into_iter().map(|k| k.target_table).collect())
+                .unwrap_or_default()
+        };
+        readable_tables(&s.doc.config, role, &fk)
+    })
+}
+
+/// Whether the session may read `table` (None: unrestricted).
+pub fn can_read_table(s: &Session, table: &str) -> bool {
+    check_session(s, "table", table, Op::Read).is_ok()
 }
 
 /// Refuses operations no runtime role may perform (ad hoc SQL, attachment export).

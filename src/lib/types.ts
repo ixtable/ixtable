@@ -143,8 +143,15 @@ export type FilterOperator =
   | "contains"
   | "starts_with"
   | "is_null"
-  | "is_not_null";
-export type Filter = { column: string; operator: FilterOperator; value?: DataValue | null };
+  | "is_not_null"
+  | "in";
+/** `in` matches any of `values`. */
+export type Filter = {
+  column: string;
+  operator: FilterOperator;
+  value?: DataValue | null;
+  values?: DataValue[];
+};
 export type CreateColumnSpec = {
   name: string;
   /** Legacy SQLite affinity; `logicalType` wins when both are set. */

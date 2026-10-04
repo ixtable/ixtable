@@ -28,10 +28,10 @@ pub use ddl::{
     parse_sqlite_create_index, parse_sqlite_create_table, CheckDef, ColumnDef, ForeignKeyDef,
     IndexDef, TableDef, UniqueDef,
 };
+pub use extensions::{postgres_extension_path, sqlite_extension_path};
 pub use logical::{
     LogicalType, LOGICAL_TYPE_NAMES, MAX_DECIMAL_PRECISION, SQLITE_MAX_DECIMAL_PRECISION,
 };
-pub use extensions::{postgres_extension_path, sqlite_extension_path};
 pub use read::{ReadRuntime, ReadTarget};
 pub use support::{logical_from_duckdb, redact};
 
@@ -222,6 +222,8 @@ pub enum FilterOperator {
     StartsWith,
     IsNull,
     IsNotNull,
+    /// Matches any of `values` (an empty list matches nothing).
+    In,
 }
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -229,6 +231,9 @@ pub struct Filter {
     pub column: String,
     pub operator: FilterOperator,
     pub value: Option<DataValue>,
+    /// The candidates of an `in` filter.
+    #[serde(default)]
+    pub values: Option<Vec<DataValue>>,
 }
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq)]
 #[serde(rename_all = "camelCase")]

@@ -12,19 +12,17 @@ vi.mock("@tauri-apps/api/core", () => ({
     if (command === "execute_parameterized_query" && role.restricted)
       throw { code: "FORBIDDEN", message: 'The role "Clerk" cannot run ad hoc SQL' };
     if (command === "read_table_page") {
-      const [filter] = args.filters as Array<{ value: { value: unknown } }>;
-      const id = Number(filter.value.value);
+      const [filter] = args.filters as Array<{ operator: string; values: { value: unknown }[] }>;
+      const ids = filter.operator === "in" ? filter.values.map((v) => Number(v.value)) : [];
       const codes: Record<number, string> = { 1: "AC", 2: "GX" };
       return {
         columns: [{ name: "id" }, { name: "code" }],
-        rows: codes[id]
-          ? [
-              [
-                { type: "integer", value: id },
-                { type: "text", value: codes[id] },
-              ],
-            ]
-          : [],
+        rows: ids
+          .filter((id) => codes[id])
+          .map((id) => [
+            { type: "integer", value: id },
+            { type: "text", value: codes[id] },
+          ]),
       };
     }
     if (command === "execute_parameterized_query") {
@@ -132,7 +130,7 @@ describe("runtime relationship lookups", () => {
     expect(calls.filter((c) => c.command === "execute_parameterized_query")).toHaveLength(1);
   });
 
-  it("reads labels key by key through read_table_page when a runtime role may not run SQL", async () => {
+  it("reads labels with one in-filtered read_table_page when a runtime role may not run SQL", async () => {
     role.restricted = true;
     const lookups = {
       customer_id: { table: "customers", valueColumn: "id", displayColumn: "code" },
@@ -143,6 +141,6 @@ describe("runtime relationship lookups", () => {
       ["2", "GX"],
     ]);
     const pages = calls.filter((c) => c.command === "read_table_page");
-    expect(pages.map((c) => c.args.table)).toEqual(["customers", "customers"]);
+    expect(pages.map((c) => c.args.table)).toEqual(["customers"]);
   });
 });

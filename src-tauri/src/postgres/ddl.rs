@@ -636,6 +636,7 @@ mod tests {
                 nullable: true,
                 default_expression: None,
                 generated_expression: None,
+                identity: false,
             }],
             checks: vec![CheckDef {
                 name: Some("stock_qty_check".into()),

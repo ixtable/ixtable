@@ -472,20 +472,11 @@ pub fn archive_bytes(doc: &ArchiveDocument, scratch: &Path) -> Result<Vec<u8>, A
     result
 }
 
-/// Atomic file write: temp file in the same directory, fsync, rename.
+/// Atomic file write (creating the parent directory): see [`crate::archive_io::write_atomic`].
 pub fn write_atomic(path: &Path, bytes: &[u8]) -> Result<(), AppError> {
     let parent = path.parent().unwrap_or_else(|| Path::new("."));
     fs::create_dir_all(parent).map_err(io_err)?;
-    let tmp = parent.join(format!(".{}.tmp", Uuid::new_v4()));
-    let result = (|| {
-        fs::write(&tmp, bytes)?;
-        fs::File::open(&tmp)?.sync_all()?;
-        fs::rename(&tmp, path)
-    })();
-    if result.is_err() {
-        let _ = fs::remove_file(&tmp);
-    }
-    result.map_err(io_err)
+    crate::archive_io::write_atomic(path, bytes).map_err(io_err)
 }
 
 #[cfg(test)]

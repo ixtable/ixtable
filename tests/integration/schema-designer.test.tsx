@@ -212,3 +212,46 @@ it("labels each staged change by store capability and previews rebuilds and drop
   expect(screen.queryByRole("dialog")).toBeNull();
   expect((await readPage("parts")).total).toBe(1);
 });
+
+it("keeps an existing column check when the column is edited in the designer", async () => {
+  const user = await renderNewDocument();
+  await createTable("stock", [
+    { name: "id", declaredType: "INTEGER", nullable: false, primaryKeyPosition: 1 },
+    { name: "qty", declaredType: "INTEGER", check: "qty > 0" },
+  ]);
+  await refreshDatabase();
+  await user.click(await screen.findByRole("button", { name: /^stock\b/ }, LONG));
+  await user.click(await screen.findByRole("button", { name: "Design table" }, LONG));
+  await screen.findByRole("heading", { name: "Design stock" }, LONG);
+  expect(screen.getByRole("textbox", { name: "Column qty check" })).toHaveValue("qty > 0");
+  await user.click(screen.getByRole("checkbox", { name: "Column qty required" }));
+  await user.click(screen.getByRole("button", { name: "Stage changes to qty" }));
+  const pending = screen.getByRole("region", { name: "Pending changes" });
+  await user.click(within(pending).getByRole("button", { name: "Apply changes" }));
+  const dialog = await screen.findByRole("dialog", {}, LONG);
+  await user.click(within(dialog).getByRole("checkbox"));
+  await user.click(within(dialog).getByRole("button", { name: "Apply changes" }));
+  await waitFor(async () => {
+    const schema = await inspect("stock");
+    expect(schema.columns.find((c) => c.name === "qty")?.nullable).toBe(false);
+    expect(schema.checks).toMatchObject([{ expression: "qty > 0" }]);
+  }, LONG);
+
+  await user.click(await screen.findByRole("button", { name: "Design table" }, LONG));
+  const check = await screen.findByRole("textbox", { name: "Column qty check" }, LONG);
+  expect(check).toHaveValue("qty > 0");
+  await user.clear(check);
+  await user.type(check, "qty < 10");
+  await user.click(screen.getByRole("button", { name: "Stage changes to qty" }));
+  await user.click(
+    within(screen.getByRole("region", { name: "Pending changes" })).getByRole("button", {
+      name: "Apply changes",
+    }),
+  );
+  const replace = await screen.findByRole("dialog", {}, LONG);
+  await user.click(within(replace).getByRole("checkbox"));
+  await user.click(within(replace).getByRole("button", { name: "Apply changes" }));
+  await waitFor(async () => {
+    expect((await inspect("stock")).checks).toMatchObject([{ expression: "qty < 10" }]);
+  }, LONG);
+});

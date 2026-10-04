@@ -5,6 +5,7 @@ import type {
   BundleSummary,
   ExportOptions,
   InstalledBundle,
+  PendingMigration,
   ResetPreview,
 } from "./types";
 
@@ -28,6 +29,8 @@ export const updateRuntimeInstallation = (
     password: password || null,
     allowDowngrade,
   });
+export const previewRuntimeUpdate = (path: string, password?: string) =>
+  call<PendingMigration[]>("preview_runtime_update", { path, password: password || null });
 export const runtimeInstallationInfo = () => call<InstalledBundle>("runtime_installation_info");
 export const previewInstallationReset = () => call<ResetPreview>("preview_installation_reset");
 export const resetRuntimeInstallationData = () =>

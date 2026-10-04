@@ -251,6 +251,26 @@ VALIDATION, IX423 VALIDATION with `details {requiresConfirm, installations}`).
   the upload `committed`; a consumed, expired or mismatched upload is 422.
   The signed upload URL refuses a second PUT (no upsert). The server does not
   re-hash archives; the desktop verifies sha256 against the signed manifest.
+  The desktop retries an upload PUT up to 4 times with exponential backoff
+  (1 s, 2 s, 4 s) after connect errors, timeouts, 5xx and 429. It never
+  retries other 4xx replies. Because a retry keeps `x-upsert: false`, it
+  cannot overwrite an object. If an earlier attempt landed but its reply was
+  lost, the retry fails with 409 and the user uploads again.
+- **Runtime backups.** Before a backup, the desktop shows the archive size
+  report (`archive_size_report`) and blocks an archive over 500 MB. A runtime
+  window lists its own installation's backups from `installation_backups`
+  (RLS: the installing user or app admins). It restores one through
+  `restore-url {appId, backupId}` into a new local copy. When `isPostgres` is
+  set, the window shows the server's warning first.
+- **Desktop auth.** "Forgot password?" calls `resetPasswordForEmail` with
+  `redirectTo` = `<siteUrl>/reset-password`, the same flow the website uses.
+  "Accept an invitation…" takes the emailed link (or bare token) and calls
+  `invitations-accept {token}`.
+- **Post-update notice.** After auto-sync installs a newer version, the
+  runtime shows the version, the applied migrations (`appliedMigrations` in
+  `bundle.json`) and the release notes (`app_versions.release_notes`, readable
+  by members for published versions). `sync-check` and `bundle-manifest` do
+  not carry release notes.
 - **Security summary.** Stored normalized on the version: `{store,
   credentialMode, tls, sslmode, insecureTransportConfirmed(At),
   sharedCredentialAcknowledged, concurrencyPoliciesResolved,

@@ -1,6 +1,7 @@
 import type { SessionState } from "../lib/types";
+import { runtimeInstallationInfo } from "../release/api";
 import { installApp, installedApps, openInstalled, runtimeInfo } from "./api";
-import { invokeFunction, requireSession } from "./client";
+import { invokeFunction, requireSession, versionReleaseNotes } from "./client";
 import type { SyncCheck } from "./contract";
 import { CloudError, toCloudError } from "./errors";
 import { setCloudRuntime } from "./session";
@@ -9,6 +10,26 @@ export type OpenResult = { state: SessionState; notice: string };
 
 /** Codes that mean "the cloud could not be asked", so the installed version may run. */
 const OFFLINE = new Set(["CLOUD_OFFLINE", "CLOUD_TIMEOUT", "CLOUD_UNAVAILABLE"]);
+
+/**
+ * Post-update notice (PRD §22.3): the version, the migrations that ran on this
+ * installation's records, and the release notes. Notes and migrations are best
+ * effort; the update itself already succeeded.
+ */
+export async function updateNotice(versionId: string | null, version: string): Promise<string> {
+  const [notes, migrations] = await Promise.all([
+    versionId ? versionReleaseNotes(versionId).catch(() => "") : "",
+    runtimeInstallationInfo()
+      .then((info) => info.appliedMigrations ?? [])
+      .catch(() => [] as string[]),
+  ]);
+  let text = `Updated to version ${version}. Your records were kept.`;
+  text += migrations.length
+    ? ` Migrations applied: ${migrations.join(", ")}.`
+    : " No migrations were needed.";
+  if (notes.trim()) text += ` Release notes: ${notes.trim()}`;
+  return text;
+}
 
 /**
  * Opens a cloud app for its runtime user (PRD §22.3): installs it on first
@@ -51,7 +72,10 @@ export async function openCloudApp(
     if (sync && !sync.upToDate) {
       try {
         state = await install();
-        notice = `Updated to version ${sync.latest?.version ?? ""}. Your records were kept.`;
+        notice = await updateNotice(
+          sync.latest?.versionId ?? null,
+          sync.latest?.version ?? state.bundleVersion ?? "",
+        );
       } catch (reason) {
         const error = await toCloudError(reason);
         // A failed update leaves the previous version installed; run it and say why.

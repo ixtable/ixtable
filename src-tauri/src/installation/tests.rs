@@ -180,6 +180,36 @@ fn migrations_apply_to_installation_data_on_update() {
         )
         .unwrap();
     assert_eq!(applied, 1);
+    // The installation record names what the update ran (post-update notice).
+    assert_eq!(
+        read_installed(&f.dir()).unwrap().applied_migrations,
+        ["m-email"]
+    );
+}
+
+#[test]
+fn pending_migrations_preview_what_an_update_will_run_without_writing() {
+    use crate::installation_checks::pending_migrations;
+    let mut f = Fixture::new();
+    f.apply("1.0.0", false).unwrap();
+    f.add_migration("m-email", "ALTER TABLE Customers ADD COLUMN email TEXT");
+    let db = f.dir().join("data.db");
+    let before = fs::read(&db).unwrap();
+    let pending = pending_migrations(&db, &f.doc.config).unwrap();
+    assert_eq!(pending.len(), 1);
+    assert_eq!(pending[0].id, "m-email");
+    assert!(pending[0].sql.contains("ADD COLUMN email"));
+    // Read-only: the installation data is byte-identical after the preview.
+    assert_eq!(fs::read(&db).unwrap(), before);
+    f.apply("1.1.0", false).unwrap();
+    assert!(pending_migrations(&db, &f.doc.config).unwrap().is_empty());
+    // A missing database means every supported migration is pending.
+    assert_eq!(
+        pending_migrations(&f.root.join("none.db"), &f.doc.config)
+            .unwrap()
+            .len(),
+        1
+    );
 }
 
 #[test]

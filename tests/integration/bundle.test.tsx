@@ -110,6 +110,10 @@ it("exports from Studio, opens runtime-only, and updates while keeping runtime r
 
   dialogMock.open.mockResolvedValueOnce(v2);
   await user.click(within(runtime).getByRole("button", { name: "Check for update…" }));
+  const confirm = await screen.findByRole("dialog", { name: /Update .* to 1.1.0\?/ }, LONG);
+  expect(within(confirm).getByText(/No migrations will run/)).toBeInTheDocument();
+  expect(await customerNames()).toEqual(["Ada", "Runtime Rita"]);
+  await user.click(within(confirm).getByRole("button", { name: "Apply update" }));
   expect(
     await screen.findByText(/Updated to version 1.1.0. Your records were kept./, {}, LONG),
   ).toBeInTheDocument();

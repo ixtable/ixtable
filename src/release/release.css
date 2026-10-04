@@ -140,3 +140,30 @@
 .runtime-bar-action.danger {
   color: #a3302a;
 }
+.runtime-diagnostics {
+  position: fixed;
+  inset: 48px 8% auto;
+  max-height: calc(100vh - 96px);
+  overflow: auto;
+  z-index: 40;
+  margin: 0;
+  box-shadow: 0 8px 28px rgb(0 0 0 / 18%);
+}
+.runtime-diagnostics [role="tablist"] {
+  display: flex;
+  gap: 6px;
+  margin-bottom: 8px;
+}
+.runtime-diagnostics [aria-selected="true"] {
+  font-weight: 700;
+}
+.bundle-password pre {
+  white-space: pre-wrap;
+  max-height: 160px;
+  overflow: auto;
+  font-size: 11px;
+}
+.bundle-password h3 {
+  font-size: 12px;
+  margin: 10px 0 4px;
+}

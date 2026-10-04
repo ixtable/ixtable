@@ -32,6 +32,15 @@ export interface BundleSummary {
   signerFingerprint: string;
   installedVersion?: string | null;
   action: "install" | "open" | "update" | "downgrade";
+  // Migrations an update would run; null for encrypted bundles (see previewRuntimeUpdate).
+  pendingMigrations?: PendingMigration[] | null;
+}
+
+/** A migration an update would run on the installation's records. */
+export interface PendingMigration {
+  id: string;
+  name: string;
+  sql: string;
 }
 
 export interface InstalledBundle {
@@ -43,6 +52,8 @@ export interface InstalledBundle {
   installedAt: string;
   updatedAt: string;
   previousVersion?: string | null;
+  // Migrations the last install or update ran on the records.
+  appliedMigrations?: string[];
 }
 
 export interface TableCount {

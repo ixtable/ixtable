@@ -74,6 +74,16 @@ health checks to the copy, then swaps it in. The previous version is kept in
 `previous/`, and any failure restores it. An older version installs only when
 the user confirms a downgrade.
 
+A manual update stops at a confirm step first (PRD §22.3 step 7). It shows the
+release notes and the migrations that would run on this installation's
+records, with their SQL. `inspect_runtime_bundle` fills `pendingMigrations`
+for an unencrypted bundle. A protected bundle needs its password first, so
+the UI calls `preview_runtime_update(path, password)` after the password
+prompt. Both read `data.db` read-only: the ids in `_ixtable_migrations` are
+compared with the incoming definition's supported migrations. After an
+install or update, `bundle.json` records `appliedMigrations`, the names of the
+migrations that ran. Cloud auto-sync shows them after the update.
+
 A `bundle.json` that exists but cannot be read or parsed fails with
 `INSTALLATION_CORRUPT`. It is never treated as "not installed", because that
 would drop the pinned signer. An installation folder with no `bundle.json` at
@@ -90,6 +100,10 @@ default runtime role. A cloud installation runs as the role in its signed
 manifest and shows it as `Role: <name>`. Runtime sessions keep the ids the
 bundle was published with; only Studio rewrites the legacy `main` form id
 (`design/upgrade.rs`, `rekey_legacy_ids`).
+
+The runtime sidebar has a "Diagnostics…" button for the background job queue
+(status, attempts, retry, cancel; the Studio `JobsPanel`) and the local log
+(`LogsTab`). Neither changes the definition.
 
 ## Threat model limits
 

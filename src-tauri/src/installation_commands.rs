@@ -4,6 +4,7 @@ use crate::installation::{
     self, apply_bundle, check_signer, installations_root, open_session, plan, read_installed,
     runtime_session, BundleSummary, InstalledBundle, ResetPreview,
 };
+use crate::installation_checks::{pending_migrations, PendingMigration};
 use crate::manager::{AppError, DocumentManager, SessionState};
 use std::{fs, path::Path};
 use uuid::Uuid;
@@ -104,6 +105,14 @@ pub fn inspect_runtime_bundle(
     let signed = receive(&root, &path)?;
     let installed = check_signer(&root, &signed)?;
     let action = plan(&signed, installed.as_ref())?;
+    let pending_migrations = match action {
+        installation::Action::Update | installation::Action::Downgrade
+            if !signed.header.flags.encrypted =>
+        {
+            Some(pending_for(&root, &signed, &signed.archive_bytes(None)?)?)
+        }
+        _ => None,
+    };
     let h = &signed.header;
     Ok(BundleSummary {
         bundle_id: h.bundle_id.clone(),
@@ -115,7 +124,34 @@ pub fn inspect_runtime_bundle(
         signer_fingerprint: signed.signer_fingerprint(),
         installed_version: installed.map(|i| i.version),
         action: format!("{action:?}").to_lowercase(),
+        pending_migrations,
     })
+}
+
+/// Migrations that applying `archive` would run on the installed records.
+fn pending_for(
+    root: &Path,
+    signed: &SignedBundle,
+    archive: &[u8],
+) -> Result<Vec<PendingMigration>, AppError> {
+    let doc = bundle::read_archive_bytes(archive, &root.join(".tmp"))?;
+    let dir = installation::installation_dir(root, &signed.header.bundle_id)?;
+    pending_migrations(&dir.join("data.db"), &doc.config)
+        .map_err(|e| AppError::new("INSTALLATION_CORRUPT", e))
+}
+
+/// Pending migrations for a (possibly password-protected) update, shown with
+/// the release notes before `update_runtime_installation` applies it.
+#[tauri::command]
+pub fn preview_runtime_update(
+    window_label: String,
+    path: String,
+    password: Option<String>,
+) -> Result<Vec<PendingMigration>, AppError> {
+    let _ = window_label;
+    let root = installations_root();
+    let (signed, archive) = admit(&root, &path, password.as_deref())?;
+    pending_for(&root, &signed, &archive)
 }
 
 /// Verifies and opens a runtime bundle: installs it on first open, updates the

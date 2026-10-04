@@ -42,6 +42,9 @@ pub struct InstalledBundle {
     pub updated_at: String,
     #[serde(default)]
     pub previous_version: Option<String>,
+    /// Names of the migrations the last install or update ran on the records.
+    #[serde(default)]
+    pub applied_migrations: Vec<String>,
 }
 
 /// What opening a bundle would do, for the confirmation UI.
@@ -58,6 +61,8 @@ pub struct BundleSummary {
     pub installed_version: Option<String>,
     /// `install`, `open`, `update`, or `downgrade`.
     pub action: String,
+    /// Migrations an update would run; `None` if encrypted (`preview_runtime_update`) or not an update.
+    pub pending_migrations: Option<Vec<crate::installation_checks::PendingMigration>>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -149,7 +154,7 @@ fn is_windows_reserved(name: &str) -> bool {
             && matches!(stem.as_bytes()[3], b'1'..=b'9'))
 }
 
-fn installation_dir(root: &Path, bundle_id: &str) -> Result<PathBuf, AppError> {
+pub(crate) fn installation_dir(root: &Path, bundle_id: &str) -> Result<PathBuf, AppError> {
     let safe = !bundle_id.is_empty()
         && bundle_id.len() <= 64
         && bundle_id
@@ -284,6 +289,7 @@ fn info_for(signed: &SignedBundle, previous: Option<&InstalledBundle>) -> Instal
         installed_at: previous.map_or(now.clone(), |p| p.installed_at.clone()),
         updated_at: now,
         previous_version: previous.map(|p| p.version.clone()),
+        applied_migrations: vec![],
     }
 }
 
@@ -346,9 +352,11 @@ fn restore_retired(dir: &Path, retired: &Path) -> Result<(), String> {
 }
 
 /// Validates staged state: migrations on the staged records, then health checks.
-fn prepare(staging: &Path, config: &DocumentConfig) -> Result<(), String> {
-    apply_migrations(&staging.join("data.db"), config)?;
-    health_check(&staging.join("data.db"), config)
+/// Returns the names of the migrations that ran.
+fn prepare(staging: &Path, config: &DocumentConfig) -> Result<Vec<String>, String> {
+    let applied = apply_migrations(&staging.join("data.db"), config)?;
+    health_check(&staging.join("data.db"), config)?;
+    Ok(applied)
 }
 
 fn stage(staging: &Path, archive: &[u8], records: &RecordSource) -> Result<(), AppError> {
@@ -463,7 +471,11 @@ fn update_existing(
             archive_bytes,
             &RecordSource::File(dir.join("data.db")),
         )?;
-        prepare(&staging, config).map_err(&failed)?;
+        let applied_migrations = prepare(&staging, config).map_err(&failed)?;
+        let info = InstalledBundle {
+            applied_migrations,
+            ..info_for(signed, installed)
+        };
         let retired = dir.join(format!(".retired-{}", Uuid::new_v4()));
         let activate = (|| -> std::io::Result<()> {
             fs::create_dir_all(&retired)?;
@@ -478,7 +490,7 @@ fn update_existing(
             Ok(())
         })()
         .map_err(|e| e.to_string())
-        .and_then(|_| write_installed(dir, &info_for(signed, installed)).map_err(|e| e.message));
+        .and_then(|_| write_installed(dir, &info).map_err(|e| e.message));
         if let Err(e) = activate {
             // Put the retired copy back first (it is the exact pre-update state);
             // fall back to the recovery checkpoint only if that fails.

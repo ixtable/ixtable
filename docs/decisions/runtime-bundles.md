@@ -74,6 +74,15 @@ health checks to the copy, then swaps it in. The previous version is kept in
 `previous/`, and any failure restores it. An older version installs only when
 the user confirms a downgrade.
 
+Studio and installation updates share one migration preflight
+(`migrations::preflight`). Before any SQL runs it rejects an applied migration
+whose `up` SQL changed (checksum) and any `depends_on` that is unknown, unapplied,
+or ordered after its dependent, so a bad update fails and activation is blocked.
+The migration log records real start and finish times and the health-check
+outcome; the preview splits statements with SQLite's own completeness rules.
+After Studio applies or rolls back migrations it re-validates the document so
+forms and queries bound to dropped columns surface as problems at once.
+
 A `bundle.json` that exists but cannot be read or parsed fails with
 `INSTALLATION_CORRUPT`. It is never treated as "not installed", because that
 would drop the pinned signer. An installation folder with no `bundle.json` at

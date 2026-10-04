@@ -231,6 +231,7 @@ it("pins a first-row embedded edit form while it has unsaved changes", async () 
     windowLabel: "main",
     table: "parts",
     identity: [value("integer", 0)],
+    expected: [{ column: "name", value: value("text", "Part 00") }],
   });
   fireEvent(window, new Event("ixtable:records-changed"));
   await screen.findByText(/The record shown here was deleted/, {}, LONG);

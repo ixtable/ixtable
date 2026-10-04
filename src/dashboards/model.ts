@@ -205,6 +205,8 @@ export function dashboardIssues(dashboard: Dashboard, config: DocumentConfig): G
       error(c.id, `button "${title}" runs an action that does not exist`);
     if (c.kind === "filter" && !dashboard.filters.some((f) => f.id === c.filterId))
       error(c.id, `"${title}" shows a filter that does not exist`);
+    if (c.kind === "table" && (c.styles ?? []).some((s) => !s.column?.trim()))
+      error(c.id, `"${title}" has a conditional style with no column`);
   }
   return issues;
 }

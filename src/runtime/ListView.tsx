@@ -12,7 +12,7 @@ import {
   recordIdFor,
   tableSchema,
 } from "./data";
-import { pageLabel, toneClass, toneFor } from "./conditions";
+import { pageLabel, TRUNCATED_NOTICE, toneClass, toneFor } from "./conditions";
 import { cellText } from "./formState";
 import { BooleanCell } from "./BooleanCell";
 import { useLookupLabels } from "./lookups";
@@ -137,8 +137,9 @@ export function ListView({ form, onOpen, onCreate }: Props) {
       return [];
     });
   };
-  const open = (index: number) => {
-    if (!page) return;
+  const open = (index: number, row: Element) => {
+    // Rows are not native controls, so a disabled (inert) container must be checked here.
+    if (!page || row.closest("[inert], [aria-disabled='true']")) return;
     const record = page.rows[index];
     if (table && schema && page.identities)
       onOpen(recordIdFor(schema, record, page.identities[index]));
@@ -195,6 +196,11 @@ export function ListView({ form, onOpen, onCreate }: Props) {
           {error}
         </p>
       )}
+      {page?.truncated && (
+        <p className="rt-notice" role="status">
+          {TRUNCATED_NOTICE}
+        </p>
+      )}
       <table className="rt-table">
         <thead>
           <tr>
@@ -227,11 +233,11 @@ export function ListView({ form, onOpen, onCreate }: Props) {
               tabIndex={0}
               className="rt-row"
               aria-label={`Open ${record[columns[0]] == null ? `row ${offset + index + 1}` : (lookup(columns[0], record[columns[0]]) ?? String(record[columns[0]]))}`}
-              onClick={() => open(index)}
+              onClick={(event) => open(index, event.currentTarget)}
               onKeyDown={(event) => {
                 if (event.key === "Enter" || event.key === " ") {
                   event.preventDefault();
-                  open(index);
+                  open(index, event.currentTarget);
                 }
               }}
             >
@@ -252,9 +258,7 @@ export function ListView({ form, onOpen, onCreate }: Props) {
         </tbody>
       </table>
       <div className="rt-pager">
-        <span role="status">
-          {page ? pageLabel(offset, page.rows.length, total, page.exact !== false) : "Loading…"}
-        </span>
+        <span role="status">{page ? pageLabel(offset, page.rows.length, total) : "Loading…"}</span>
         <button
           type="button"
           disabled={offset === 0}

@@ -41,8 +41,31 @@ const dashboard: Dashboard = {
     { id: "n", kind: "text", title: "Always", placement: at(7), text: "Here." },
   ],
 };
+const broken: Dashboard = {
+  ...dashboard,
+  id: "d2",
+  name: "Broken",
+  components: [
+    {
+      id: "x",
+      kind: "text",
+      title: "Big region",
+      placement: at(1),
+      text: "Hidden text",
+      visibleWhen: "params.region > 5",
+    },
+    {
+      id: "y",
+      kind: "text",
+      title: "Odd",
+      placement: at(4),
+      text: "Odd text",
+      enabledWhen: "params.region + 1 > 0",
+    },
+  ],
+};
 const config = {
-  dashboards: [dashboard],
+  dashboards: [dashboard, broken],
   savedQueries: [],
   actions: [{ id: "a1", name: "Go", onError: "stop", steps: [] }],
   reports: [],
@@ -53,6 +76,19 @@ vi.mock("../../src/query/api", () => ({ runSavedQuery: vi.fn(), cancelQuery: vi.
 vi.mock("../../src/lib/config-store", () => ({ useDocumentConfig: () => ({ config }) }));
 
 describe("dashboard component conditions", () => {
+  it("shows a condition that fails to evaluate instead of hiding the component", async () => {
+    render(<DashboardView dashboardId="d2" />);
+    fireEvent.change(screen.getByRole("combobox", { name: "Region" }), {
+      target: { value: "East" },
+    });
+    const big = await screen.findByRole("region", { name: "Big region" });
+    expect(within(big).getByRole("alert")).toHaveTextContent(/^Visible when: /);
+    expect(within(big).queryByText("Hidden text")).toBeNull();
+    const odd = screen.getByRole("region", { name: "Odd" });
+    expect(within(odd).getByRole("alert")).toHaveTextContent(/^Enabled when: /);
+    expect(odd).toHaveAttribute("aria-disabled", "true");
+  });
+
   it("hides and disables components from params, keeping other placements", async () => {
     render(<DashboardView dashboardId="d1" />);
     expect(screen.queryByRole("region", { name: "East notes" })).toBeNull();

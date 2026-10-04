@@ -2,7 +2,7 @@
  * Expression-driven row filters and conditional styles (PRD §17.1). Evaluated here in
  * TypeScript with `src/expr`; Rust only stores the expressions.
  */
-import { evaluateBoolean, parse } from "../expr";
+import { evaluateBoolean, parse, referencedNames } from "../expr";
 
 /** Named tones; each maps to a `tone-<name>` CSS class, never to raw CSS (PRD §6.3). */
 export type Tone = "positive" | "negative" | "warning" | "muted" | "emphasis";
@@ -51,6 +51,57 @@ export function filterNames(columns?: string[]): string[] {
   return [...record, "parent", "form", "app", "params"];
 }
 
+/**
+ * The part of `scope` a row filter reads: every name it references except the row itself
+ * (`record`), copied into a pruned scope. Two scopes with equal inputs give equal JSON, so
+ * callers key reloads on it and edits to unreferenced fields do not reload. A filter that
+ * does not parse gives an empty scope (the load then reports the syntax error).
+ */
+export function filterInputs(
+  src: string | null | undefined,
+  scope: Record<string, unknown>,
+): Record<string, unknown> {
+  const picked: Record<string, unknown> = {};
+  if (!present(src)) return picked;
+  let names: string[];
+  try {
+    names = referencedNames(src);
+  } catch {
+    return picked;
+  }
+  // Shorter paths first: once `parent` is copied whole, `parent.x` adds nothing.
+  const sorted = names.sort((a, b) => a.split(".").length - b.split(".").length);
+  const taken: string[] = [];
+  for (const name of sorted) {
+    if (name === "record" || name.startsWith("record.")) continue;
+    if (taken.some((t) => name.startsWith(`${t}.`))) continue;
+    taken.push(name);
+    const path = name.split(".");
+    let source: unknown = scope;
+    let target = picked;
+    for (const [i, key] of path.entries()) {
+      source = (source as Record<string, unknown>)[key];
+      const nested = source !== null && typeof source === "object" && !Array.isArray(source);
+      // A missing or scalar value is copied as is; reading past it fails the same way.
+      if (i === path.length - 1 || !nested) {
+        target[key] = source;
+        break;
+      }
+      target[key] ??= {};
+      target = target[key] as Record<string, unknown>;
+    }
+  }
+  return picked;
+}
+
+/** Stable key of `filterInputs` ("" without a filter): reload a filtered list when it changes. */
+export function filterInputsKey(
+  src: string | null | undefined,
+  scope: Record<string, unknown>,
+): string {
+  return present(src) ? JSON.stringify([src, filterInputs(src, scope)]) : "";
+}
+
 export type RowPredicate = (record: Record<string, unknown>) => boolean;
 
 /**
@@ -75,24 +126,20 @@ export function rowFilter(
 
 /** Rows read per chunk while scanning for filtered matches (read_table_page allows 1000). */
 export const SCAN_CHUNK = 500;
-/** Rows scanned before a filtered page may stop and report its total as a lower bound. */
-export const SCAN_BUDGET = 5000;
 /** Hard stop, so a filter that matches almost nothing cannot scan a huge table forever. */
 export const SCAN_LIMIT = 50_000;
 
 export type Scan<T> = { matches: T[]; exhausted: boolean };
 
 /**
- * Reads a source in chunks and keeps the items that pass `keep`. It scans at least
- * `minScan` rows (or the whole source), then continues until at least `need` matches are
- * found, never past `SCAN_LIMIT` rows. When `exhausted` is false, `matches.length` is
- * only a lower bound on the total.
+ * Reads a source in chunks and keeps the items that pass `keep`, until at least `need`
+ * matches are found, the source ends (`exhausted`), or `SCAN_LIMIT` rows were read.
  */
 export async function scanFiltered<T>(
   fetch: (offset: number, limit: number) => Promise<T[]>,
   keep: (item: T) => boolean,
   need: number,
-  { minScan = SCAN_BUDGET, chunk = SCAN_CHUNK }: { minScan?: number; chunk?: number } = {},
+  chunk = SCAN_CHUNK,
 ): Promise<Scan<T>> {
   const matches: T[] = [];
   let scanned = 0;
@@ -101,14 +148,29 @@ export async function scanFiltered<T>(
     scanned += items.length;
     for (const item of items) if (keep(item)) matches.push(item);
     if (items.length < chunk) return { matches, exhausted: true };
-    const enough = scanned >= minScan && matches.length >= need;
-    if (enough || scanned >= SCAN_LIMIT) return { matches, exhausted: false };
+    if (matches.length >= need || scanned >= SCAN_LIMIT) return { matches, exhausted: false };
   }
 }
 
-/** Pager text for a page of a (possibly filtered) list. */
-export function pageLabel(offset: number, shown: number, total: number, exact: boolean): string {
-  if (!total) return exact ? "0 records" : "No matching records in the rows scanned";
-  const range = `${offset + 1}–${offset + shown}`;
-  return exact ? `${range} of ${total}` : `${range} of at least ${total}`;
+export type ScanResult<T> = { matches: T[]; truncated: boolean };
+
+/**
+ * Scans a whole source (up to `SCAN_LIMIT` rows) and keeps every match, so a list can page
+ * through the matches without rescanning. `truncated` means rows past the limit were not read.
+ */
+export async function pagedScan<T>(
+  fetch: (offset: number, limit: number) => Promise<T[]>,
+  keep: (item: T) => boolean,
+): Promise<ScanResult<T>> {
+  const scan = await scanFiltered(fetch, keep, Number.POSITIVE_INFINITY);
+  return { matches: scan.matches, truncated: !scan.exhausted };
+}
+
+/** Shown above a filtered list whose scan stopped at `SCAN_LIMIT`. */
+export const TRUNCATED_NOTICE = `Filter applied to the first ${SCAN_LIMIT.toLocaleString("en-US")} rows; some matches may be missing.`;
+
+/** Pager text for a page of a list. */
+export function pageLabel(offset: number, shown: number, total: number): string {
+  if (!total) return "0 records";
+  return `${offset + 1}–${offset + shown} of ${total}`;
 }

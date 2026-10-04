@@ -115,7 +115,12 @@ export function StylesEditor({
         onClick={() =>
           onChange([
             ...list,
-            { id: newId(), when: "", tone: "emphasis", ...(columns ? { column: null } : {}) },
+            {
+              id: newId(),
+              when: "",
+              tone: "emphasis",
+              ...(columns ? { column: columns[0] ?? null } : {}),
+            },
           ])
         }
       >

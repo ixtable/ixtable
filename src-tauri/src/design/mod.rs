@@ -212,8 +212,9 @@ pub struct Control {
 }
 
 /// Named tone of a conditional style. The renderer maps it to a class, never to raw CSS.
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
-#[serde(rename_all = "camelCase")]
+/// A tone this build does not know (hand-edited YAML, a newer app) loads as `Other` and
+/// saves back unchanged; the renderer ignores it.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub enum Tone {
     Positive,
     Negative,
@@ -221,6 +222,45 @@ pub enum Tone {
     Muted,
     #[default]
     Emphasis,
+    Other(String),
+}
+
+impl Tone {
+    pub fn as_str(&self) -> &str {
+        match self {
+            Tone::Positive => "positive",
+            Tone::Negative => "negative",
+            Tone::Warning => "warning",
+            Tone::Muted => "muted",
+            Tone::Emphasis => "emphasis",
+            Tone::Other(name) => name,
+        }
+    }
+}
+
+impl From<String> for Tone {
+    fn from(name: String) -> Self {
+        match name.as_str() {
+            "positive" => Tone::Positive,
+            "negative" => Tone::Negative,
+            "warning" => Tone::Warning,
+            "muted" => Tone::Muted,
+            "emphasis" => Tone::Emphasis,
+            _ => Tone::Other(name),
+        }
+    }
+}
+
+impl Serialize for Tone {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        serializer.serialize_str(self.as_str())
+    }
+}
+
+impl<'de> Deserialize<'de> for Tone {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        String::deserialize(deserializer).map(Tone::from)
+    }
 }
 
 /// One conditional style rule: `tone` applies when the `when` expression is true.

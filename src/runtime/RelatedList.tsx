@@ -6,7 +6,7 @@ import { useDocumentConfig } from "../lib/config-store";
 import { deleteRecord } from "../lib/records";
 import type { DataValue, TableSchema } from "../lib/types";
 import { useConfirm } from "./Confirm";
-import { rowFilter, scanFiltered, toneClass, toneFor } from "./conditions";
+import { filterInputsKey, rowFilter, scanFiltered, toneClass, toneFor } from "./conditions";
 import { useLookupLabels } from "./lookups";
 import type { BodyContext } from "./FormBody";
 import { FormRenderer } from "./FormRenderer";
@@ -15,6 +15,7 @@ import { useRuntimeNavigation } from "./navigation";
 import { can } from "./rbac";
 import { isDesignedForm, resolveForm, tableForms } from "./registry";
 import { BooleanCell } from "./BooleanCell";
+import { useDebounced } from "./useDebounced";
 import {
   displayText,
   isBooleanColumn,
@@ -64,15 +65,21 @@ export function RelatedRecords({ ctx, control }: { ctx: BodyContext; control: De
     rows?.records,
   );
   const saved = !!ctx.identity && parentValue != null;
-  // The filter's scope, as a stable key so the list reloads only when the filter could change.
-  const filterKey = related?.filter?.trim()
-    ? JSON.stringify([ctx.scope.record, ctx.scope.form, ctx.scope.app])
-    : "";
-  const filterScope = useMemo(() => {
-    if (!filterKey) return null;
-    const [parent, form, app] = JSON.parse(filterKey) as Record<string, unknown>[];
-    return { parent, form, app, params: {} };
-  }, [filterKey]);
+  // Keyed on the values the filter reads, and debounced, so typing in the parent form
+  // reloads the list only when a referenced field settles on a new value.
+  const filterKey = useDebounced(
+    filterInputsKey(related?.filter, {
+      parent: ctx.scope.record,
+      form: ctx.scope.form,
+      app: ctx.scope.app,
+      params: {},
+    }),
+    250,
+  );
+  const filterScope = useMemo(
+    () => (filterKey ? (JSON.parse(filterKey)[1] as Record<string, unknown>) : null),
+    [filterKey],
+  );
 
   const load = useCallback(async () => {
     if (!related || !saved) return;
@@ -98,9 +105,10 @@ export function RelatedRecords({ ctx, control }: { ctx: BodyContext; control: De
         }));
       };
       const found = keep
-        ? (
-            await scanFiltered(read, (row) => keep(row.record), RELATED_LIMIT, { minScan: 0 })
-          ).matches.slice(0, RELATED_LIMIT)
+        ? (await scanFiltered(read, (row) => keep(row.record), RELATED_LIMIT)).matches.slice(
+            0,
+            RELATED_LIMIT,
+          )
         : await read(0, RELATED_LIMIT);
       setSchema(child);
       setRows({

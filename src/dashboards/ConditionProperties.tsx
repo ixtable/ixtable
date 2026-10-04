@@ -55,7 +55,7 @@ export function ConditionProperties({
           label="Enabled when"
           value={c.enabledWhen}
           names={DASHBOARD_NAMES}
-          placeholder="app.role = 'manager'"
+          placeholder="not isnull(params.region)"
           onChange={(enabledWhen) => change({ enabledWhen }, "Edit enabled condition")}
         />
       </fieldset>

@@ -1,5 +1,5 @@
 import { join } from "node:path";
-import { screen, waitFor, within } from "@testing-library/react";
+import { fireEvent, screen, waitFor, within } from "@testing-library/react";
 import { invoke } from "@tauri-apps/api/core";
 import { expect, it } from "vitest";
 import { insertRow, refreshDatabase, renderNewDocument, value } from "./helpers";
@@ -260,4 +260,48 @@ it("filters and styles a dashboard table and hides or disables components by fil
       "true",
     ),
   );
+});
+
+it("keeps rows of a disabled embedded list from opening records", async () => {
+  const user = await renderNewDocument();
+  await seed();
+  await user.click(screen.getByRole("button", { name: "Design" }));
+  await screen.findByRole("region", { name: "Form builder" }, LONG);
+  await user.selectOptions(
+    screen.getByRole("combobox", { name: "Table to generate from" }),
+    "orders",
+  );
+  await user.click(screen.getByRole("button", { name: "Generate form from table" }));
+  await within(screen.getByRole("region", { name: "Forms" })).findByRole(
+    "button",
+    { name: "Orders list" },
+    LONG,
+  );
+
+  await user.click(screen.getByRole("button", { name: "Dashboards" }));
+  const create = await screen.findByRole("button", { name: "New dashboard" }, LONG);
+  await waitFor(() => expect(create).toBeEnabled(), LONG);
+  await user.click(create);
+  const properties = screen.getByRole("complementary", { name: "Properties" });
+  await user.click(await screen.findByRole("button", { name: "Add form" }, LONG));
+  await user.selectOptions(
+    within(properties).getByRole("combobox", { name: "Form" }),
+    "Orders list",
+  );
+  await user.selectOptions(within(properties).getByRole("combobox", { name: "Form mode" }), "list");
+  const enabled = within(properties).getByRole("textbox", { name: "Enabled when" });
+  await user.type(enabled, "false");
+  await waitFor(() => expect(enabled).not.toHaveAttribute("aria-invalid"));
+
+  await user.click(screen.getByRole("tab", { name: "View" }));
+  const widget = await screen.findByRole("region", { name: "Form 1" }, LONG);
+  expect(widget).toHaveAttribute("aria-disabled", "true");
+  const row = await within(widget).findByRole("row", { name: "Open 1" }, LONG);
+  await user.click(row);
+  fireEvent.click(row);
+  fireEvent.keyDown(row, { key: "Enter" });
+  fireEvent.keyDown(row, { key: " " });
+  await new Promise((resolve) => setTimeout(resolve, 300));
+  expect(within(widget).getByRole("row", { name: "Open 1" })).toBeInTheDocument();
+  expect(within(widget).queryByRole("form")).toBeNull();
 });

@@ -355,3 +355,19 @@ fn filters_and_conditional_styles_round_trip_and_flag_blanks() {
         );
     }
 }
+
+#[test]
+fn unknown_tone_loads_and_saves_unchanged() {
+    let yaml = "id: s1
+when: value < 0
+tone: info
+";
+    let style: ConditionalStyle = serde_yaml::from_str(yaml).unwrap();
+    assert_eq!(style.tone, Tone::Other("info".into()));
+    let back = serde_yaml::to_string(&style).unwrap();
+    assert!(back.contains("tone: info"), "{back}");
+    let known: ConditionalStyle =
+        serde_json::from_value(serde_json::json!({"id": "s", "tone": "muted"})).unwrap();
+    assert_eq!(known.tone, Tone::Muted);
+    assert_eq!(serde_json::to_value(&known).unwrap()["tone"], "muted");
+}

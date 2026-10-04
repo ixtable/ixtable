@@ -9,8 +9,9 @@ import {
   relationshipChoices,
   relationshipLabel,
 } from "./data";
-import { type Tone, toneClass } from "./conditions";
+import { filterInputsKey, type Tone, toneClass } from "./conditions";
 import { formatted } from "./formState";
+import { useDebounced } from "./useDebounced";
 import { sameValue } from "./values";
 
 export type FieldProps = {
@@ -214,12 +215,13 @@ function RelationshipInput({
   ...rest
 }: InputProps & { readOnly: boolean; filterScope?: Record<string, unknown> }) {
   const relationship = control.relationship;
-  // Reload choices only when the filter's inputs change (none without a filter).
-  const scopeKey = relationship?.filter?.trim() ? JSON.stringify(filterScope ?? {}) : "";
+  // Reload choices only when a value the filter reads settles on a new value.
+  const scopeKey = useDebounced(filterInputsKey(relationship?.filter, filterScope ?? {}), 250);
   const scope = useMemo(
-    () => (scopeKey ? (JSON.parse(scopeKey) as Record<string, unknown>) : {}),
+    () => (scopeKey ? (JSON.parse(scopeKey)[1] as Record<string, unknown>) : {}),
     [scopeKey],
   );
+  const [choiceError, setChoiceError] = useState("");
   const [search, setSearch] = useState("");
   const [choices, setChoices] = useState<Choice[]>([]);
   // Starts from the last label shown for this key, so a reload never blanks the field.
@@ -232,8 +234,16 @@ function RelationshipInput({
     const timer = setTimeout(
       () => {
         relationshipChoices(relationship, search, 50, scope)
-          .then((items) => live && setChoices(items))
-          .catch(() => live && setChoices([]));
+          .then((items) => {
+            if (!live) return;
+            setChoices(items);
+            setChoiceError("");
+          })
+          .catch((reason) => {
+            if (!live) return;
+            setChoices([]);
+            setChoiceError(reason instanceof Error ? reason.message : String(reason));
+          });
       },
       search ? 150 : 0,
     );
@@ -281,6 +291,11 @@ function RelationshipInput({
           </option>
         ))}
       </select>
+      {choiceError && (
+        <p className="rt-error" role="alert">
+          Choice filter: {choiceError}
+        </p>
+      )}
     </div>
   );
 }

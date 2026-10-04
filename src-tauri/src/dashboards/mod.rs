@@ -379,6 +379,17 @@ impl Checker<'_> {
                     format!("\"{title}\" has a conditional style with an empty condition"),
                 );
             }
+            if c.kind == ComponentKind::Table
+                && c.styles
+                    .iter()
+                    .any(|s| s.column.as_deref().is_none_or(|t| t.trim().is_empty()))
+            {
+                self.error(
+                    kind,
+                    id,
+                    format!("\"{title}\" has a conditional style with no column"),
+                );
+            }
             match c.kind {
                 ComponentKind::Kpi => {
                     if missing(&c.value_field) && missing(&c.expression) {

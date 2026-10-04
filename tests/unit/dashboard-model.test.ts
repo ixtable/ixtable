@@ -307,4 +307,21 @@ describe("dashboard model", () => {
       '"Filter 1" shows a filter that does not exist',
     ]);
   });
+
+  it("flags a table style rule with no column", () => {
+    const dashboard = newDashboard("Sales");
+    const table = { ...newComponent("table", dashboard), id: "t", title: "Orders" };
+    const good = { id: "a", when: "value < 0", tone: "negative" as const, column: "amount" };
+    dashboard.components.push({
+      ...table,
+      styles: [good, { id: "b", when: "value > 9", tone: "positive", column: null }],
+    });
+    const config = { savedQueries: [] } as unknown as DocumentConfig;
+    const messages = dashboardIssues(dashboard, config).map((i) => i.message);
+    expect(messages).toContain('"Orders" has a conditional style with no column');
+    dashboard.components[0].styles = [good];
+    expect(dashboardIssues(dashboard, config).map((i) => i.message)).not.toContain(
+      '"Orders" has a conditional style with no column',
+    );
+  });
 });

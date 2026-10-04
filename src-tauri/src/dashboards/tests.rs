@@ -268,10 +268,26 @@ fn component_conditions_filters_and_styles_round_trip() {
         "empty filter expression",
         "empty visibility expression",
         "conditional style with an empty condition",
+        "conditional style with no column",
     ] {
         assert!(
             found.iter().any(|e| e.contains(needle)),
             "{needle}: {found:?}"
         );
     }
+}
+
+#[test]
+fn table_style_with_a_column_is_valid() {
+    let mut dashboard = sample();
+    let raw = json!({
+        "id": "t9", "kind": "table", "title": "Styled", "queryId": "q1",
+        "styles": [{"id": "s1", "when": "value < 0", "tone": "warning", "column": "amount"}],
+        "placement": {"column": 1, "row": 9, "columnSpan": 6, "rowSpan": 1}
+    });
+    dashboard
+        .components
+        .push(serde_json::from_value(raw).unwrap());
+    let found = messages(&validate(&config_with(dashboard)), Severity::Error);
+    assert!(!found.iter().any(|e| e.contains("no column")), "{found:?}");
 }

@@ -3,29 +3,40 @@ import type { DesignForm, Relationship } from "../design/schema";
 import { inspectTable, readTablePage } from "../lib/api";
 import { registerRecordHook } from "../lib/records";
 import type { DataValue, DocumentConfig, Filter, Sort, TableSchema } from "../lib/types";
-import { type RowPredicate, rowFilter, scanFiltered } from "./conditions";
+import {
+  pagedScan,
+  type RowPredicate,
+  rowFilter,
+  type ScanResult,
+  scanFiltered,
+} from "./conditions";
 import { fromDataValue, type RecordValues, rowObject } from "./values";
 
 /**
  * One page of records for a list. `identities` is null for read-only (query) sources.
- * `exact` is false when a row filter stopped scanning early: `total` is then a lower bound.
+ * `truncated` is true when a row filter stopped at `SCAN_LIMIT` rows: matches past that
+ * point are missing and `total` counts only the rows scanned.
  */
 export type RecordPage = {
   columns: string[];
   rows: RecordValues[];
   identities: DataValue[][] | null;
   total: number;
-  exact?: boolean;
+  truncated?: boolean;
 };
 export type PageRequest = { offset: number; limit: number; sorts: Sort[]; filters: Filter[] };
 
 const schemas = new Map<string, Promise<TableSchema>>();
 const pages = new Map<string, RecordPage>();
+type Matched = { record: RecordValues; identity: DataValue[] };
+// One filtered scan per (source, sorts, search, filter, inputs); pages slice it locally.
+const scans = new Map<string, Promise<ScanResult<Matched> & { columns: string[] }>>();
 const snapshots = new Map<string, { record: RecordValues; identity: DataValue[] }>();
 
 /** Drops cached schemas and pages; runs after every record write and schema change. */
 export function invalidateRuntimeCache(schemaToo = false) {
   pages.clear();
+  scans.clear();
   if (schemaToo) schemas.clear();
 }
 registerRecordHook({ after: () => invalidateRuntimeCache() });
@@ -108,37 +119,45 @@ async function queryPage(
     rows: rows.slice(request.offset, request.offset + request.limit),
     identities: null,
     total: rows.length,
-    exact: true,
   };
 }
 
-/** A table page with a row filter: scans DuckDB pages in order and keeps matching rows. */
+/**
+ * A table page with a row filter. The table is scanned once (up to `SCAN_LIMIT` rows) per
+ * sort, search, filter and filter inputs; every page is then a slice of the cached matches,
+ * so paging never rescans and `total` is the real match count.
+ */
 async function filteredTablePage(
   table: string,
   request: PageRequest,
   keep: RowPredicate,
+  key: string,
 ): Promise<RecordPage> {
-  let columns: string[] = [];
-  const scan = await scanFiltered(
-    async (offset, limit) => {
-      const result = await readTablePage(table, { ...request, offset, limit });
-      columns = result.columns.map((c) => c.name);
-      return result.rows.map((row, i) => ({
-        record: rowObject(result.columns, row),
-        identity: result.identities[i],
-      }));
-    },
-    (row) => keep(row.record),
-    // One match past this page, so "Next page" is known to lead somewhere.
-    request.offset + request.limit + 1,
-  );
-  const shown = scan.matches.slice(request.offset, request.offset + request.limit);
+  let scan = scans.get(key);
+  if (!scan) {
+    let columns: string[] = [];
+    scan = pagedScan(
+      async (offset, limit) => {
+        const result = await readTablePage(table, { ...request, offset, limit });
+        columns = result.columns.map((c) => c.name);
+        return result.rows.map((row, i) => ({
+          record: rowObject(result.columns, row),
+          identity: result.identities[i],
+        }));
+      },
+      (row) => keep(row.record),
+    ).then((found) => ({ ...found, columns }));
+    scan.catch(() => scans.delete(key));
+    scans.set(key, scan);
+  }
+  const found = await scan;
+  const shown = found.matches.slice(request.offset, request.offset + request.limit);
   return {
-    columns,
+    columns: found.columns,
     rows: shown.map((row) => row.record),
     identities: shown.map((row) => row.identity),
-    total: scan.matches.length,
-    exact: scan.exhausted,
+    total: found.matches.length,
+    truncated: found.truncated,
   };
 }
 
@@ -158,7 +177,8 @@ export async function loadPage(
   if (source?.kind === "query" && source.queryId) {
     page = await queryPage(config, source.queryId, request, keep);
   } else if (source?.kind === "table" && source.table && keep) {
-    page = await filteredTablePage(source.table, request, keep);
+    const scanKey = pageKey(form, { ...request, offset: 0, limit: 0 }, scope);
+    page = await filteredTablePage(source.table, request, keep, scanKey);
   } else if (source?.kind === "table" && source.table) {
     const result = await readTablePage(source.table, request);
     page = {
@@ -166,10 +186,9 @@ export async function loadPage(
       rows: result.rows.map((row) => rowObject(result.columns, row)),
       identities: result.identities,
       total: result.total,
-      exact: true,
     };
   } else {
-    page = { columns: [], rows: [], identities: null, total: 0, exact: true };
+    page = { columns: [], rows: [], identities: null, total: 0 };
   }
   pages.set(pageKey(form, request, scope), page);
   return page;
@@ -266,7 +285,6 @@ export async function relationshipChoices(
     },
     keep,
     limit,
-    { minScan: 0 },
   );
   return scan.matches.slice(0, limit).map(toChoice);
 }

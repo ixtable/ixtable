@@ -9,8 +9,9 @@ import { ReportPreview } from "../reports";
 import { useConfirm } from "../runtime/Confirm";
 import { FormRenderer } from "../runtime/FormRenderer";
 import { type PageKind, useRuntimeNavigation } from "../runtime/navigation";
-import { condition } from "../runtime/formState";
+import { conditionResult } from "../runtime/formState";
 import { can } from "../runtime/rbac";
+import { useDebounced } from "../runtime/useDebounced";
 import { dashboardParams, defaultFilterValues, type FilterValue, resultRows } from "./data";
 import { KIND_LABELS, normalizeDashboard } from "./model";
 import type { Dashboard, DashboardComponent } from "./types";
@@ -40,15 +41,6 @@ export function DashboardView({ dashboardId, params }: DashboardViewProps) {
       </p>
     );
   return <LiveDashboard key={dashboard.id} dashboard={dashboard} initial={params} />;
-}
-
-function useDebounced<T>(value: T, ms: number): T {
-  const [current, setCurrent] = useState(value);
-  useEffect(() => {
-    const timer = setTimeout(() => setCurrent(value), ms);
-    return () => clearTimeout(timer);
-  }, [value, ms]);
-  return current;
 }
 
 function LiveDashboard({
@@ -196,7 +188,11 @@ function LiveDashboard({
   };
 
   // Hidden components are not rendered; the others keep their authored placement, as on forms.
-  const shown = dashboard.components.filter((c) => condition(c.visibleWhen, scope));
+  // A condition that fails to evaluate keeps its component on screen with the error.
+  const shown = dashboard.components.flatMap((c) => {
+    const visible = conditionResult(c.visibleWhen, scope);
+    return visible.value || visible.error ? [{ c, visible }] : [];
+  });
 
   const minHeight = (c: DashboardComponent): CSSProperties => ({
     minHeight:
@@ -244,8 +240,13 @@ function LiveDashboard({
       )}
       {dashboard.components.length ? (
         <GridCanvas layout={dashboard.layout} label={dashboard.name}>
-          {shown.map((c) => {
-            const enabled = condition(c.enabledWhen, scope);
+          {shown.map(({ c, visible }) => {
+            const enabledWhen = conditionResult(c.enabledWhen, scope);
+            const enabled = enabledWhen.value;
+            const problems = [
+              visible.error && `Visible when: ${visible.error}`,
+              enabledWhen.error && `Enabled when: ${enabledWhen.error}`,
+            ].filter(Boolean);
             return (
               <GridItem key={c.id} id={c.id} placement={c.placement} label={c.title}>
                 <section
@@ -255,11 +256,17 @@ function LiveDashboard({
                   style={minHeight(c)}
                 >
                   {c.title && c.kind !== "button" && c.kind !== "filter" && <h3>{c.title}</h3>}
-                  {enabled ? (
+                  {problems.map((problem) => (
+                    <p key={problem} className="dash-error" role="alert">
+                      {problem}
+                    </p>
+                  ))}
+                  {visible.error ? null : enabled ? (
                     body(c)
                   ) : (
-                    // A disabled fieldset disables every native control inside the component.
-                    <fieldset disabled className="dash-disabled-body">
+                    // Presentation only, not access control (use roles for that): the fieldset
+                    // disables native controls and `inert` blocks clicks and focus on the rest.
+                    <fieldset disabled inert className="dash-disabled-body">
                       {body(c)}
                     </fieldset>
                   )}

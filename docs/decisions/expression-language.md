@@ -54,13 +54,16 @@ Filters and conditional styles (PRD §17.1) use the same evaluator through
   Null, false, and evaluation errors drop the row. A syntax error is shown
   in place of the rows.
 - Paging stays honest. A filtered list form reads its table in chunks of 500
-  rows. It scans at least 5,000 rows, or the whole table, and then keeps going
-  until it has found one match past the current page. If it read the whole
-  table, the pager shows an exact total ("1–25 of 40"). Otherwise it shows a
-  lower bound ("1–25 of at least 2,500"). Scanning stops at 50,000 rows. A
-  related list and a lookup scan until they fill their 200 or 50 rows. A
-  dashboard table already holds the whole query result, so its page count is
-  exact.
+  rows, once, up to 50,000 rows, and caches the matches per source, sort,
+  search, filter, and filter inputs. Pages are slices of that cache, so paging
+  never rescans and the pager total is the real match count. If the scan
+  stopped at 50,000 rows, the list says "Filter applied to the first 50,000
+  rows; some matches may be missing." A related list and a lookup scan until
+  they fill their 200 or 50 rows. A dashboard table already holds the whole
+  query result, so its page count is exact.
+- A related list or lookup reloads only when a value its filter reads changes
+  (`filterInputs` uses `referencedNames` to pick `parent.x`, `form.y`, and so
+  on), debounced by 250 ms, so typing in other fields does not rescan.
 - A conditional style is an ordered list of `{ id, when, tone }` rules on a
   form's input and computed controls, and `{ id, column, when, tone }` rules
   on a dashboard table. The first rule whose `when` is true sets the tone.
@@ -70,11 +73,17 @@ Filters and conditional styles (PRD §17.1) use the same evaluator through
   has a non-color cue (a glyph, bold or italic text, or a border style), so it
   still reads in grayscale print and for color-blind users (PRD §27.4).
 - Dashboard components have `visibleWhen` and `enabledWhen`, evaluated with
-  the KPI scope (`params`, `app`) by the form helper `condition()`. There is
-  no dashboard-only state engine.
+  the KPI scope (`params`, `app`) by the form helper `conditionResult()`. A
+  condition that fails to evaluate keeps the component on screen with the
+  error. A lookup whose filter does not parse shows the error under the
+  selector. There is no dashboard-only state engine.
+- `enabledWhen` is presentation, not access control (use roles for that). A
+  disabled component is wrapped in a disabled, `inert` fieldset, and list rows
+  ignore clicks and keys inside an inert container.
 
 Rust stores these fields in `design` and `dashboards` and only flags empty
-ones in validation.
+ones, and dashboard table style rules with no column, in validation. A tone
+it does not know loads as `Tone::Other` and saves back unchanged.
 
 ## Consequences
 
@@ -91,7 +100,8 @@ ones in validation.
 ## Evidence
 
 - `tests/unit/conditions.test.ts`: first-match tones, row filters and their
-  names, chunked scanning with exact and lower-bound totals, pager text.
+  names, chunked scanning, cached full scans with truncation, pager text,
+  filter inputs.
   `tests/unit/dashboard-conditions.test.tsx`: dashboard show/enable and table
   filter and styles. `tests/integration/expressions.test.tsx`: designer
   authoring and runtime results for list form, related list, lookup, and

@@ -305,10 +305,10 @@
   border-radius: 5px;
   background: #fffaf2;
   font-size: 11px;
-  color: #6a4a10;
+  color: var(--ix-warning);
 }
 .fd-issues li.error {
-  color: #9b1c1c;
+  color: var(--ix-danger);
 }
 .fd-asset-preview img {
   max-width: 100%;

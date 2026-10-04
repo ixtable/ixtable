@@ -2502,20 +2502,20 @@ fieldset {
 }
 /* Conditional style tones (src/runtime/conditions.ts). Each tone has a non-color cue
    (glyph, weight, or border style) so it survives grayscale print and color-blind viewing.
-   Text colors are at least 6:1 on white. */
+   Text colors come from AA tokens (at least 4.5:1 on the app surfaces). */
 .tone-positive {
-  color: #1d6b38;
+  color: var(--ix-accent);
 }
 .tone-negative {
-  color: #a11d1d;
+  color: var(--ix-danger);
   font-weight: 700;
 }
 .tone-warning {
-  color: #8a4600;
+  color: var(--ix-warning);
   font-weight: 600;
 }
 .tone-muted {
-  color: #5c6169;
+  color: var(--ix-muted);
   font-style: italic;
 }
 .tone-emphasis {

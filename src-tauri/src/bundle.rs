@@ -478,8 +478,12 @@ pub fn write_atomic(path: &Path, bytes: &[u8]) -> Result<(), AppError> {
     fs::create_dir_all(parent).map_err(io_err)?;
     let tmp = parent.join(format!(".{}.tmp", Uuid::new_v4()));
     let result = (|| {
-        fs::write(&tmp, bytes)?;
-        fs::File::open(&tmp)?.sync_all()?;
+        // Sync through the writing handle: on Windows `sync_all` (FlushFileBuffers)
+        // on a read-only handle fails with "Access is denied" (os error 5).
+        let mut file = fs::File::create(&tmp)?;
+        std::io::Write::write_all(&mut file, bytes)?;
+        file.sync_all()?;
+        drop(file);
         fs::rename(&tmp, path)
     })();
     if result.is_err() {

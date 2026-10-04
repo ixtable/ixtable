@@ -280,7 +280,10 @@ fn check_step(config: &DocumentConfig, action: &ActionDef, step: &Step, issues: 
             missing(issues, "report", text(f, "reportId"), &reports);
             expr_map(issues, "params", false);
         }
-        "openDashboard" => missing(issues, "dashboard", text(f, "dashboardId"), &dashboards),
+        "openDashboard" => {
+            missing(issues, "dashboard", text(f, "dashboardId"), &dashboards);
+            expr_map(issues, "params", false);
+        }
         "setState" => {
             need(issues, "key", "state key");
             need(issues, "value", "value expression");
@@ -456,6 +459,19 @@ mod tests {
         let t: Trigger = serde_json::from_value(json!({"id": "t", "name": "T"})).unwrap();
         assert_eq!((t.enabled, t.max_attempts, t.backoff_ms), (true, 3, 1000));
         assert_eq!(all_steps(&parsed.steps).len(), 3);
+    }
+
+    #[test]
+    fn open_dashboard_params_are_expressions() {
+        let c = config(
+            json!([{"id": "a1", "name": "Go", "steps": [
+                {"id": "1", "kind": "openDashboard", "dashboardId": "none", "params": {"region": " "}}
+            ]}]),
+            json!([]),
+        );
+        let all = messages(&validate(&c)).join("\n");
+        assert!(all.contains("params.region expression is empty"), "{all}");
+        assert!(all.contains("dashboard none does not exist"), "{all}");
     }
 
     #[test]

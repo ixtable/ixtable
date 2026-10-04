@@ -5,11 +5,12 @@ import { DATABASE_CHANGED_EVENT } from "../automation/context";
 import { runAction } from "../automation/runner";
 import { GridCanvas, GridItem } from "../grid";
 import { useDocumentConfig } from "../lib/config-store";
+import { RECORDS_CHANGED_EVENT } from "../lib/records";
 import { ReportPreview } from "../reports";
 import { useConfirm } from "../runtime/Confirm";
-import { FormRenderer } from "../runtime/FormRenderer";
 import { type PageKind, useRuntimeNavigation } from "../runtime/navigation";
 import { can } from "../runtime/rbac";
+import { EmbeddedForm } from "./EmbeddedForm";
 import { dashboardParams, defaultFilterValues, type FilterValue, resultRows } from "./data";
 import { KIND_LABELS, normalizeDashboard } from "./model";
 import type { Dashboard, DashboardComponent } from "./types";
@@ -68,9 +69,10 @@ function LiveDashboard({
     return defaults;
   });
   const settled = useDebounced(values, 250);
+  // Page parameters stay in scope; filter values override parameters of the same name.
   const params = useMemo(
-    () => dashboardParams(dashboard.filters, settled),
-    [dashboard.filters, settled],
+    () => ({ ...initial, ...dashboardParams(dashboard.filters, settled) }),
+    [initial, dashboard.filters, settled],
   );
   const queryIds = useMemo(() => {
     const ids = dashboard.components
@@ -83,7 +85,11 @@ function LiveDashboard({
 
   useEffect(() => {
     window.addEventListener(DATABASE_CHANGED_EVENT, refresh);
-    return () => window.removeEventListener(DATABASE_CHANGED_EVENT, refresh);
+    window.addEventListener(RECORDS_CHANGED_EVENT, refresh);
+    return () => {
+      window.removeEventListener(DATABASE_CHANGED_EVENT, refresh);
+      window.removeEventListener(RECORDS_CHANGED_EVENT, refresh);
+    };
   }, [refresh]);
 
   const placed = new Set(
@@ -111,7 +117,9 @@ function LiveDashboard({
           );
       },
       setState: (where, key, value) => {
+        // Validation rejects form-scope state on dashboard buttons: there is no form here.
         if (where === "app") runtime.setAppState(key, value);
+        else throw new Error("A dashboard button cannot set form state.");
       },
       confirm,
       notify,
@@ -162,7 +170,7 @@ function LiveDashboard({
       }
       case "form":
         return c.formId ? (
-          <FormRenderer formId={c.formId} mode={c.mode ?? undefined} />
+          <EmbeddedForm component={c} params={params} />
         ) : (
           <p className="dash-muted">Choose a form.</p>
         );

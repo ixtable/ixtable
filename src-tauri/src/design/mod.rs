@@ -75,6 +75,10 @@ pub struct FormSource {
     pub table: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub query_id: Option<String>,
+    /// Query sources: parameter name to an expression over `app` and `params`,
+    /// evaluated in TypeScript and bound to the saved query's `$name`.
+    #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
+    pub params: std::collections::BTreeMap<String, String>,
 }
 
 /// A form-level validation rule: `expression` must be true for the record to save.

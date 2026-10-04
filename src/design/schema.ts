@@ -49,6 +49,8 @@ export type FormSource = {
   kind: "table" | "query";
   table?: string | null;
   queryId?: string | null;
+  /** Query sources: parameter name to an expression over `app` and `params` (page parameters). */
+  params?: Record<string, string> | null;
 };
 export type ControlValidation = {
   required: boolean;

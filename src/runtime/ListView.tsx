@@ -10,6 +10,7 @@ import {
   type PageRequest,
   type RecordPage,
   recordIdFor,
+  sourceParams,
   tableSchema,
 } from "./data";
 import { cellText } from "./formState";
@@ -24,12 +25,16 @@ type Props = {
   form: DesignForm;
   onOpen: (recordId: unknown) => void;
   onCreate: () => void;
+  /** Page parameters (navigation or dashboard), in scope for query source bindings. */
+  params?: Record<string, unknown>;
 };
 
+const NO_PARAMS: Record<string, unknown> = {};
+
 /** List mode: DuckDB-backed paging with sort and a contains-filter, rows open the detail form. */
-export function ListView({ form, onOpen, onCreate }: Props) {
+export function ListView({ form, onOpen, onCreate, params = NO_PARAMS }: Props) {
   const { config } = useDocumentConfig();
-  const { roleId } = useRuntimeNavigation();
+  const { roleId, app } = useRuntimeNavigation();
   const [sorts, setSorts] = useState<Sort[]>([]);
   const [offset, setOffset] = useState(0);
   const [search, setSearch] = useState("");
@@ -57,15 +62,30 @@ export function ListView({ form, onOpen, onCreate }: Props) {
     () => ({ offset, limit, sorts, filters }),
     [offset, limit, sorts, filters],
   );
-  const [page, setPage] = useState<RecordPage | null>(() => cachedPage(form, request));
+  // Bound query parameters; JSON keeps the effect below from rerunning on equal values.
+  const bound = useMemo(() => {
+    try {
+      return { json: JSON.stringify(sourceParams(form, { app, params })), error: "" };
+    } catch (reason) {
+      return { json: "{}", error: reason instanceof Error ? reason.message : String(reason) };
+    }
+  }, [form, app, params]);
+  const [page, setPage] = useState<RecordPage | null>(() =>
+    cachedPage(form, request, JSON.parse(bound.json)),
+  );
 
   useEffect(() => {
     let live = true;
-    const hit = cachedPage(form, request);
+    if (bound.error) {
+      setError(bound.error);
+      return;
+    }
+    const values = JSON.parse(bound.json) as Record<string, unknown>;
+    const hit = cachedPage(form, request, values);
     if (hit) setPage(hit);
     const timer = setTimeout(
       () => {
-        loadPage(config, form, request)
+        loadPage(form, request, values)
           .then((next) => {
             if (!live) return;
             setPage(next);
@@ -81,7 +101,7 @@ export function ListView({ form, onOpen, onCreate }: Props) {
       live = false;
       clearTimeout(timer);
     };
-  }, [config, form, request, search]);
+  }, [config, form, request, search, bound]);
 
   useEffect(() => {
     if (table)

@@ -23,7 +23,7 @@ import {
   toColumnValue,
 } from "./values";
 
-type Rows = { records: RecordValues[]; identities: DataValue[][] };
+type Rows = { records: RecordValues[]; identities: DataValue[][]; total: number };
 type Editing = { mode: FormMode; recordId?: unknown } | null;
 
 /** One-level master/detail: child rows whose foreign key matches the current record. */
@@ -35,6 +35,7 @@ export function RelatedRecords({ ctx, control }: { ctx: BodyContext; control: De
   const [rows, setRows] = useState<Rows | null>(null);
   const [editing, setEditing] = useState<Editing>(null);
   const [error, setError] = useState("");
+  const [offset, setOffset] = useState(0);
   // Messages of the embedded child form, shown here because that form closes on save.
   const [message, setMessage] = useState("");
   const [dialog, confirm] = useConfirm();
@@ -58,6 +59,8 @@ export function RelatedRecords({ ctx, control }: { ctx: BodyContext; control: De
     rows?.records,
   );
   const saved = !!ctx.identity && parentValue != null;
+  // Same page size as the child's list form.
+  const limit = Math.max(1, childForm?.pageSize || 25);
 
   const load = useCallback(async () => {
     if (!related || !saved) return;
@@ -65,7 +68,8 @@ export function RelatedRecords({ ctx, control }: { ctx: BodyContext; control: De
       const child = await tableSchema(related.table);
       const fk = child.columns.find((c) => c.name === related.foreignKey);
       const page = await readTablePage(related.table, {
-        limit: 200,
+        offset,
+        limit,
         filters: [
           {
             column: related.foreignKey,
@@ -78,12 +82,16 @@ export function RelatedRecords({ ctx, control }: { ctx: BodyContext; control: De
       setRows({
         records: page.rows.map((row) => rowObject(page.columns, row)),
         identities: page.identities,
+        total: page.total,
       });
+      // A delete can empty the last page: step back to the new last page.
+      if (offset > 0 && offset >= page.total)
+        setOffset(Math.max(0, Math.floor((page.total - 1) / limit) * limit));
       setError("");
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : String(reason));
     }
-  }, [related, saved, parentValue]);
+  }, [related, saved, parentValue, offset, limit]);
   useEffect(() => {
     load().catch(() => undefined);
   }, [load]);
@@ -216,6 +224,29 @@ export function RelatedRecords({ ctx, control }: { ctx: BodyContext; control: De
           )}
         </tbody>
       </table>
+      {rows && rows.total > limit && (
+        <div className="rt-pager">
+          <span role="status">
+            {`${offset + 1}–${Math.min(offset + limit, rows.total)} of ${rows.total}`}
+          </span>
+          <button
+            type="button"
+            aria-label={`Previous page of ${label.toLowerCase()}`}
+            disabled={offset === 0}
+            onClick={() => setOffset(Math.max(0, offset - limit))}
+          >
+            Previous page
+          </button>
+          <button
+            type="button"
+            aria-label={`Next page of ${label.toLowerCase()}`}
+            disabled={offset + limit >= rows.total}
+            onClick={() => setOffset(offset + limit)}
+          >
+            Next page
+          </button>
+        </div>
+      )}
       {editing && childForm && (
         <div className="rt-embedded" role="group" aria-label={`${label} record`}>
           <FormRenderer

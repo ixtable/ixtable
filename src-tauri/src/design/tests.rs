@@ -106,6 +106,7 @@ fn dependency_issues_cover_queries_actions_forms_and_navigation() {
             kind: SourceKind::Query,
             table: None,
             query_id: Some("missing".into()),
+            ..Default::default()
         }),
         modes: vec![FormMode::List, FormMode::Edit],
         detail_form_id: Some("nope".into()),
@@ -213,6 +214,7 @@ fn table_references_are_checked_against_schema() {
             kind: SourceKind::Table,
             table: Some("customers".into()),
             query_id: None,
+            ..Default::default()
         }),
         controls: vec![
             control("name", ControlKind::Text),
@@ -295,4 +297,44 @@ fn container_children_use_the_container_grid() {
     assert!(errors(&validate(&config))
         .iter()
         .any(|e| e.contains("tab that does not exist")));
+}
+
+#[test]
+fn query_source_parameter_bindings_are_checked() {
+    let mut config = config_with(Form {
+        id: "f".into(),
+        name: "Orders".into(),
+        source: Some(FormSource {
+            kind: SourceKind::Query,
+            query_id: Some("q".into()),
+            params: [
+                ("who".to_string(), "app.user.name".to_string()),
+                ("ghost".to_string(), "1".to_string()),
+                ("min".to_string(), " ".to_string()),
+            ]
+            .into(),
+            ..Default::default()
+        }),
+        modes: vec![FormMode::List],
+        ..Default::default()
+    });
+    config.saved_queries.push(SavedQuery {
+        id: "q".into(),
+        name: "Q".into(),
+        sql: "SELECT 1 WHERE $who IS NOT NULL OR $min > 0".into(),
+        parameters: ["who", "min"]
+            .iter()
+            .map(|n| crate::archive::QueryParameter {
+                name: n.to_string(),
+                ..Default::default()
+            })
+            .collect(),
+        ..Default::default()
+    });
+    let errs = errors(&validate(&config)).join("\n");
+    assert!(errs.contains("binds $ghost"), "{errs}");
+    assert!(errs.contains("binds $min to an empty"), "{errs}");
+    assert!(!errs.contains("$who"), "{errs}");
+    let json = serde_json::to_value(&config.design.forms.last().unwrap().source).unwrap();
+    assert_eq!(json["params"]["who"], "app.user.name");
 }

@@ -427,6 +427,7 @@ pub fn run() {
             // queries commands
             queries::execute_parameterized_query,
             queries::run_saved_query,
+            queries::run_saved_query_page,
             queries::cancel_query,
             queries::check_query_sql,
             // templates commands

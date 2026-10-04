@@ -319,6 +319,29 @@ pub fn validate(config: &DocumentConfig) -> Vec<Issue> {
                         ),
                     ));
                 }
+                if let Some(saved) = config.saved_queries.iter().find(|q| q.id == query) {
+                    for (name, expr) in &source.params {
+                        if !saved.parameters.iter().any(|p| &p.name == name) {
+                            out.push(Issue::error(
+                                "form",
+                                id,
+                                format!(
+                                    "form \"{}\" binds ${name}, which its query does not declare",
+                                    form.name
+                                ),
+                            ));
+                        } else if expr.trim().is_empty() {
+                            out.push(Issue::error(
+                                "form",
+                                id,
+                                format!(
+                                    "form \"{}\" binds ${name} to an empty expression",
+                                    form.name
+                                ),
+                            ));
+                        }
+                    }
+                }
                 if form
                     .modes
                     .iter()

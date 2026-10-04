@@ -52,6 +52,11 @@ same `Issue` shape, plus rendering warnings such as overlapping regions.
   `normalizeLayout` fills serde defaults in Rust field order and never
   persists derived CSS.
 - Free positioning in pixels is out of scope. Every item sits on a track.
+- Dashboards place the real `FormRenderer`. A form component in detail or
+  edit mode opens the record its `recordId` expression names (over the
+  dashboard `params` and `app`), or the first row of the form's source when it
+  is blank. The editor offers only modes the form supports, and query sources
+  never offer create or edit. Filter values reach the form as `params`.
 
 ## Evidence
 

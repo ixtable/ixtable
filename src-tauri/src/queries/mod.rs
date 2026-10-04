@@ -188,11 +188,13 @@ pub fn prepare_sql(sql: &str) -> Result<Rewritten, AppError> {
     Ok(rewritten)
 }
 
+mod page;
 mod params;
 mod run;
 #[cfg(test)]
 mod tests;
 mod validate;
+pub use page::*;
 pub use params::*;
 pub use run::*;
 pub use validate::validate;
@@ -264,6 +266,44 @@ pub async fn run_saved_query(
             &params,
             true,
             limit,
+        )
+    })
+    .await
+}
+
+/// Reads one page of a saved query: filters, sorts, LIMIT/OFFSET and the total
+/// count run in DuckDB over the query as a subquery (see `page_on`).
+#[allow(clippy::too_many_arguments)]
+#[tauri::command]
+pub async fn run_saved_query_page(
+    window_label: String,
+    id: String,
+    params: Vec<crate::data::NamedValue>,
+    offset: u64,
+    limit: u64,
+    sorts: Vec<crate::data::Sort>,
+    filters: Vec<crate::data::Filter>,
+    run_id: Option<String>,
+) -> Result<QueryPage, AppError> {
+    blocking(move || {
+        let manager = crate::manager()?;
+        let config = manager.config(&window_label)?;
+        let query = find_saved(&config, &id)?;
+        let connection = manager.read_connection(&window_label)?;
+        let request = PageSpec {
+            offset,
+            limit,
+            sorts: &sorts,
+            filters: &filters,
+        };
+        page_on(
+            &connection,
+            &window_label,
+            run_id,
+            &query.sql,
+            &query.parameters,
+            &params,
+            &request,
         )
     })
     .await

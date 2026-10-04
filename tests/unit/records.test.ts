@@ -3,9 +3,14 @@ import { beforeEach, expect, it, vi } from "vitest";
 const call = vi.fn();
 vi.mock("../../src/lib/api", () => ({ call: (...args: unknown[]) => call(...args) }));
 
-const { deleteRecord, insertRecord, registerRecordHook, updateRecord } = await import(
-  "../../src/lib/records"
-);
+const {
+  deleteRecord,
+  insertRecord,
+  RECORDS_CHANGED_EVENT,
+  registerRecordHook,
+  updateRecord,
+  writeRecordBatch,
+} = await import("../../src/lib/records");
 
 beforeEach(() => call.mockReset());
 
@@ -83,4 +88,30 @@ it("passes identity and values for updates and stops calling unregistered hooks"
     identity,
     expected: null,
   });
+});
+
+it("announces committed writes once per tick, and not aborted ones", async () => {
+  const seen = vi.fn();
+  window.addEventListener(RECORDS_CHANGED_EVENT, seen);
+  call.mockImplementation(async (command: string) =>
+    command === "execute_write_batch" ? [{ changed: 1 }, { changed: 1 }] : 1,
+  );
+  const identity = [{ type: "integer" as const, value: 1 }];
+  await updateRecord("people", [], identity);
+  await deleteRecord("people", identity);
+  await writeRecordBatch([
+    { operation: "delete", table: "people", values: [], identity },
+    { operation: "delete", table: "people", values: [], identity },
+  ]);
+  await vi.waitFor(() => expect(seen).toHaveBeenCalledTimes(1));
+  const unregister = registerRecordHook({
+    before: () => {
+      throw new Error("blocked");
+    },
+  });
+  await expect(deleteRecord("people", identity)).rejects.toThrow("blocked");
+  unregister();
+  await new Promise((resolve) => setTimeout(resolve, 5));
+  expect(seen).toHaveBeenCalledTimes(1);
+  window.removeEventListener(RECORDS_CHANGED_EVENT, seen);
 });

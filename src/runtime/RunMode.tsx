@@ -165,6 +165,7 @@ export function PageView({ page, back = null }: { page: RuntimePage; back?: Back
           formId={page.id}
           mode={page.mode as "list" | undefined}
           recordId={page.recordId}
+          params={page.params}
           back={back}
         />
       );
@@ -186,6 +187,7 @@ export function PageView({ page, back = null }: { page: RuntimePage; back?: Back
             name="DashboardView"
             missing="Dashboards are not available in this build."
             dashboardId={page.id}
+            params={page.params}
           />
         </>
       );

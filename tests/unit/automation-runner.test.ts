@@ -177,6 +177,20 @@ describe("steps", () => {
     expect(result.error).toMatch(/dashboard nope does not exist/);
   });
 
+  it("passes evaluated parameters to openDashboard", async () => {
+    const a = action([
+      step({ kind: "openDashboard", dashboardId: "d1", params: { region: "record.region" } }),
+    ]);
+    const config = { ...baseConfig([a]), dashboards: [{ id: "d1", name: "Sales" }] };
+    const { ctx, events } = context(config as unknown as DocumentConfig, {
+      record: { region: "East" },
+    });
+    expect((await runAction(a, ctx)).ok).toBe(true);
+    expect(events).toEqual([
+      ["navigate", { kind: "dashboard", id: "d1", params: { region: "East" } }],
+    ]);
+  });
+
   it("reports empty and invalid expressions as step failures", async () => {
     const empty = action([step({ kind: "message", text: " " })]);
     const { ctx } = context(baseConfig([empty]));

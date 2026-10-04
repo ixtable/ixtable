@@ -23,6 +23,8 @@ export type FormRendererProps = {
   back?: BackLink | null;
   /** Receives an embedded form's messages (it closes after saving), to show near the list. */
   onNotify?: (text: string, tone: "info" | "error") => void;
+  /** Page parameters (navigation `params`, dashboard filter values) for query source bindings. */
+  params?: Record<string, unknown>;
 };
 
 type View = { formId: string; mode: FormMode; recordId?: unknown };
@@ -45,6 +47,7 @@ function FormStack({
   onDone,
   back = null,
   onNotify,
+  params,
 }: FormRendererProps) {
   const { config } = useDocumentConfig();
   const runtime = useRuntimeNavigation();
@@ -105,6 +108,7 @@ function FormStack({
           form={form}
           onOpen={(id) => push({ formId: detailId, mode: "detail", recordId: id })}
           onCreate={() => push({ formId: detailId, mode: "create" })}
+          params={params}
         />
       </div>
     );

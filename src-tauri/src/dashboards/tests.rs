@@ -238,3 +238,46 @@ fn incomplete_components_are_warnings() {
         vec!["dashboardComponent:k: component ids must be non-empty and unique within a dashboard"]
     );
 }
+
+#[test]
+fn embedded_form_modes_and_button_form_state_are_checked() {
+    let mut dashboard = sample();
+    dashboard.components = serde_json::from_value(json!([
+        {"id": "e1", "kind": "form", "title": "Edit", "formId": "qf", "mode": "edit", "recordId": "params.id",
+         "placement": {"column": 1, "row": 1, "columnSpan": 4}},
+        {"id": "e2", "kind": "form", "title": "Show", "formId": "qf", "mode": "detail",
+         "placement": {"column": 5, "row": 1, "columnSpan": 4}},
+        {"id": "b1", "kind": "button", "title": "Set", "actionId": "a1",
+         "placement": {"column": 9, "row": 1, "columnSpan": 4}}
+    ]))
+    .unwrap();
+    assert_eq!(
+        dashboard.components[0].record_id.as_deref(),
+        Some("params.id")
+    );
+    let mut config = config_with(dashboard);
+    config.design.forms.push(crate::design::Form {
+        id: "qf".into(),
+        name: "Sales".into(),
+        source: Some(crate::design::FormSource {
+            kind: crate::design::SourceKind::Query,
+            query_id: Some("q1".into()),
+            ..Default::default()
+        }),
+        modes: vec![FormMode::List, FormMode::Detail],
+        ..Default::default()
+    });
+    config.actions = serde_json::from_value(json!([{
+        "id": "a1", "name": "A", "steps": [{"id": "s", "kind": "setState", "scope": "form", "key": "k", "value": "1"}]
+    }]))
+    .unwrap();
+    let issues = validate(&config);
+    let warnings = messages(&issues, Severity::Warning).join("\n");
+    assert!(
+        warnings.contains("\"Edit\" opens its form in a mode"),
+        "{warnings}"
+    );
+    assert!(!warnings.contains("\"Show\" opens"), "{warnings}");
+    let errors = messages(&issues, Severity::Error).join("\n");
+    assert!(errors.contains("sets form state"), "{errors}");
+}

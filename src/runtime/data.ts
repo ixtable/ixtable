@@ -1,5 +1,7 @@
 import { runQuery } from "../automation/runner";
+import { runSavedQueryPage } from "../query/api";
 import type { DesignForm, Relationship } from "../design/schema";
+import { evaluate } from "../expr";
 import { inspectTable, readTablePage } from "../lib/api";
 import { registerRecordHook } from "../lib/records";
 import type { DataValue, DocumentConfig, Filter, Sort, TableSchema } from "../lib/types";
@@ -37,74 +39,41 @@ export function tableSchema(table: string): Promise<TableSchema> {
   return hit;
 }
 
-const pageKey = (source: unknown, request: PageRequest) => JSON.stringify([source, request]);
+const pageKey = (source: unknown, request: PageRequest, params: Record<string, unknown>) =>
+  JSON.stringify([source, request, params]);
 
 /** A cached page for instant re-navigation (null when not loaded yet). */
-export const cachedPage = (form: DesignForm, request: PageRequest) =>
-  pages.get(pageKey(form.source, request)) ?? null;
+export const cachedPage = (
+  form: DesignForm,
+  request: PageRequest,
+  params: Record<string, unknown> = {},
+) => pages.get(pageKey(form.source, request, params)) ?? null;
 
-const matches = (value: unknown, filter: Filter): boolean => {
-  const target = filter.value ? fromDataValue(filter.value) : null;
-  const text = String(value ?? "").toLowerCase();
-  switch (filter.operator) {
-    case "contains":
-      return text.includes(String(target ?? "").toLowerCase());
-    case "starts_with":
-      return text.startsWith(String(target ?? "").toLowerCase());
-    case "is_null":
-      return value == null;
-    case "is_not_null":
-      return value != null;
-    case "eq":
-      return String(value) === String(target);
-    case "ne":
-      return String(value) !== String(target);
-    default: {
-      const a = Number(value);
-      const b = Number(target);
-      if (filter.operator === "lt") return a < b;
-      if (filter.operator === "lte") return a <= b;
-      if (filter.operator === "gt") return a > b;
-      return a >= b;
-    }
-  }
-};
-
-async function queryPage(config: DocumentConfig, queryId: string, request: PageRequest) {
-  const result = await runQuery(config, queryId, {});
-  let rows = result.rows.map((row) =>
-    rowObject(
-      result.columns.map((name) => ({ name })),
-      row,
-    ),
-  );
-  rows = rows.filter((row) => request.filters.every((f) => matches(row[f.column], f)));
-  for (const sort of [...request.sorts].reverse()) {
-    rows = [...rows].sort((a, b) => {
-      const x = a[sort.column];
-      const y = b[sort.column];
-      const order = x == null ? -1 : y == null ? 1 : x < y ? -1 : x > y ? 1 : 0;
-      return sort.descending ? -order : order;
-    });
-  }
+/** Query sources page in DuckDB (Rust wraps the saved SQL), so totals are exact. */
+async function queryPage(queryId: string, request: PageRequest, params: Record<string, unknown>) {
+  const result = await runSavedQueryPage(queryId, params, request);
+  const columns = result.columns.map((name) => ({ name }));
   return {
     columns: result.columns,
-    rows: rows.slice(request.offset, request.offset + request.limit),
+    rows: result.rows.map((row) => rowObject(columns, row)),
     identities: null,
-    total: rows.length,
+    total: result.total,
   };
 }
 
-/** Reads one page of a form's source through DuckDB (table page or saved query). */
+/**
+ * Reads one page of a form's source through DuckDB (table page or saved query).
+ * `params` are the query source's bound parameter values (see `sourceParams`).
+ */
 export async function loadPage(
-  config: DocumentConfig,
   form: DesignForm,
   request: PageRequest,
+  params: Record<string, unknown> = {},
 ): Promise<RecordPage> {
   const source = form.source;
   let page: RecordPage;
   if (source?.kind === "query" && source.queryId) {
-    page = await queryPage(config, source.queryId, request);
+    page = await queryPage(source.queryId, request, params);
   } else if (source?.kind === "table" && source.table) {
     const result = await readTablePage(source.table, request);
     page = {
@@ -116,8 +85,48 @@ export async function loadPage(
   } else {
     page = { columns: [], rows: [], identities: null, total: 0 };
   }
-  pages.set(pageKey(source, request), page);
+  pages.set(pageKey(source, request, params), page);
   return page;
+}
+
+/** Expression scope for a query source's parameter bindings. */
+export type SourceScope = { app: Record<string, unknown>; params: Record<string, unknown> };
+
+/**
+ * Evaluates a query source's parameter bindings (`source.params`: name to
+ * expression over `app` and `params`). Throws with the parameter name when one fails.
+ */
+export function sourceParams(form: DesignForm, scope: SourceScope): Record<string, unknown> {
+  const out: Record<string, unknown> = {};
+  if (form.source?.kind !== "query") return out;
+  for (const [name, src] of Object.entries(form.source.params ?? {})) {
+    if (!src?.trim()) continue;
+    try {
+      out[name] = evaluate(src, scope);
+    } catch (error) {
+      throw new Error(
+        `Parameter $${name}: ${error instanceof Error ? error.message : String(error)}`,
+        { cause: error },
+      );
+    }
+  }
+  return out;
+}
+
+/**
+ * The record id of the first row of a form's source (the row itself for query
+ * sources), or null when the source is empty. Used to open detail/edit views
+ * that have no record of their own (design preview, dashboard-embedded forms).
+ */
+export async function firstRecordId(
+  form: DesignForm,
+  params: Record<string, unknown> = {},
+): Promise<unknown> {
+  const page = await loadPage(form, { offset: 0, limit: 1, sorts: [], filters: [] }, params);
+  const record = page.rows[0];
+  if (!record) return null;
+  if (form.source?.kind !== "table" || !form.source.table || !page.identities) return record;
+  return recordIdFor(await tableSchema(form.source.table), record, page.identities[0]);
 }
 
 /** Primary key columns in key order. */

@@ -2,11 +2,11 @@
 import { Trash2 } from "lucide-react";
 import { type ReactNode, useId } from "react";
 import { ActionPicker } from "../automation/ActionPicker";
-import { FORM_MODES, type FormMode } from "../design/schema";
+import type { FormMode } from "../design/schema";
 import { check } from "../expr";
 import { useDocumentConfig } from "../lib/config-store";
 import { QueryPicker } from "../query/QueryPicker";
-import { CHART_LABELS, KIND_LABELS } from "./model";
+import { CHART_LABELS, embeddableModes, KIND_LABELS } from "./model";
 import { useQueryColumns } from "./useQueryColumns";
 import { CHART_TYPES, type ChartType, type Dashboard, type DashboardComponent } from "./types";
 
@@ -122,10 +122,12 @@ function ExpressionInput({
   label,
   value,
   onChange,
+  placeholder = "sum(rows.amount)",
 }: {
   label: string;
   value: string | null | undefined;
   onChange: (value: string | null) => void;
+  placeholder?: string;
 }) {
   const id = useId();
   const problem = value?.trim()
@@ -140,7 +142,7 @@ function ExpressionInput({
         id={id}
         className="fd-code"
         spellCheck={false}
-        placeholder="sum(rows.amount)"
+        placeholder={placeholder}
         value={value ?? ""}
         aria-invalid={problem ? true : undefined}
         aria-describedby={problem ? `${id}-problem` : undefined}
@@ -173,6 +175,7 @@ export function ComponentProperties({
   const discovered = useQueryColumns(usesQuery ? component.queryId : null, params);
   const columns = discovered.columns;
   const c = component;
+  const formModes = embeddableModes((config.design?.forms ?? []).find((f) => f.id === c.formId));
   return (
     <>
       <small>{KIND_LABELS[c.kind].toUpperCase()} PROPERTIES</small>
@@ -354,7 +357,14 @@ export function ComponentProperties({
               <select
                 id={id}
                 value={c.formId ?? ""}
-                onChange={(e) => change({ formId: e.target.value || null })}
+                onChange={(e) => {
+                  const next = (config.design?.forms ?? []).find((f) => f.id === e.target.value);
+                  const modes = embeddableModes(next);
+                  change({
+                    formId: e.target.value || null,
+                    mode: c.mode && modes.includes(c.mode) ? c.mode : (modes[0] ?? null),
+                  });
+                }}
               >
                 <option value="">(none)</option>
                 {(config.design?.forms ?? []).map((f) => (
@@ -369,10 +379,10 @@ export function ComponentProperties({
             {(id) => (
               <select
                 id={id}
-                value={c.mode ?? "list"}
+                value={c.mode ?? formModes[0] ?? ""}
                 onChange={(e) => change({ mode: e.target.value as FormMode })}
               >
-                {FORM_MODES.map((m) => (
+                {formModes.map((m) => (
                   <option key={m} value={m}>
                     {m}
                   </option>
@@ -380,6 +390,14 @@ export function ComponentProperties({
               </select>
             )}
           </Field>
+          {(c.mode === "detail" || c.mode === "edit") && (
+            <ExpressionInput
+              label="Record id"
+              value={c.recordId}
+              placeholder="Blank: first row of the form's source"
+              onChange={(v) => change({ recordId: v })}
+            />
+          )}
         </>
       )}
       {c.kind === "report" && (

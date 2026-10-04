@@ -28,7 +28,6 @@ const grid = () => ({
   breakpoints: [],
 });
 
-/** A create-mode form with a tab group (General, Planning) and a conditionally enabled section. */
 async function seedTicketForm() {
   await createTable("tickets", [
     { name: "id", declaredType: "INTEGER", primaryKeyPosition: 1 },
@@ -98,7 +97,6 @@ async function seedTicketForm() {
 it("switches tabs at runtime, flags a tab with errors, and disables a section's controls", async () => {
   const user = await renderNewDocument();
   await seedTicketForm();
-  // Reopen so the Studio loads the definition written through the bridge.
   const archive = join(process.env.IXTABLE_STATE_DIR ?? "", "form-tabs.ixt");
   dialogMock.save.mockResolvedValueOnce(archive);
   await user.click(screen.getByRole("button", { name: "Save project" }));
@@ -114,17 +112,14 @@ it("switches tabs at runtime, flags a tab with errors, and disables a section's 
   await user.click(within(nav).getByRole("button", { name: "Tickets" }));
   const form = await screen.findByRole("form", { name: "New Ticket" }, LONG);
 
-  // Only the active tab's controls render.
   const tablist = within(form).getByRole("tablist", { name: "Ticket tabs" });
   const generalTab = within(tablist).getByRole("tab", { name: "General" });
   expect(generalTab).toHaveAttribute("aria-selected", "true");
   expect(within(form).getByRole("textbox", { name: "Title" })).toBeInTheDocument();
   expect(within(form).queryByRole("spinbutton", { name: /Priority/ })).toBeNull();
 
-  // The section is disabled until a priority is set, so its input is too.
   expect(within(form).getByRole("textbox", { name: "Notes" })).toBeDisabled();
 
-  // A required field on the hidden tab blocks saving and marks its tab.
   await user.type(within(form).getByRole("textbox", { name: "Title" }), "Printer jam");
   await user.click(within(form).getByRole("button", { name: "Create" }));
   const planningTab = await within(tablist).findByRole(
@@ -142,7 +137,6 @@ it("switches tabs at runtime, flags a tab with errors, and disables a section's 
   await user.type(priority, "2");
   await waitFor(() => expect(within(form).getByRole("textbox", { name: "Notes" })).toBeEnabled());
 
-  // Keyboard navigation between tabs keeps the typed value.
   await user.keyboard("{Shift>}{Tab}{/Shift}");
   await user.keyboard("{ArrowLeft}");
   await waitFor(() => expect(generalTab).toHaveAttribute("aria-selected", "true"));

@@ -155,7 +155,6 @@ describe("form validation and expressions", () => {
     const open = enabledControls(f, scope({ open: true, qty: 0 }));
     expect(nested.filter((id) => open.has(id))).toEqual(nested);
     expect(open.has(own.id)).toBe(false);
-    // Visibility is independent of enabled state.
     expect(visibleControls(f, scope({ open: false })).has(inner.id)).toBe(true);
   });
 

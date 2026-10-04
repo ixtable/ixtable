@@ -38,7 +38,6 @@ async function openDesigner(user: User) {
   await screen.findByRole("region", { name: "Form builder" }, LONG);
 }
 
-/** Selects a control on the canvas and resizes it with Alt+ArrowLeft `times` times. */
 async function narrow(user: User, label: string, times: number) {
   const item = await screen.findByRole("group", { name: label }, LONG);
   await user.click(item);
@@ -52,7 +51,6 @@ it("limits keyboard resizing per control kind", async () => {
 
   await user.click(screen.getByRole("button", { name: "Add Related records" }));
   await narrow(user, "New related records", 10);
-  // A related list never gets narrower than half of a 12-column grid.
   await waitFor(async () => expect((await control("relatedList"))?.placement.columnSpan).toBe(6));
   expect(screen.getByRole("button", { name: "Narrow New related records" })).toBeDisabled();
   expect(properties().getByRole("spinbutton", { name: "Column span" })).toHaveValue(6);
@@ -88,7 +86,6 @@ it("edits tracks, alignment and regions, and hides 'Enabled when' on static cont
   await user.click(screen.getByRole("button", { name: "Add Section" }));
   expect(properties().getByRole("textbox", { name: "Enabled when" })).toBeInTheDocument();
 
-  // A region wider than the grid is reported in the designer.
   await user.click(properties().getByRole("button", { name: "Back to form properties" }));
   const span = properties().getByRole("spinbutton", { name: "Region 1 column span" });
   await user.type(span, "0");

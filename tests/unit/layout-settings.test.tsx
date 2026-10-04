@@ -1,7 +1,7 @@
 import { fireEvent, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { useState } from "react";
-import { describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import { LayoutSettings } from "../../src/design/LayoutSettings";
 import { RegionPicker } from "../../src/design/RegionEditor";
 import { defaultGridLayout } from "../../src/grid/engine";
@@ -42,8 +42,12 @@ const small = (): GridLayout => ({
 const last = (spy: ReturnType<typeof vi.fn>) => spy.mock.calls.at(-1)?.[0] as GridLayout;
 
 describe("LayoutSettings", () => {
+  let user: ReturnType<typeof userEvent.setup>;
+  beforeEach(() => {
+    user = userEvent.setup();
+  });
+
   it("edits column and row tracks, keeping authored tracks when the count changes", async () => {
-    const user = userEvent.setup();
     const onChange = vi.fn();
     render(<Harness initial={small()} onChange={onChange} />);
     await user.selectOptions(screen.getByLabelText("Column 1 size kind"), "fixed");
@@ -53,7 +57,6 @@ describe("LayoutSettings", () => {
     await user.selectOptions(screen.getByLabelText("Column 3 size kind"), "content");
     expect(screen.queryByLabelText("Column 3 size")).toBeNull();
     const count = screen.getByRole("spinbutton", { name: "Columns" });
-    // Controlled number input: a cleared field snaps back to 1, so set the value directly.
     fireEvent.change(count, { target: { value: "4" } });
     const columns = last(onChange).columns;
     expect(columns).toHaveLength(4);
@@ -68,7 +71,6 @@ describe("LayoutSettings", () => {
   });
 
   it("sets alignment and named regions", async () => {
-    const user = userEvent.setup();
     const onChange = vi.fn();
     render(<Harness initial={small()} onChange={onChange} />);
     await user.selectOptions(screen.getByLabelText("Horizontal alignment"), "center");
@@ -113,8 +115,12 @@ describe("LayoutSettings", () => {
 });
 
 describe("RegionPicker", () => {
+  let user: ReturnType<typeof userEvent.setup>;
+  beforeEach(() => {
+    user = userEvent.setup();
+  });
+
   it("places an item in a named region and back", async () => {
-    const user = userEvent.setup();
     const onChange = vi.fn();
     const layout: GridLayout = {
       ...small(),

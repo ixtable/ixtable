@@ -27,6 +27,14 @@ rusqlite against the session's `data.db`. `PostgresRecordStore` uses the
 - `impact`, which previews row counts and dependents before a destructive change
 - `run_script`, for migrations and schema scripts, with one transaction per script
 
+A column's check is the set of table checks that mention that column and no
+other (`plan::column_checks`). `alter_column` sets it to exactly
+`definition.check`: a missing check or the same text keeps the stored checks,
+new text replaces them, and an empty string removes them. Both stores apply
+this through the shared plan; PostgreSQL drops and adds the named constraints
+that differ. The schema designer shows the column's check and sends it only
+when the user edited it, so a rename still carries the renamed check along.
+
 Every write commits in the store, then the manager refreshes the DuckDB
 reader (see [DuckDB read path](./duckdb-read-path.md)). Reads never use the
 store connection.

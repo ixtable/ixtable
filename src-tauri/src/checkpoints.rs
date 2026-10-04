@@ -209,7 +209,9 @@ impl DocumentManager {
                         .zip(&assets)
                         .map(|(a, p)| (a, Payload::File(p)))
                         .collect(),
-                    preserve_from: None,
+                    // A copy keeps the checkpoint's unknown (newer-build) tables.
+                    preserve_from: Some(Path::new(&info.path)),
+                    preserve_copy: true,
                 },
             )?;
             Ok::<_, AppError>(())
@@ -248,6 +250,32 @@ pub fn restore_checkpoint_as_copy(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn restored_copies_keep_unknown_archive_tables() {
+        let base = std::env::temp_dir().join(format!("ixtable-ckpt-{}", Uuid::new_v4()));
+        let m = DocumentManager::new(base.join("data"), base.join("cache")).unwrap();
+        m.new_session("w").unwrap();
+        let info = m.create_checkpoint("w", "test").unwrap();
+        // A newer build's table inside the checkpoint archive.
+        rusqlite::Connection::open(&info.path)
+            .unwrap()
+            .execute_batch(
+                "CREATE TABLE future_notes(body TEXT); INSERT INTO future_notes VALUES('kept');",
+            )
+            .unwrap();
+        let dest = base.join("copy.ixt");
+        m.restore_checkpoint_as_copy("w", &info.id, &dest).unwrap();
+        let header = crate::archive::read_header(&dest).unwrap();
+        assert_ne!(header.metadata.document_id, info.document_id);
+        let body: String = rusqlite::Connection::open(&dest)
+            .unwrap()
+            .query_row("SELECT body FROM future_notes", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(body, "kept");
+        m.close("w", true).unwrap();
+        fs::remove_dir_all(base).unwrap();
+    }
 
     #[test]
     fn checkpoint_files_never_leave_the_document_directory() {

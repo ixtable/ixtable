@@ -2,7 +2,8 @@
  * Golden-app journeys (PRD §26.5): helpers shared by the golden suites, plus a
  * structured evidence recorder. Every journey writes
  * `tests/integration/golden/.evidence/<app>-<journey>.json` with its steps,
- * assertions, timings, and (on failure) the error and the steps that reproduce it.
+ * assertions, timings, and (on failure) the error, the steps that reproduce it, and
+ * the tail of the local diagnostic log.
  */
 import { createHash } from "node:crypto";
 import { mkdirSync, writeFileSync } from "node:fs";
@@ -85,7 +86,7 @@ export class Journey {
   }
 
   /** Writes the evidence file; call from `finally` so failures leave evidence too. */
-  write(error?: unknown) {
+  write(error?: unknown, logTail?: unknown[]) {
     const failed = this.steps.find((s) => s.status === "failed");
     const evidence = {
       app: this.app,
@@ -101,6 +102,7 @@ export class Journey {
             reproduction: this.steps
               .slice(0, failed ? this.steps.indexOf(failed) + 1 : undefined)
               .map((s, i) => `${i + 1}. ${s.name}`),
+            ...(logTail ? { logTail } : {}),
           }
         : {}),
     };
@@ -109,6 +111,15 @@ export class Journey {
       join(EVIDENCE_DIR, `${this.app}-${this.name}.json`),
       `${JSON.stringify(evidence, null, 2)}\n`,
     );
+  }
+}
+
+/** The newest local diagnostic log entries, or undefined when they cannot be read. */
+export async function readLogTail(limit = 100): Promise<unknown[] | undefined> {
+  try {
+    return await invoke<unknown[]>("read_logs", { windowLabel: "main", limit });
+  } catch {
+    return undefined;
   }
 }
 
@@ -123,7 +134,7 @@ export async function withJourney(
     await run(journey);
     journey.write();
   } catch (error) {
-    journey.write(error);
+    journey.write(error, await readLogTail());
     throw error;
   }
 }

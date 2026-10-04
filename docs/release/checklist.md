@@ -9,7 +9,19 @@ only when every gate below is checked for all three platforms.
 - [ ] The version is bumped in `src-tauri/tauri.conf.json`, `package.json`
       and `src-tauri/Cargo.toml` (the `plan` job fails when they differ).
 - [ ] The tag matches: `vX.Y.Z` for stable, `vX.Y.Z-beta.N` for beta.
-- [ ] `Desktop` CI is green on the tagged commit.
+- [ ] `Desktop` CI is green on the tagged commit. It includes the archive
+      upgrade fixtures (`tests/fixtures/archives/`) and the forced-termination
+      autosave test (`src-tauri/src/durability_tests/`) on all three OSes.
+      Each golden job uploads its journey evidence as `golden-evidence-<os>`.
+- [ ] `Cloud contracts` CI (`.github/workflows/cloud.yml`) is green for the
+      last change to `supabase/**` or the cloud clients.
+- [ ] If this release bumps the archive `FORMAT_VERSION`, a new
+      `tests/fixtures/archives/format-<N>/` is committed
+      (`node scripts/ci/write-archive-fixtures.mjs`) and no older fixture
+      directory changed.
+- [ ] The 500 MB boundary test passed on one machine:
+      `IXTABLE_HEAVY_TESTS=1 cargo test --lib durability_tests::heavy` in
+      `src-tauri`.
 - [ ] Release notes are written in the draft release body before approving
       step 4. `publish-update-manifest` copies them into `latest.json`
       `notes`, which Settings → Updates shows.

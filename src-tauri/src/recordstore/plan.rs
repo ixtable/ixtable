@@ -253,6 +253,37 @@ pub fn mentions(expr: &str, column: &str) -> bool {
     rename_identifier(expr, column, "\u{1}") != expr
 }
 
+/// Indexes of the checks that belong to `column`: they mention it and no other
+/// column. The schema designer shows these as the column's check.
+pub fn column_checks(def: &TableDef, column: &str) -> Vec<usize> {
+    def.checks
+        .iter()
+        .enumerate()
+        .filter(|(_, c)| {
+            mentions(&c.expression, column)
+                && def.columns.iter().all(|o| {
+                    o.name.eq_ignore_ascii_case(column) || !mentions(&c.expression, &o.name)
+                })
+        })
+        .map(|(k, _)| k)
+        .collect()
+}
+
+/// One expression for several column checks, as the designer displays it.
+pub fn joined_check<'a>(exprs: impl Iterator<Item = &'a str>) -> Option<String> {
+    let all: Vec<&str> = exprs.map(str::trim).collect();
+    match all.len() {
+        0 => None,
+        1 => Some(all[0].to_string()),
+        _ => Some(
+            all.iter()
+                .map(|e| format!("({e})"))
+                .collect::<Vec<_>>()
+                .join(" AND "),
+        ),
+    }
+}
+
 /// Result of applying operations to a definition.
 pub struct Applied {
     pub def: TableDef,
@@ -422,6 +453,28 @@ pub fn apply_ops(
                     def.uniques.retain(|u| {
                         !(u.columns.len() == 1 && u.columns[0].eq_ignore_ascii_case(&name))
                     });
+                }
+                // `None` keeps the column's checks; `Some("")` removes them; other
+                // text replaces them unless it equals what is stored.
+                let wanted = definition
+                    .check
+                    .as_deref()
+                    .map(|x| Some(x.trim()).filter(|x| !x.is_empty()));
+                let owned = column_checks(&def, &name);
+                let current =
+                    joined_check(owned.iter().map(|&k| def.checks[k].expression.as_str()));
+                if let Some(wanted) = wanted.filter(|w| *w != current.as_deref()) {
+                    let mut k = 0;
+                    def.checks.retain(|_| {
+                        k += 1;
+                        !owned.contains(&(k - 1))
+                    });
+                    if let Some(check) = wanted {
+                        def.checks.push(CheckDef {
+                            name: None,
+                            expression: safe_expression(check)?,
+                        });
+                    }
                 }
                 def.columns[i] = next;
                 format!(

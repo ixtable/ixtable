@@ -1,0 +1,1572 @@
+{
+ "width": 595,
+ "height": 842,
+ "pages": [
+  {
+   "number": 1,
+   "items": [
+    {
+     "kind": "text",
+     "componentId": "01a100fd-dea3-7f20-8a9c-bd1a9ddfe8d8",
+     "x": 36,
+     "y": 36,
+     "w": 70,
+     "h": 14,
+     "text": "Kind",
+     "lines": [
+      {
+       "text": "Kind",
+       "x": 38,
+       "y": 44.56,
+       "width": 22.22
+      }
+     ],
+     "fontSize": 10,
+     "bold": true,
+     "gray": 0
+    },
+    {
+     "kind": "text",
+     "componentId": "01a100fd-dea4-7e24-b222-d3534ebe5b45",
+     "x": 106,
+     "y": 36,
+     "w": 200,
+     "h": 14,
+     "text": "Subject",
+     "lines": [
+      {
+       "text": "Subject",
+       "x": 108,
+       "y": 44.56,
+       "width": 36.12
+      }
+     ],
+     "fontSize": 10,
+     "bold": true,
+     "gray": 0
+    },
+    {
+     "kind": "text",
+     "componentId": "01a100fd-dea5-7287-a199-d75c4fff8065",
+     "x": 306,
+     "y": 36,
+     "w": 140,
+     "h": 14,
+     "text": "Deal",
+     "lines": [
+      {
+       "text": "Deal",
+       "x": 308,
+       "y": 44.56,
+       "width": 21.12
+      }
+     ],
+     "fontSize": 10,
+     "bold": true,
+     "gray": 0
+    },
+    {
+     "kind": "text",
+     "componentId": "01a100fd-dea6-7d2f-a21c-87a5700a95bd",
+     "x": 446,
+     "y": 36,
+     "w": 70,
+     "h": 14,
+     "text": "Due",
+     "lines": [
+      {
+       "text": "Due",
+       "x": 448,
+       "y": 44.56,
+       "width": 18.89
+      }
+     ],
+     "fontSize": 10,
+     "bold": true,
+     "gray": 0
+    },
+    {
+     "kind": "text",
+     "componentId": "01a100fd-dea7-7919-8cc7-9895d5db6b0d",
+     "x": 516,
+     "y": 36,
+     "w": 43,
+     "h": 14,
+     "text": "State",
+     "lines": [
+      {
+       "text": "State",
+       "x": 518,
+       "y": 44.56,
+       "width": 24.45
+      }
+     ],
+     "fontSize": 10,
+     "bold": true,
+     "gray": 0
+    },
+    {
+     "kind": "text",
+     "componentId": "01a100fd-dea2-786c-a0a1-a79bd38d6b95",
+     "x": 36,
+     "y": 54,
+     "w": 523,
+     "h": 24,
+     "text": "Activities by company",
+     "lines": [
+      {
+       "text": "Activities by company",
+       "x": 38,
+       "y": 67.69,
+       "width": 168.94
+      }
+     ],
+     "fontSize": 16,
+     "bold": true,
+     "gray": 0
+    },
+    {
+     "kind": "text",
+     "componentId": "01a100fd-dea9-7516-b134-ca9f8b3a2815",
+     "x": 36,
+     "y": 88,
+     "w": 523,
+     "h": 16,
+     "text": "Acme Corp",
+     "lines": [
+      {
+       "text": "Acme Corp",
+       "x": 38,
+       "y": 98.27,
+       "width": 64.01
+      }
+     ],
+     "fontSize": 12,
+     "bold": true,
+     "gray": 0
+    },
+    {
+     "kind": "text",
+     "componentId": "01a100fd-deab-7dab-b935-6fd1cc0f6993",
+     "x": 36,
+     "y": 106,
+     "w": 70,
+     "h": 14,
+     "text": "call",
+     "lines": [
+      {
+       "text": "call",
+       "x": 38,
+       "y": 114.56,
+       "width": 15
+      }
+     ],
+     "fontSize": 10,
+     "bold": false,
+     "gray": 0
+    },
+    {
+     "kind": "text",
+     "componentId": "01a100fd-deac-7703-8235-c6d17cf4122a",
+     "x": 106,
+     "y": 106,
+     "w": 200,
+     "h": 14,
+     "text": "Intro call",
+     "lines": [
+      {
+       "text": "Intro call",
+       "x": 108,
+       "y": 114.56,
+       "width": 37.79
+      }
+     ],
+     "fontSize": 10,
+     "bold": false,
+     "gray": 0
+    },
+    {
+     "kind": "text",
+     "componentId": "01a100fd-dead-76f7-84b0-a31faa30c9de",
+     "x": 306,
+     "y": 106,
+     "w": 140,
+     "h": 14,
+     "text": "Factory sensors",
+     "lines": [
+      {
+       "text": "Factory sensors",
+       "x": 308,
+       "y": 114.56,
+       "width": 71.13
+      }
+     ],
+     "fontSize": 10,
+     "bold": false,
+     "gray": 0
+    },
+    {
+     "kind": "text",
+     "componentId": "01a100fd-deae-7330-b1fe-4e003ba3fc79",
+     "x": 446,
+     "y": 106,
+     "w": 70,
+     "h": 14,
+     "text": "2026-09-01",
+     "lines": [
+      {
+       "text": "2026-09-01",
+       "x": 448,
+       "y": 114.56,
+       "width": 51.14
+      }
+     ],
+     "fontSize": 10,
+     "bold": false,
+     "gray": 0
+    },
+    {
+     "kind": "text",
+     "componentId": "01a100fd-deaf-7429-bdab-19a2f9ff7e47",
+     "x": 516,
+     "y": 106,
+     "w": 43,
+     "h": 14,
+     "text": "Done",
+     "lines": [
+      {
+       "text": "Done",
+       "x": 518,
+       "y": 114.56,
+       "width": 23.9
+      }
+     ],
+     "fontSize": 10,
+     "bold": false,
+     "gray": 0
+    },
+    {
+     "kind": "text",
+     "componentId": "01a100fd-deab-7dab-b935-6fd1cc0f6993",
+     "x": 36,
+     "y": 122,
+     "w": 70,
+     "h": 14,
+     "text": "meeting",
+     "lines": [
+      {
+       "text": "meeting",
+       "x": 38,
+       "y": 130.56,
+       "width": 35.57
+      }
+     ],
+     "fontSize": 10,
+     "bold": false,
+     "gray": 0
+    },
+    {
+     "kind": "text",
+     "componentId": "01a100fd-deac-7703-8235-c6d17cf4122a",
+     "x": 106,
+     "y": 122,
+     "w": 200,
+     "h": 14,
+     "text": "Site visit",
+     "lines": [
+      {
+       "text": "Site visit",
+       "x": 108,
+       "y": 130.56,
+       "width": 37.23
+      }
+     ],
+     "fontSize": 10,
+     "bold": false,
+     "gray": 0
+    },
+    {
+     "kind": "text",
+     "componentId": "01a100fd-dead-76f7-84b0-a31faa30c9de",
+     "x": 306,
+     "y": 122,
+     "w": 140,
+     "h": 14,
+     "text": "Factory sensors",
+     "lines": [
+      {
+       "text": "Factory sensors",
+       "x": 308,
+       "y": 130.56,
+       "width": 71.13
+      }
+     ],
+     "fontSize": 10,
+     "bold": false,
+     "gray": 0
+    },
+    {
+     "kind": "text",
+     "componentId": "01a100fd-deae-7330-b1fe-4e003ba3fc79",
+     "x": 446,
+     "y": 122,
+     "w": 70,
+     "h": 14,
+     "text": "2026-09-10",
+     "lines": [
+      {
+       "text": "2026-09-10",
+       "x": 448,
+       "y": 130.56,
+       "width": 51.14
+      }
+     ],
+     "fontSize": 10,
+     "bold": false,
+     "gray": 0
+    },
+    {
+     "kind": "text",
+     "componentId": "01a100fd-deaf-7429-bdab-19a2f9ff7e47",
+     "x": 516,
+     "y": 122,
+     "w": 43,
+     "h": 14,
+     "text": "Done",
+     "lines": [
+      {
+       "text": "Done",
+       "x": 518,
+       "y": 130.56,
+       "width": 23.9
+      }
+     ],
+     "fontSize": 10,
+     "bold": false,
+     "gray": 0
+    },
+    {
+     "kind": "text",
+     "componentId": "01a100fd-deab-7dab-b935-6fd1cc0f6993",
+     "x": 36,
+     "y": 138,
+     "w": 70,
+     "h": 14,
+     "text": "email",
+     "lines": [
+      {
+       "text": "email",
+       "x": 38,
+       "y": 146.56,
+       "width": 23.89
+      }
+     ],
+     "fontSize": 10,
+     "bold": false,
+     "gray": 0
+    },
+    {
+     "kind": "text",
+     "componentId": "01a100fd-deac-7703-8235-c6d17cf4122a",
+     "x": 106,
+     "y": 138,
+     "w": 200,
+     "h": 14,
+     "text": "Send proposal",
+     "lines": [
+      {
+       "text": "Send proposal",
+       "x": 108,
+       "y": 146.56,
+       "width": 64.48
+      }
+     ],
+     "fontSize": 10,
+     "bold": false,
+     "gray": 0
+    },
+    {
+     "kind": "text",
+     "componentId": "01a100fd-dead-76f7-84b0-a31faa30c9de",
+     "x": 306,
+     "y": 138,
+     "w": 140,
+     "h": 14,
+     "text": "Factory sensors",
+     "lines": [
+      {
+       "text": "Factory sensors",
+       "x": 308,
+       "y": 146.56,
+       "width": 71.13
+      }
+     ],
+     "fontSize": 10,
+     "bold": false,
+     "gray": 0
+    },
+    {
+     "kind": "text",
+     "componentId": "01a100fd-deae-7330-b1fe-4e003ba3fc79",
+     "x": 446,
+     "y": 138,
+     "w": 70,
+     "h": 14,
+     "text": "2026-10-05",
+     "lines": [
+      {
+       "text": "2026-10-05",
+       "x": 448,
+       "y": 146.56,
+       "width": 51.14
+      }
+     ],
+     "fontSize": 10,
+     "bold": false,
+     "gray": 0
+    },
+    {
+     "kind": "text",
+     "componentId": "01a100fd-deaf-7429-bdab-19a2f9ff7e47",
+     "x": 516,
+     "y": 138,
+     "w": 43,
+     "h": 14,
+     "text": "Open",
+     "lines": [
+      {
+       "text": "Open",
+       "x": 518,
+       "y": 146.56,
+       "width": 24.46
+      }
+     ],
+     "fontSize": 10,
+     "bold": false,
+     "gray": 0
+    },
+    {
+     "kind": "text",
+     "componentId": "01a100fd-deaa-7ed6-8649-21c5c6717631",
+     "x": 36,
+     "y": 156,
+     "w": 523,
+     "h": 14,
+     "text": "3 activities, 1 open",
+     "lines": [
+      {
+       "text": "3 activities, 1 open",
+       "x": 474.18,
+       "y": 164.56,
+       "width": 82.82
+      }
+     ],
+     "fontSize": 10,
+     "bold": false,
+     "gray": 0
+    },
+    {
+     "kind": "text",
+     "componentId": "01a100fd-dea9-7516-b134-ca9f8b3a2815",
+     "x": 36,
+     "y": 178,
+     "w": 523,
+     "h": 16,
+     "text": "Globex",
+     "lines": [
+      {
+       "text": "Globex",
+       "x": 38,
+       "y": 188.27,
+       "width": 40.68
+      }
+     ],
+     "fontSize": 12,
+     "bold": true,
+     "gray": 0
+    },
+    {
+     "kind": "text",
+     "componentId": "01a100fd-deab-7dab-b935-6fd1cc0f6993",
+     "x": 36,
+     "y": 196,
+     "w": 70,
+     "h": 14,
+     "text": "meeting",
+     "lines": [
+      {
+       "text": "meeting",
+       "x": 38,
+       "y": 204.56,
+       "width": 35.57
+      }
+     ],
+     "fontSize": 10,
+     "bold": false,
+     "gray": 0
+    },
+    {
+     "kind": "text",
+     "componentId": "01a100fd-deac-7703-8235-c6d17cf4122a",
+     "x": 106,
+     "y": 196,
+     "w": 200,
+     "h": 14,
+     "text": "Pilot review",
+     "lines": [
+      {
+       "text": "Pilot review",
+       "x": 108,
+       "y": 204.56,
+       "width": 51.12
+      }
+     ],
+     "fontSize": 10,
+     "bold": false,
+     "gray": 0
+    },
+    {
+     "kind": "text",
+     "componentId": "01a100fd-dead-76f7-84b0-a31faa30c9de",
+     "x": 306,
+     "y": 196,
+     "w": 140,
+     "h": 14,
+     "text": "Analytics pilot",
+     "lines": [
+      {
+       "text": "Analytics pilot",
+       "x": 308,
+       "y": 204.56,
+       "width": 61.13
+      }
+     ],
+     "fontSize": 10,
+     "bold": false,
+     "gray": 0
+    },
+    {
+     "kind": "text",
+     "componentId": "01a100fd-deae-7330-b1fe-4e003ba3fc79",
+     "x": 446,
+     "y": 196,
+     "w": 70,
+     "h": 14,
+     "text": "2026-06-25",
+     "lines": [
+      {
+       "text": "2026-06-25",
+       "x": 448,
+       "y": 204.56,
+       "width": 51.14
+      }
+     ],
+     "fontSize": 10,
+     "bold": false,
+     "gray": 0
+    },
+    {
+     "kind": "text",
+     "componentId": "01a100fd-deaf-7429-bdab-19a2f9ff7e47",
+     "x": 516,
+     "y": 196,
+     "w": 43,
+     "h": 14,
+     "text": "Done",
+     "lines": [
+      {
+       "text": "Done",
+       "x": 518,
+       "y": 204.56,
+       "width": 23.9
+      }
+     ],
+     "fontSize": 10,
+     "bold": false,
+     "gray": 0
+    },
+    {
+     "kind": "text",
+     "componentId": "01a100fd-deab-7dab-b935-6fd1cc0f6993",
+     "x": 36,
+     "y": 212,
+     "w": 70,
+     "h": 14,
+     "text": "call",
+     "lines": [
+      {
+       "text": "call",
+       "x": 38,
+       "y": 220.56,
+       "width": 15
+      }
+     ],
+     "fontSize": 10,
+     "bold": false,
+     "gray": 0
+    },
+    {
+     "kind": "text",
+     "componentId": "01a100fd-deac-7703-8235-c6d17cf4122a",
+     "x": 106,
+     "y": 212,
+     "w": 200,
+     "h": 14,
+     "text": "Discovery call",
+     "lines": [
+      {
+       "text": "Discovery call",
+       "x": 108,
+       "y": 220.56,
+       "width": 61.67
+      }
+     ],
+     "fontSize": 10,
+     "bold": false,
+     "gray": 0
+    },
+    {
+     "kind": "text",
+     "componentId": "01a100fd-dead-76f7-84b0-a31faa30c9de",
+     "x": 306,
+     "y": 212,
+     "w": 140,
+     "h": 14,
+     "text": "Grid analytics",
+     "lines": [
+      {
+       "text": "Grid analytics",
+       "x": 308,
+       "y": 220.56,
+       "width": 60.57
+      }
+     ],
+     "fontSize": 10,
+     "bold": false,
+     "gray": 0
+    },
+    {
+     "kind": "text",
+     "componentId": "01a100fd-deae-7330-b1fe-4e003ba3fc79",
+     "x": 446,
+     "y": 212,
+     "w": 70,
+     "h": 14,
+     "text": "2026-10-08",
+     "lines": [
+      {
+       "text": "2026-10-08",
+       "x": 448,
+       "y": 220.56,
+       "width": 51.14
+      }
+     ],
+     "fontSize": 10,
+     "bold": false,
+     "gray": 0
+    },
+    {
+     "kind": "text",
+     "componentId": "01a100fd-deaf-7429-bdab-19a2f9ff7e47",
+     "x": 516,
+     "y": 212,
+     "w": 43,
+     "h": 14,
+     "text": "Open",
+     "lines": [
+      {
+       "text": "Open",
+       "x": 518,
+       "y": 220.56,
+       "width": 24.46
+      }
+     ],
+     "fontSize": 10,
+     "bold": false,
+     "gray": 0
+    },
+    {
+     "kind": "text",
+     "componentId": "01a100fd-deaa-7ed6-8649-21c5c6717631",
+     "x": 36,
+     "y": 230,
+     "w": 523,
+     "h": 14,
+     "text": "2 activities, 1 open",
+     "lines": [
+      {
+       "text": "2 activities, 1 open",
+       "x": 474.18,
+       "y": 238.56,
+       "width": 82.82
+      }
+     ],
+     "fontSize": 10,
+     "bold": false,
+     "gray": 0
+    },
+    {
+     "kind": "text",
+     "componentId": "01a100fd-dea9-7516-b134-ca9f8b3a2815",
+     "x": 36,
+     "y": 252,
+     "w": 523,
+     "h": 16,
+     "text": "Initech",
+     "lines": [
+      {
+       "text": "Initech",
+       "x": 38,
+       "y": 262.27,
+       "width": 38.68
+      }
+     ],
+     "fontSize": 12,
+     "bold": true,
+     "gray": 0
+    },
+    {
+     "kind": "text",
+     "componentId": "01a100fd-deab-7dab-b935-6fd1cc0f6993",
+     "x": 36,
+     "y": 270,
+     "w": 70,
+     "h": 14,
+     "text": "call",
+     "lines": [
+      {
+       "text": "call",
+       "x": 38,
+       "y": 278.56,
+       "width": 15
+      }
+     ],
+     "fontSize": 10,
+     "bold": false,
+     "gray": 0
+    },
+    {
+     "kind": "text",
+     "componentId": "01a100fd-deac-7703-8235-c6d17cf4122a",
+     "x": 106,
+     "y": 270,
+     "w": 200,
+     "h": 14,
+     "text": "Renewal check-in",
+     "lines": [
+      {
+       "text": "Renewal check-in",
+       "x": 108,
+       "y": 278.56,
+       "width": 78.91
+      }
+     ],
+     "fontSize": 10,
+     "bold": false,
+     "gray": 0
+    },
+    {
+     "kind": "text",
+     "componentId": "01a100fd-dead-76f7-84b0-a31faa30c9de",
+     "x": 306,
+     "y": 270,
+     "w": 140,
+     "h": 14,
+     "text": "Support renewal",
+     "lines": [
+      {
+       "text": "Support renewal",
+       "x": 308,
+       "y": 278.56,
+       "width": 72.81
+      }
+     ],
+     "fontSize": 10,
+     "bold": false,
+     "gray": 0
+    },
+    {
+     "kind": "text",
+     "componentId": "01a100fd-deae-7330-b1fe-4e003ba3fc79",
+     "x": 446,
+     "y": 270,
+     "w": 70,
+     "h": 14,
+     "text": "2026-09-20",
+     "lines": [
+      {
+       "text": "2026-09-20",
+       "x": 448,
+       "y": 278.56,
+       "width": 51.14
+      }
+     ],
+     "fontSize": 10,
+     "bold": false,
+     "gray": 0
+    },
+    {
+     "kind": "text",
+     "componentId": "01a100fd-deaf-7429-bdab-19a2f9ff7e47",
+     "x": 516,
+     "y": 270,
+     "w": 43,
+     "h": 14,
+     "text": "Done",
+     "lines": [
+      {
+       "text": "Done",
+       "x": 518,
+       "y": 278.56,
+       "width": 23.9
+      }
+     ],
+     "fontSize": 10,
+     "bold": false,
+     "gray": 0
+    },
+    {
+     "kind": "text",
+     "componentId": "01a100fd-deab-7dab-b935-6fd1cc0f6993",
+     "x": 36,
+     "y": 286,
+     "w": 70,
+     "h": 14,
+     "text": "email",
+     "lines": [
+      {
+       "text": "email",
+       "x": 38,
+       "y": 294.56,
+       "width": 23.89
+      }
+     ],
+     "fontSize": 10,
+     "bold": false,
+     "gray": 0
+    },
+    {
+     "kind": "text",
+     "componentId": "01a100fd-deac-7703-8235-c6d17cf4122a",
+     "x": 106,
+     "y": 286,
+     "w": 200,
+     "h": 14,
+     "text": "Licence quote",
+     "lines": [
+      {
+       "text": "Licence quote",
+       "x": 108,
+       "y": 294.56,
+       "width": 62.26
+      }
+     ],
+     "fontSize": 10,
+     "bold": false,
+     "gray": 0
+    },
+    {
+     "kind": "text",
+     "componentId": "01a100fd-dead-76f7-84b0-a31faa30c9de",
+     "x": 306,
+     "y": 286,
+     "w": 140,
+     "h": 14,
+     "text": "Seat licenses",
+     "lines": [
+      {
+       "text": "Seat licenses",
+       "x": 308,
+       "y": 294.56,
+       "width": 59.47
+      }
+     ],
+     "fontSize": 10,
+     "bold": false,
+     "gray": 0
+    },
+    {
+     "kind": "text",
+     "componentId": "01a100fd-deae-7330-b1fe-4e003ba3fc79",
+     "x": 446,
+     "y": 286,
+     "w": 70,
+     "h": 14,
+     "text": "2026-10-12",
+     "lines": [
+      {
+       "text": "2026-10-12",
+       "x": 448,
+       "y": 294.56,
+       "width": 51.14
+      }
+     ],
+     "fontSize": 10,
+     "bold": false,
+     "gray": 0
+    },
+    {
+     "kind": "text",
+     "componentId": "01a100fd-deaf-7429-bdab-19a2f9ff7e47",
+     "x": 516,
+     "y": 286,
+     "w": 43,
+     "h": 14,
+     "text": "Open",
+     "lines": [
+      {
+       "text": "Open",
+       "x": 518,
+       "y": 294.56,
+       "width": 24.46
+      }
+     ],
+     "fontSize": 10,
+     "bold": false,
+     "gray": 0
+    },
+    {
+     "kind": "text",
+     "componentId": "01a100fd-deaa-7ed6-8649-21c5c6717631",
+     "x": 36,
+     "y": 304,
+     "w": 523,
+     "h": 14,
+     "text": "2 activities, 1 open",
+     "lines": [
+      {
+       "text": "2 activities, 1 open",
+       "x": 474.18,
+       "y": 312.56,
+       "width": 82.82
+      }
+     ],
+     "fontSize": 10,
+     "bold": false,
+     "gray": 0
+    },
+    {
+     "kind": "text",
+     "componentId": "01a100fd-dea9-7516-b134-ca9f8b3a2815",
+     "x": 36,
+     "y": 326,
+     "w": 523,
+     "h": 16,
+     "text": "Stark Logistics",
+     "lines": [
+      {
+       "text": "Stark Logistics",
+       "x": 38,
+       "y": 336.27,
+       "width": 86.03
+      }
+     ],
+     "fontSize": 12,
+     "bold": true,
+     "gray": 0
+    },
+    {
+     "kind": "text",
+     "componentId": "01a100fd-deab-7dab-b935-6fd1cc0f6993",
+     "x": 36,
+     "y": 344,
+     "w": 70,
+     "h": 14,
+     "text": "call",
+     "lines": [
+      {
+       "text": "call",
+       "x": 38,
+       "y": 352.56,
+       "width": 15
+      }
+     ],
+     "fontSize": 10,
+     "bold": false,
+     "gray": 0
+    },
+    {
+     "kind": "text",
+     "componentId": "01a100fd-deac-7703-8235-c6d17cf4122a",
+     "x": 106,
+     "y": 344,
+     "w": 200,
+     "h": 14,
+     "text": "Fleet demo",
+     "lines": [
+      {
+       "text": "Fleet demo",
+       "x": 108,
+       "y": 352.56,
+       "width": 50.02
+      }
+     ],
+     "fontSize": 10,
+     "bold": false,
+     "gray": 0
+    },
+    {
+     "kind": "text",
+     "componentId": "01a100fd-dead-76f7-84b0-a31faa30c9de",
+     "x": 306,
+     "y": 344,
+     "w": 140,
+     "h": 14,
+     "text": "Fleet tracking",
+     "lines": [
+      {
+       "text": "Fleet tracking",
+       "x": 308,
+       "y": 352.56,
+       "width": 60.02
+      }
+     ],
+     "fontSize": 10,
+     "bold": false,
+     "gray": 0
+    },
+    {
+     "kind": "text",
+     "componentId": "01a100fd-deae-7330-b1fe-4e003ba3fc79",
+     "x": 446,
+     "y": 344,
+     "w": 70,
+     "h": 14,
+     "text": "2026-10-20",
+     "lines": [
+      {
+       "text": "2026-10-20",
+       "x": 448,
+       "y": 352.56,
+       "width": 51.14
+      }
+     ],
+     "fontSize": 10,
+     "bold": false,
+     "gray": 0
+    },
+    {
+     "kind": "text",
+     "componentId": "01a100fd-deaf-7429-bdab-19a2f9ff7e47",
+     "x": 516,
+     "y": 344,
+     "w": 43,
+     "h": 14,
+     "text": "Open",
+     "lines": [
+      {
+       "text": "Open",
+       "x": 518,
+       "y": 352.56,
+       "width": 24.46
+      }
+     ],
+     "fontSize": 10,
+     "bold": false,
+     "gray": 0
+    },
+    {
+     "kind": "text",
+     "componentId": "01a100fd-deab-7dab-b935-6fd1cc0f6993",
+     "x": 36,
+     "y": 360,
+     "w": 70,
+     "h": 14,
+     "text": "email",
+     "lines": [
+      {
+       "text": "email",
+       "x": 38,
+       "y": 368.56,
+       "width": 23.89
+      }
+     ],
+     "fontSize": 10,
+     "bold": false,
+     "gray": 0
+    },
+    {
+     "kind": "text",
+     "componentId": "01a100fd-deac-7703-8235-c6d17cf4122a",
+     "x": 106,
+     "y": 360,
+     "w": 200,
+     "h": 14,
+     "text": "Send case study",
+     "lines": [
+      {
+       "text": "Send case study",
+       "x": 108,
+       "y": 368.56,
+       "width": 73.93
+      }
+     ],
+     "fontSize": 10,
+     "bold": false,
+     "gray": 0
+    },
+    {
+     "kind": "text",
+     "componentId": "01a100fd-dead-76f7-84b0-a31faa30c9de",
+     "x": 306,
+     "y": 360,
+     "w": 140,
+     "h": 14,
+     "text": "Route optimisation",
+     "lines": [
+      {
+       "text": "Route optimisation",
+       "x": 308,
+       "y": 368.56,
+       "width": 82.81
+      }
+     ],
+     "fontSize": 10,
+     "bold": false,
+     "gray": 0
+    },
+    {
+     "kind": "text",
+     "componentId": "01a100fd-deae-7330-b1fe-4e003ba3fc79",
+     "x": 446,
+     "y": 360,
+     "w": 70,
+     "h": 14,
+     "text": "2026-10-22",
+     "lines": [
+      {
+       "text": "2026-10-22",
+       "x": 448,
+       "y": 368.56,
+       "width": 51.14
+      }
+     ],
+     "fontSize": 10,
+     "bold": false,
+     "gray": 0
+    },
+    {
+     "kind": "text",
+     "componentId": "01a100fd-deaf-7429-bdab-19a2f9ff7e47",
+     "x": 516,
+     "y": 360,
+     "w": 43,
+     "h": 14,
+     "text": "Open",
+     "lines": [
+      {
+       "text": "Open",
+       "x": 518,
+       "y": 368.56,
+       "width": 24.46
+      }
+     ],
+     "fontSize": 10,
+     "bold": false,
+     "gray": 0
+    },
+    {
+     "kind": "text",
+     "componentId": "01a100fd-deaa-7ed6-8649-21c5c6717631",
+     "x": 36,
+     "y": 378,
+     "w": 523,
+     "h": 14,
+     "text": "2 activities, 2 open",
+     "lines": [
+      {
+       "text": "2 activities, 2 open",
+       "x": 474.18,
+       "y": 386.56,
+       "width": 82.82
+      }
+     ],
+     "fontSize": 10,
+     "bold": false,
+     "gray": 0
+    },
+    {
+     "kind": "text",
+     "componentId": "01a100fd-dea9-7516-b134-ca9f8b3a2815",
+     "x": 36,
+     "y": 400,
+     "w": 523,
+     "h": 16,
+     "text": "Umbrella Health",
+     "lines": [
+      {
+       "text": "Umbrella Health",
+       "x": 38,
+       "y": 410.27,
+       "width": 91.36
+      }
+     ],
+     "fontSize": 12,
+     "bold": true,
+     "gray": 0
+    },
+    {
+     "kind": "text",
+     "componentId": "01a100fd-deab-7dab-b935-6fd1cc0f6993",
+     "x": 36,
+     "y": 418,
+     "w": 70,
+     "h": 14,
+     "text": "note",
+     "lines": [
+      {
+       "text": "note",
+       "x": 38,
+       "y": 426.56,
+       "width": 19.46
+      }
+     ],
+     "fontSize": 10,
+     "bold": false,
+     "gray": 0
+    },
+    {
+     "kind": "text",
+     "componentId": "01a100fd-deac-7703-8235-c6d17cf4122a",
+     "x": 106,
+     "y": 418,
+     "w": 200,
+     "h": 14,
+     "text": "Lost to incumbent",
+     "lines": [
+      {
+       "text": "Lost to incumbent",
+       "x": 108,
+       "y": 426.56,
+       "width": 78.93
+      }
+     ],
+     "fontSize": 10,
+     "bold": false,
+     "gray": 0
+    },
+    {
+     "kind": "text",
+     "componentId": "01a100fd-dead-76f7-84b0-a31faa30c9de",
+     "x": 306,
+     "y": 418,
+     "w": 140,
+     "h": 14,
+     "text": "Staff training",
+     "lines": [
+      {
+       "text": "Staff training",
+       "x": 308,
+       "y": 426.56,
+       "width": 56.14
+      }
+     ],
+     "fontSize": 10,
+     "bold": false,
+     "gray": 0
+    },
+    {
+     "kind": "text",
+     "componentId": "01a100fd-deae-7330-b1fe-4e003ba3fc79",
+     "x": 446,
+     "y": 418,
+     "w": 70,
+     "h": 14,
+     "text": "2026-05-20",
+     "lines": [
+      {
+       "text": "2026-05-20",
+       "x": 448,
+       "y": 426.56,
+       "width": 51.14
+      }
+     ],
+     "fontSize": 10,
+     "bold": false,
+     "gray": 0
+    },
+    {
+     "kind": "text",
+     "componentId": "01a100fd-deaf-7429-bdab-19a2f9ff7e47",
+     "x": 516,
+     "y": 418,
+     "w": 43,
+     "h": 14,
+     "text": "Done",
+     "lines": [
+      {
+       "text": "Done",
+       "x": 518,
+       "y": 426.56,
+       "width": 23.9
+      }
+     ],
+     "fontSize": 10,
+     "bold": false,
+     "gray": 0
+    },
+    {
+     "kind": "text",
+     "componentId": "01a100fd-deab-7dab-b935-6fd1cc0f6993",
+     "x": 36,
+     "y": 434,
+     "w": 70,
+     "h": 14,
+     "text": "call",
+     "lines": [
+      {
+       "text": "call",
+       "x": 38,
+       "y": 442.56,
+       "width": 15
+      }
+     ],
+     "fontSize": 10,
+     "bold": false,
+     "gray": 0
+    },
+    {
+     "kind": "text",
+     "componentId": "01a100fd-deac-7703-8235-c6d17cf4122a",
+     "x": 106,
+     "y": 434,
+     "w": 200,
+     "h": 14,
+     "text": "Budget call",
+     "lines": [
+      {
+       "text": "Budget call",
+       "x": 108,
+       "y": 442.56,
+       "width": 49.47
+      }
+     ],
+     "fontSize": 10,
+     "bold": false,
+     "gray": 0
+    },
+    {
+     "kind": "text",
+     "componentId": "01a100fd-dead-76f7-84b0-a31faa30c9de",
+     "x": 306,
+     "y": 434,
+     "w": 140,
+     "h": 14,
+     "text": "Patient portal",
+     "lines": [
+      {
+       "text": "Patient portal",
+       "x": 308,
+       "y": 442.56,
+       "width": 58.92
+      }
+     ],
+     "fontSize": 10,
+     "bold": false,
+     "gray": 0
+    },
+    {
+     "kind": "text",
+     "componentId": "01a100fd-deae-7330-b1fe-4e003ba3fc79",
+     "x": 446,
+     "y": 434,
+     "w": 70,
+     "h": 14,
+     "text": "2026-09-18",
+     "lines": [
+      {
+       "text": "2026-09-18",
+       "x": 448,
+       "y": 442.56,
+       "width": 51.14
+      }
+     ],
+     "fontSize": 10,
+     "bold": false,
+     "gray": 0
+    },
+    {
+     "kind": "text",
+     "componentId": "01a100fd-deaf-7429-bdab-19a2f9ff7e47",
+     "x": 516,
+     "y": 434,
+     "w": 43,
+     "h": 14,
+     "text": "Done",
+     "lines": [
+      {
+       "text": "Done",
+       "x": 518,
+       "y": 442.56,
+       "width": 23.9
+      }
+     ],
+     "fontSize": 10,
+     "bold": false,
+     "gray": 0
+    },
+    {
+     "kind": "text",
+     "componentId": "01a100fd-deab-7dab-b935-6fd1cc0f6993",
+     "x": 36,
+     "y": 450,
+     "w": 70,
+     "h": 14,
+     "text": "meeting",
+     "lines": [
+      {
+       "text": "meeting",
+       "x": 38,
+       "y": 458.56,
+       "width": 35.57
+      }
+     ],
+     "fontSize": 10,
+     "bold": false,
+     "gray": 0
+    },
+    {
+     "kind": "text",
+     "componentId": "01a100fd-deac-7703-8235-c6d17cf4122a",
+     "x": 106,
+     "y": 450,
+     "w": 200,
+     "h": 14,
+     "text": "Security review",
+     "lines": [
+      {
+       "text": "Security review",
+       "x": 108,
+       "y": 458.56,
+       "width": 67.79
+      }
+     ],
+     "fontSize": 10,
+     "bold": false,
+     "gray": 0
+    },
+    {
+     "kind": "text",
+     "componentId": "01a100fd-dead-76f7-84b0-a31faa30c9de",
+     "x": 306,
+     "y": 450,
+     "w": 140,
+     "h": 14,
+     "text": "Patient portal",
+     "lines": [
+      {
+       "text": "Patient portal",
+       "x": 308,
+       "y": 458.56,
+       "width": 58.92
+      }
+     ],
+     "fontSize": 10,
+     "bold": false,
+     "gray": 0
+    },
+    {
+     "kind": "text",
+     "componentId": "01a100fd-deae-7330-b1fe-4e003ba3fc79",
+     "x": 446,
+     "y": 450,
+     "w": 70,
+     "h": 14,
+     "text": "2026-10-15",
+     "lines": [
+      {
+       "text": "2026-10-15",
+       "x": 448,
+       "y": 458.56,
+       "width": 51.14
+      }
+     ],
+     "fontSize": 10,
+     "bold": false,
+     "gray": 0
+    },
+    {
+     "kind": "text",
+     "componentId": "01a100fd-deaf-7429-bdab-19a2f9ff7e47",
+     "x": 516,
+     "y": 450,
+     "w": 43,
+     "h": 14,
+     "text": "Open",
+     "lines": [
+      {
+       "text": "Open",
+       "x": 518,
+       "y": 458.56,
+       "width": 24.46
+      }
+     ],
+     "fontSize": 10,
+     "bold": false,
+     "gray": 0
+    },
+    {
+     "kind": "text",
+     "componentId": "01a100fd-deaa-7ed6-8649-21c5c6717631",
+     "x": 36,
+     "y": 468,
+     "w": 523,
+     "h": 14,
+     "text": "3 activities, 1 open",
+     "lines": [
+      {
+       "text": "3 activities, 1 open",
+       "x": 474.18,
+       "y": 476.56,
+       "width": 82.82
+      }
+     ],
+     "fontSize": 10,
+     "bold": false,
+     "gray": 0
+    },
+    {
+     "kind": "text",
+     "componentId": "01a100fd-deb1-7145-a3bc-ee775439ce6c",
+     "x": 36,
+     "y": 490,
+     "w": 523,
+     "h": 16,
+     "text": "Total activities: 12",
+     "lines": [
+      {
+       "text": "Total activities: 12",
+       "x": 38,
+       "y": 498.56,
+       "width": 86.7
+      }
+     ],
+     "fontSize": 10,
+     "bold": true,
+     "gray": 0
+    },
+    {
+     "kind": "text",
+     "componentId": "01a100fd-deb0-7e1d-9605-401326b2fe08",
+     "x": 36,
+     "y": 790,
+     "w": 523,
+     "h": 14,
+     "text": "Page 1 of 1",
+     "lines": [
+      {
+       "text": "Page 1 of 1",
+       "x": 271.93,
+       "y": 798.56,
+       "width": 51.15
+      }
+     ],
+     "fontSize": 10,
+     "bold": false,
+     "gray": 0
+    }
+   ]
+  }
+ ],
+ "diagnostics": []
+}

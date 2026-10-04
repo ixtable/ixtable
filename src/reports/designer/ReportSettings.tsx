@@ -1,4 +1,5 @@
 import { Plus, Trash2 } from "lucide-react";
+import { Fragment } from "react";
 import type { DbObject } from "../../lib/types";
 import type { SavedQuery } from "../../query/types";
 import { fieldExpression, groupLabel, newGroup } from "../model";
@@ -177,6 +178,29 @@ export function ReportSettings({
               />
               Group {i + 1} descending
             </label>
+            {GROUP_FLAGS.map(([flag, text]) => {
+              const forced = flag === "newPage" && !!g.resetPageNumber;
+              const hintId = `group-${g.id}-newpage-hint`;
+              return (
+                <Fragment key={flag}>
+                  <label className="inline">
+                    <input
+                      type="checkbox"
+                      checked={forced || !!g[flag]}
+                      disabled={forced}
+                      aria-describedby={forced ? hintId : undefined}
+                      onChange={(e) => setGroup(g.id, { [flag]: e.target.checked })}
+                    />
+                    Group {i + 1} {text}
+                  </label>
+                  {forced && (
+                    <span className="report-hint" id={hintId}>
+                      Always on while group page numbers restart.
+                    </span>
+                  )}
+                </Fragment>
+              );
+            })}
             <button
               type="button"
               onClick={() =>
@@ -218,16 +242,25 @@ export function ReportSettings({
   );
 }
 
-/** Height and keep-together for the selected band. */
+const GROUP_FLAGS = [
+  ["newPage", "starts a new page"],
+  ["repeatHeader", "repeats header on each page"],
+  ["resetPageNumber", "restarts group page numbers"],
+] as const;
+
+/** Height, keep-together and page breaks for the selected band. */
 export function BandProperties({
   label,
   band,
   minHeight,
+  pageBand,
   onChange,
 }: {
   label: string;
   band: Band;
   minHeight: number;
+  /** Page header or footer: page breaks do not apply. */
+  pageBand: boolean;
   onChange: (patch: Partial<Band>) => void;
 }) {
   return (
@@ -247,6 +280,26 @@ export function BandProperties({
         />
         Keep together
       </label>
+      {!pageBand && (
+        <>
+          <label className="inline">
+            <input
+              type="checkbox"
+              checked={!!band.pageBreakBefore}
+              onChange={(e) => onChange({ pageBreakBefore: e.target.checked })}
+            />
+            Page break before
+          </label>
+          <label className="inline">
+            <input
+              type="checkbox"
+              checked={!!band.pageBreakAfter}
+              onChange={(e) => onChange({ pageBreakAfter: e.target.checked })}
+            />
+            Page break after
+          </label>
+        </>
+      )}
     </fieldset>
   );
 }

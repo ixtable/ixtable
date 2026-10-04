@@ -231,12 +231,12 @@ export function RecordView({
       return;
     }
     if (!table) return;
-    // Create can be pressed before the schema load finishes; wait for it instead of ignoring it.
-    const def = schema ?? (await tableSchema(table).catch(() => null));
-    if (!def) return;
     setNotice(null);
+    // Busy before any await, so a second press cannot start a second write.
     setBusy(true);
     try {
+      // Create can be pressed before the schema load finishes; wait for it instead of ignoring it.
+      const def = schema ?? (await tableSchema(table));
       const values = valuesToWrite();
       if (mode === "create") {
         if (!allowed("create")) throw new PermissionError("This role cannot create records here.");

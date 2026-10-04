@@ -3,6 +3,7 @@ import { useState } from "react";
 import { inspectTable } from "../lib/api";
 import type { DbObject, TableSchema } from "../lib/types";
 import { generateCrudForms } from "./generate";
+import { useGenerateApp } from "./generateApp";
 import { deleteForm, duplicateForm } from "./operations";
 import { newForm } from "./schema";
 import { useDesignEditor } from "./useDesignEditor";
@@ -38,6 +39,8 @@ export function FormList({
   const [error, setError] = useState("");
   const tables = objects.filter((o) => o.objectType === "table");
   const forms = design.forms;
+  const generateApp = useGenerateApp();
+  const [notice, setNotice] = useState("");
 
   const create = () => {
     const form = newForm(`Form ${forms.length + 1}`);
@@ -159,6 +162,26 @@ export function FormList({
           <Wand2 aria-hidden="true" />
           Generate form from table
         </button>
+        <button
+          type="button"
+          disabled={!tables.length}
+          onClick={() =>
+            generateApp()
+              .then((added) => {
+                setError("");
+                setNotice(
+                  added ? `Added ${added} forms and pages.` : "Every table already has forms.",
+                );
+              })
+              .catch((reason) =>
+                setError(reason instanceof Error ? reason.message : String(reason)),
+              )
+          }
+        >
+          <Wand2 aria-hidden="true" />
+          Generate app from tables
+        </button>
+        {notice && <small role="status">{notice}</small>}
         {error && (
           <small className="fd-problem" role="alert">
             {error}

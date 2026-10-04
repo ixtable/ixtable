@@ -119,7 +119,7 @@ export function MigrationEditor({
         </div>
       )}
       {preview && (
-        <div aria-label="SQL preview">
+        <div aria-label={`SQL preview (${preview.direction})`}>
           <b>
             {preview.statements.length} statement{preview.statements.length === 1 ? "" : "s"} on{" "}
             {preview.store}, in {preview.transactional ? "one transaction" : "autocommit"}
@@ -142,6 +142,14 @@ export function MigrationEditor({
             onClick={() => run(async () => setPreview(await previewMigration(draft.id)))}
           >
             Preview SQL
+          </button>
+        )}
+        {!isNew && (draft.reversible || !!draft.down?.trim()) && (
+          <button
+            type="button"
+            onClick={() => run(async () => setPreview(await previewMigration(draft.id, "down")))}
+          >
+            Preview down SQL
           </button>
         )}
         {!isNew && !applied && (

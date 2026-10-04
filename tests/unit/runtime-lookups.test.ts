@@ -8,6 +8,17 @@ vi.mock("@tauri-apps/api/core", () => ({
   invoke: async (command: string, args: Record<string, unknown>) => {
     calls.push({ command, args });
     if (command === "inspect_table") return schemas.get(String(args.table));
+    if (command === "execute_parameterized_query" && String(args.sql).includes("lookup_key0"))
+      return {
+        columns: ["lookup_key0", "lookup_key1", "lookup_display"],
+        rows: [
+          [
+            { type: "integer", value: 17 },
+            { type: "integer", value: 2 },
+            { type: "text", value: "Bolts at Depot" },
+          ],
+        ],
+      };
     if (command === "execute_parameterized_query") {
       const params = args.params as Array<{ value: { value: unknown } }>;
       const names: Record<number, string> = { 1: "Acme", 2: "Globex" };
@@ -26,7 +37,7 @@ vi.mock("@tauri-apps/api/core", () => ({
   },
 }));
 
-const { columnLookups, guessDisplayColumn, lookupLabels } = await import(
+const { columnLookups, guessDisplayColumn, lookupKey, lookupLabels } = await import(
   "../../src/runtime/lookups"
 );
 
@@ -110,5 +121,34 @@ describe("runtime relationship lookups", () => {
     ]);
     await lookupLabels(lookups, rows);
     expect(calls.filter((c) => c.command === "execute_parameterized_query")).toHaveLength(1);
+  });
+
+  it("labels a multi-column relationship by every key column", async () => {
+    const relationship = {
+      table: "thresholds",
+      valueColumn: "product_id",
+      displayColumn: "label",
+      keys: [
+        { column: "product_id", target: "product_id" },
+        { column: "location_id", target: "location_id" },
+      ],
+    };
+    const control = { kind: "relationship", relationship } as DesignControl;
+    expect(await columnLookups("orders", ["product_id"], () => control)).toEqual({
+      product_id: relationship,
+    });
+    const rows = [
+      { product_id: 17, location_id: 2 },
+      { product_id: 17, location_id: null },
+    ];
+    const labels = await lookupLabels({ product_id: relationship }, rows);
+    const queries = calls.filter((c) => c.command === "execute_parameterized_query");
+    expect(queries[0].args.sql).toBe(
+      'SELECT "product_id" AS lookup_key0, "location_id" AS lookup_key1, "label" AS lookup_display FROM "thresholds" WHERE ("product_id" = $k0_0 AND "location_id" = $k0_1)',
+    );
+    expect(labels.product_id.get(lookupKey(relationship, "product_id", rows[0]) ?? "")).toBe(
+      "Bolts at Depot",
+    );
+    expect(lookupKey(relationship, "product_id", rows[1])).toBeUndefined();
   });
 });

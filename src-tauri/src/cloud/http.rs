@@ -207,8 +207,69 @@ impl<R: Read> Read for Counting<R> {
     }
 }
 
-/// Streams a file to a signed upload URL (`PUT`, raw body).
+/// Upload attempts before giving up (§23: retryable upload).
+pub const UPLOAD_ATTEMPTS: u32 = 4;
+
+/// Whether a failed transfer may succeed when simply sent again: the cloud
+/// was unreachable, timed out, overloaded (5xx) or rate limited. Auth,
+/// precondition and validation failures (4xx) are final.
+pub fn is_transient(e: &AppError) -> bool {
+    matches!(
+        e.code.as_str(),
+        "CLOUD_OFFLINE" | "CLOUD_TIMEOUT" | "CLOUD_UNAVAILABLE" | "RATE_LIMITED"
+    )
+}
+
+/// Runs `attempt` up to `attempts` times, sleeping `base * 2^n` between
+/// transient failures. Returns the last error otherwise.
+pub fn with_retry<T>(
+    attempts: u32,
+    base: Duration,
+    mut attempt: impl FnMut(u32) -> Result<T, AppError>,
+) -> Result<T, AppError> {
+    let mut n = 0;
+    loop {
+        match attempt(n) {
+            Err(e) if is_transient(&e) && n + 1 < attempts => {
+                std::thread::sleep(base * 2u32.pow(n));
+                n += 1;
+            }
+            other => return other,
+        }
+    }
+}
+
+/// Streams a file to a signed upload URL (`PUT`, raw body), retrying
+/// transient failures with exponential backoff. `x-upsert: false` stays, so
+/// a retry never overwrites an object another upload created.
 pub fn upload_file(
+    cfg: &CloudConfig,
+    signed_url: &str,
+    path: &Path,
+    progress_id: &str,
+) -> Result<(), AppError> {
+    upload_file_with(
+        cfg,
+        signed_url,
+        path,
+        progress_id,
+        UPLOAD_ATTEMPTS,
+        Duration::from_secs(1),
+    )
+}
+
+pub(crate) fn upload_file_with(
+    cfg: &CloudConfig,
+    signed_url: &str,
+    path: &Path,
+    progress_id: &str,
+    attempts: u32,
+    base: Duration,
+) -> Result<(), AppError> {
+    with_retry(attempts, base, |_| upload_once(cfg, signed_url, path, progress_id))
+}
+
+fn upload_once(
     cfg: &CloudConfig,
     signed_url: &str,
     path: &Path,

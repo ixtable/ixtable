@@ -13,6 +13,9 @@ pub struct ColumnDef {
     pub default_expression: Option<String>,
     #[serde(default)]
     pub generated_expression: Option<String>,
+    /// True for a PostgreSQL identity column (`GENERATED ... AS IDENTITY`).
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub identity: bool,
 }
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "camelCase")]

@@ -5,6 +5,7 @@ import {
   type BuilderGroup,
   type BuilderModel,
   type FilterValue,
+  JOIN_KINDS,
   unaryOperator,
 } from "./model";
 
@@ -124,13 +125,13 @@ export function compileBuilder(model: BuilderModel): string {
   const lines: string[] = [];
   const selected = model.fields.filter((f) => f.selected);
   const expr = (f: BuilderField) => aggregate(f.aggregate, column(f.source, f.column, aliases));
-  lines.push(
-    `SELECT ${
-      selected.length
-        ? selected.map((f) => `${expr(f)} AS ${quoteIdent(fieldLabel(f))}`).join(", ")
-        : "*"
-    }`,
-  );
+  let projection = "*";
+  if (selected.length)
+    projection = selected.map((f) => `${expr(f)} AS ${quoteIdent(fieldLabel(f))}`).join(", ");
+  else if (model.groupBy.length)
+    projection = model.groupBy.map((g) => column(g.source, g.column, aliases)).join(", ");
+  else if (model.fields.length) throw new BuilderError("Select at least one output field");
+  lines.push(`SELECT ${projection}`);
   lines.push(`FROM ${quoteIdent(base.table)} AS ${quoteIdent(base.alias)}`);
   const available = new Set([base.alias]);
   for (const source of joined) {
@@ -145,7 +146,8 @@ export function compileBuilder(model: BuilderModel): string {
         throw new BuilderError(`Join to ${source.table} needs both columns`);
       return `${column(c.leftSource, c.leftColumn, aliases)} = ${column(source.alias, c.rightColumn, aliases)}`;
     });
-    const kind = join.kind === "left" ? "LEFT JOIN" : "INNER JOIN";
+    const kind = JOIN_KINDS.find((k) => k.id === join.kind)?.sql;
+    if (!kind) throw new BuilderError(`Unknown join kind ${String(join.kind)}`);
     lines.push(
       `${kind} ${quoteIdent(source.table)} AS ${quoteIdent(source.alias)} ON ${on.join(" AND ")}`,
     );
@@ -153,14 +155,22 @@ export function compileBuilder(model: BuilderModel): string {
   }
   const where = group(model.filters, aliases, false);
   if (where) lines.push(`WHERE ${where}`);
-  const aggregated = selected.some((f) => f.aggregate);
+  const sortFields = model.orderBy.map((o) => model.fields.find((f) => f.id === o.fieldId));
+  const aggregated =
+    selected.some((f) => f.aggregate) || sortFields.some((f) => f?.aggregate);
   const grouping = model.groupBy.map((g) => column(g.source, g.column, aliases));
-  if (aggregated)
+  if (aggregated || grouping.length)
     for (const f of selected.filter((f) => !f.aggregate)) {
       const c = column(f.source, f.column, aliases);
       if (!grouping.includes(c)) grouping.push(c);
     }
   if (grouping.length) lines.push(`GROUP BY ${grouping.join(", ")}`);
+  if (aggregated || grouping.length)
+    for (const o of model.orderBy) {
+      const field = model.fields.find((f) => f.id === o.fieldId);
+      if (field && !field.aggregate && !grouping.includes(expr(field)))
+        throw new BuilderError(`Sorting by ${field.column} needs it in Group by`);
+    }
   const having = group(model.having, aliases, true);
   if (having) lines.push(`HAVING ${having}`);
   if (model.orderBy.length) {

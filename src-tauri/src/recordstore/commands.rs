@@ -134,10 +134,30 @@ pub fn config_dependents(config: &DocumentConfig, table: &str) -> Vec<Dependent>
                     || (s.contains(char::is_whitespace) && super::plan::mentions(s, table))
             }
             Value::Array(a) => a.iter().any(|x| hit(x, table)),
-            Value::Object(o) => o.values().any(|x| hit(x, table)),
+            Value::Object(o) => o
+                .iter()
+                .any(|(k, x)| !DESCRIPTIVE_KEYS.contains(&k.as_str()) && hit(x, table)),
             _ => false,
         }
     }
+    /// Enum-like keys (control kinds, types) that never hold a table or column reference.
+    const DESCRIPTIVE_KEYS: &[&str] = &[
+        "kind",
+        "type",
+        "logicalType",
+        "declaredType",
+        "physicalType",
+        "format",
+        "direction",
+        "aggregate",
+        "mode",
+        "objectKind",
+        "objectType",
+        "status",
+        "align",
+        "variant",
+        "label",
+    ];
     /// Reports the shallowest objects with an id and a name whose subtree mentions the table.
     fn walk(kind: &str, v: &Value, table: &str, out: &mut Vec<Dependent>) {
         match v {
@@ -174,6 +194,53 @@ pub fn config_dependents(config: &DocumentConfig, table: &str) -> Vec<Dependent>
         }
     }
     out
+}
+
+/// Definitions that refer to the names a batch of operations renames, with one
+/// warning per rename. Renames do not rewrite these definitions, so the impact
+/// preview lists them before the change is applied (PRD §11).
+pub fn rename_dependents(
+    config: &DocumentConfig,
+    table: &str,
+    operations: &[AlterTable],
+) -> (Vec<Dependent>, Vec<String>) {
+    let of_table = config_dependents(config, table);
+    let mut dependents: Vec<Dependent> = vec![];
+    let mut warnings = vec![];
+    let list = |deps: &[Dependent]| {
+        deps.iter()
+            .map(|d| format!("{} \u{201c}{}\u{201d}", d.kind, d.name))
+            .collect::<Vec<_>>()
+            .join(", ")
+    };
+    for op in operations {
+        let (old, new, found) = match op {
+            AlterTable::RenameTable { new_name } => (table, new_name, of_table.clone()),
+            AlterTable::RenameColumn { column, new_name } => {
+                let of_column = config_dependents(config, column);
+                let found = of_table
+                    .iter()
+                    .filter(|d| of_column.iter().any(|c| c.id == d.id))
+                    .cloned()
+                    .collect();
+                (column.as_str(), new_name, found)
+            }
+            _ => continue,
+        };
+        if found.is_empty() {
+            continue;
+        }
+        warnings.push(format!(
+            "Renaming {old} to {new} does not update definitions that use the old name: {}. Update them after applying, or they will fail to load their data.",
+            list(&found)
+        ));
+        for d in found {
+            if !dependents.iter().any(|x| x.id == d.id) {
+                dependents.push(d);
+            }
+        }
+    }
+    (dependents, warnings)
 }
 
 #[tauri::command]
@@ -218,8 +285,23 @@ pub fn preview_table_changes(
         };
         Ok((plan, impact))
     })?;
+    let config = crate::manager()?.config(&window_label)?;
+    let (renamed, warnings) = rename_dependents(&config, &table, &operations);
+    plan.warnings.extend(warnings);
+    let impact = match impact {
+        Some(mut impact) => {
+            impact.dependents = config_dependents(&config, &table);
+            Some(impact)
+        }
+        // A rename that leaves definitions pointing at the old name is reviewed like a destructive change.
+        None if !renamed.is_empty() => {
+            let mut impact = with_store(&window_label, |s| s.impact(&table))?;
+            impact.dependents = renamed;
+            Some(impact)
+        }
+        None => None,
+    };
     if let Some(mut impact) = impact {
-        impact.dependents = config_dependents(&crate::manager()?.config(&window_label)?, &table);
         impact.statements = plan.statements.clone();
         plan.impact = Some(impact);
     }

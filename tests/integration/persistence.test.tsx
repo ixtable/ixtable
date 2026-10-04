@@ -186,6 +186,7 @@ it("keeps the last valid archive when recovered work is invalid, then discards i
   const crashed = await seedCrashedSession("broken", "Broken Work", path);
   const before = readFileSync(path);
   writeFileSync(join(crashed.workspace, "document.json"), "{ truncated");
+  writeFileSync(join(crashed.workspace, "config.yaml"), "name: [");
 
   const user = renderStartScreen();
   await user.click(await screen.findByRole("button", { name: "Recover Broken Work" }, LONG));

@@ -10,6 +10,8 @@ import {
   storeCapabilities,
   testDatasourceConnection,
 } from "./api";
+import { CapabilitySummary } from "./CapabilitySummary";
+import { modeLabel, storeLabel } from "./logical";
 import type { ConnectionReport, DatasourceConfig, StoreCapabilities } from "./types";
 import "./schema.css";
 
@@ -264,9 +266,8 @@ export function DatasourceTab() {
       )}
       {capabilities && (
         <details>
-          <summary>
-            {capabilities.store === "postgres" ? "PostgreSQL" : "SQLite"} store capabilities
-          </summary>
+          <summary>{storeLabel(capabilities)} store capabilities</summary>
+          <CapabilitySummary capabilities={capabilities} />
           <table aria-label="Logical type mapping">
             <thead>
               <tr>
@@ -300,7 +301,7 @@ export function DatasourceTab() {
               {capabilities.ddl.map((d) => (
                 <tr key={d.operation}>
                   <td>{d.operation.replaceAll("_", " ")}</td>
-                  <td>{d.mode === "inPlace" ? "Changes in place" : "Requires table rebuild"}</td>
+                  <td>{modeLabel(d.mode)}</td>
                   <td>{d.notes}</td>
                 </tr>
               ))}

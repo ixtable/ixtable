@@ -151,6 +151,15 @@ export interface DesktopAuthPoll {
   } | null;
 }
 
+/** A runtime installation backup (`installation_backups` row, RLS: own or app admin). */
+export interface InstallationBackup {
+  id: string;
+  installationId: string;
+  archiveSha256: string;
+  archiveSize: number;
+  createdAt: string;
+}
+
 export interface RestoreTarget {
   signedUrl: string;
   sha256: string;

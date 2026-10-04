@@ -2,7 +2,7 @@ import { Cloud } from "lucide-react";
 import { useEffect, useId, useState } from "react";
 import type { SessionState } from "../lib/types";
 import { installedApps } from "./api";
-import { AccountLine, SignInPanel } from "./auth";
+import { AcceptInvitation, AccountLine, SignInPanel } from "./auth";
 import { useCloudSession } from "./useCloudSession";
 import { listMemberApps } from "./client";
 import { CloudErrorNotice } from "./CloudErrorNotice";
@@ -31,6 +31,7 @@ export function CloudApps({
   const [busy, setBusy] = useState("");
   const [error, setError] = useState<CloudError | null>(null);
   const [showSignIn, setShowSignIn] = useState(false);
+  const [revision, setRevision] = useState(0);
   const { progress, track } = useTransfer();
   const titleId = useId();
   const userId = session?.user.id;
@@ -60,7 +61,7 @@ export function CloudApps({
     return () => {
       active = false;
     };
-  }, [userId]);
+  }, [userId, revision]);
 
   const open = async (row: Row) => {
     setBusy(row.installed ? `Opening ${row.name}…` : `Installing ${row.name}…`);
@@ -92,6 +93,7 @@ export function CloudApps({
       ) : (
         <>
           <AccountLine email={session.user.email ?? session.user.id} />
+          <AcceptInvitation onAccepted={() => setRevision((n) => n + 1)} />
           {offline && (
             <p className="cloud-muted" role="status">
               ixtable Cloud is not reachable. Installed applications run offline.

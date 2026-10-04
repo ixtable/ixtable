@@ -6,9 +6,9 @@ import {
   cloudConfig,
   signOutLocal,
 } from "./api";
-import { type DesktopFunction, type DesktopReplies, decoders } from "./contract";
+import { backupRow, type DesktopFunction, type DesktopReplies, decoders } from "./contract";
 import { CloudError, toCloudError } from "./errors";
-import type { AppVersion, CloudApp, MemberApp, Organization } from "./types";
+import type { AppVersion, CloudApp, InstallationBackup, MemberApp, Organization } from "./types";
 
 /**
  * supabase-js session storage backed by the local secret store (Rust): the
@@ -93,6 +93,18 @@ export async function signUp(email: string, password: string) {
   if (error) throw await toCloudError(error);
   if (data.session) publish(data.session);
   return data.session;
+}
+
+/**
+ * Sends the password-recovery email, the same Supabase flow the website's
+ * "Forgot password" page uses; its link opens the website's reset page.
+ */
+export async function requestPasswordReset(email: string) {
+  const client = await cloudClient();
+  const { siteUrl } = await cloudConfig();
+  const redirectTo = siteUrl ? `${siteUrl.replace(/\/$/, "")}/reset-password` : undefined;
+  const { error } = await client.auth.resetPasswordForEmail(email, { redirectTo });
+  if (error) throw await toCloudError(error);
 }
 
 /** Adopts a session handed over by the browser sign-in (PKCE exchange). */
@@ -234,6 +246,32 @@ export async function listVersions(appId: string): Promise<AppVersion[]> {
     minRuntimeVersion: row.min_runtime_version,
     resolution: row.resolution,
   }));
+}
+
+/** This installation's backups, newest first (RLS: the installing user or app admins). */
+export async function listInstallationBackups(
+  appId: string,
+  installationId: string,
+): Promise<InstallationBackup[]> {
+  const client = await cloudClient();
+  const data = await rows<unknown[]>(
+    client
+      .from("installation_backups")
+      .select("id, installation_id, archive_sha256, archive_size, created_at")
+      .eq("app_id", appId)
+      .eq("installation_id", installationId)
+      .order("created_at", { ascending: false }),
+  );
+  return data.map(backupRow);
+}
+
+/** Release notes of a published version ("" when the row is not readable). */
+export async function versionReleaseNotes(versionId: string): Promise<string> {
+  const client = await cloudClient();
+  const row = await rows<{ release_notes: string | null } | null>(
+    client.from("app_versions").select("release_notes").eq("id", versionId).maybeSingle(),
+  );
+  return row?.release_notes ?? "";
 }
 
 /** Active runtime users of an app (for the PRD §19 concurrency check). */

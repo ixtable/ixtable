@@ -8,12 +8,15 @@ export function ColumnFields({
   onChange,
   maxPrecision = 38,
   nameEditable = true,
+  types,
 }: {
   draft: ColumnDraft;
   label: string;
   onChange: (next: ColumnDraft) => void;
   maxPrecision?: number;
   nameEditable?: boolean;
+  // Logical types the record store supports; every type while capabilities load.
+  types?: string[];
 }) {
   const parts = parseLogical(draft.logicalType);
   const set = (patch: Partial<ColumnDraft>) => onChange({ ...draft, ...patch });
@@ -36,7 +39,9 @@ export function ColumnFields({
           setParts({ base: e.target.value, precision: Math.min(parts.precision, maxPrecision) })
         }
       >
-        {LOGICAL_TYPES.map((t) => (
+        {LOGICAL_TYPES.filter(
+          (t) => !types || types.includes(t.value) || t.value === parts.base,
+        ).map((t) => (
           <option key={t.value} value={t.value}>
             {t.label}
           </option>
@@ -84,7 +89,7 @@ export function ColumnFields({
       </label>
       <input
         aria-label={`${label} default`}
-        placeholder="Default (SQL literal)"
+        placeholder="Default value or expression"
         value={draft.defaultExpression}
         onChange={(e) => set({ defaultExpression: e.target.value })}
       />

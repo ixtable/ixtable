@@ -3,7 +3,16 @@ import { useState } from "react";
 import type { TableSchema } from "../../lib/types";
 import { newId } from "../../lib/utils";
 import { addJoin, joinSuggestions, removeSource } from "./joins";
-import { aliasFor, type BuilderJoin, type BuilderModel, emptyModel, isEmptyModel } from "./model";
+import {
+  aliasFor,
+  type BuilderJoin,
+  type BuilderModel,
+  emptyModel,
+  isEmptyModel,
+  JOIN_KINDS,
+  type JoinCondition,
+  type JoinKind,
+} from "./model";
 import { columnsOf } from "./useSchemas";
 
 export function SourcesPanel({
@@ -60,71 +69,99 @@ export function SourcesPanel({
         if (!source) return null;
         const index = model.sources.indexOf(source);
         const earlier = model.sources.slice(0, index);
-        const condition = join.conditions[0] ?? {
-          leftSource: base?.alias ?? "",
-          leftColumn: "",
-          rightColumn: "",
-        };
+        const blank = { leftSource: base?.alias ?? "", leftColumn: "", rightColumn: "" };
+        const conditions = join.conditions.length ? join.conditions : [blank];
+        const setCondition = (i: number, next: JoinCondition) =>
+          patchJoin(join.id, (j) => ({
+            ...j,
+            conditions: conditions.map((c, k) => (k === i ? next : c)),
+          }));
+        // The first condition keeps the short labels; later ones are numbered.
+        const n = (i: number) => (i ? ` ${i + 1}` : "");
         return (
-          <div className="query-row" key={join.id}>
-            <select
-              aria-label={`Join type for ${source.alias}`}
-              value={join.kind}
-              onChange={(e) =>
-                patchJoin(join.id, (j) => ({ ...j, kind: e.target.value as BuilderJoin["kind"] }))
-              }
-            >
-              <option value="inner">Inner join</option>
-              <option value="left">Left join</option>
-            </select>
-            <code>
-              {source.table} AS {source.alias}
-            </code>
-            <span>on</span>
-            <select
-              aria-label={`Join ${source.alias} left column`}
-              value={`${condition.leftSource}.${condition.leftColumn}`}
-              onChange={(e) => {
-                const [leftSource, ...rest] = e.target.value.split(".");
-                patchJoin(join.id, (j) => ({
-                  ...j,
-                  conditions: [{ ...condition, leftSource, leftColumn: rest.join(".") }],
-                }));
-              }}
-            >
-              <option value={`${condition.leftSource}.`}>Choose…</option>
-              {earlier.flatMap((s) =>
-                columnsOf(schemas, s.table).map((c) => (
-                  <option key={`${s.alias}.${c}`} value={`${s.alias}.${c}`}>
-                    {s.alias}.{c}
+          <div className="query-join" key={join.id}>
+            <div className="query-row">
+              <select
+                aria-label={`Join type for ${source.alias}`}
+                value={join.kind}
+                onChange={(e) =>
+                  patchJoin(join.id, (j) => ({ ...j, kind: e.target.value as JoinKind }))
+                }
+              >
+                {JOIN_KINDS.map((k) => (
+                  <option key={k.id} value={k.id}>
+                    {k.label}
                   </option>
-                )),
-              )}
-            </select>
-            <span>=</span>
-            <select
-              aria-label={`Join ${source.alias} right column`}
-              value={condition.rightColumn}
-              onChange={(e) =>
-                patchJoin(join.id, (j) => ({
-                  ...j,
-                  conditions: [{ ...condition, rightColumn: e.target.value }],
-                }))
-              }
-            >
-              <option value="">Choose…</option>
-              {columnsOf(schemas, source.table).map((c) => (
-                <option key={c} value={c}>
-                  {source.alias}.{c}
-                </option>
-              ))}
-            </select>
+                ))}
+              </select>
+              <code>
+                {source.table} AS {source.alias}
+              </code>
+              <button
+                type="button"
+                aria-label={`Remove join ${source.alias}`}
+                onClick={() => onChange(removeSource(model, source.alias))}
+              >
+                <Trash2 />
+              </button>
+            </div>
+            {conditions.map((condition, i) => (
+              <div className="query-row" key={i}>
+                <span>{i ? "and" : "on"}</span>
+                <select
+                  aria-label={`Join ${source.alias} left column${n(i)}`}
+                  value={`${condition.leftSource}.${condition.leftColumn}`}
+                  onChange={(e) => {
+                    const [leftSource, ...rest] = e.target.value.split(".");
+                    setCondition(i, { ...condition, leftSource, leftColumn: rest.join(".") });
+                  }}
+                >
+                  <option value={`${condition.leftSource}.`}>Choose…</option>
+                  {earlier.flatMap((s) =>
+                    columnsOf(schemas, s.table).map((c) => (
+                      <option key={`${s.alias}.${c}`} value={`${s.alias}.${c}`}>
+                        {s.alias}.{c}
+                      </option>
+                    )),
+                  )}
+                </select>
+                <span>=</span>
+                <select
+                  aria-label={`Join ${source.alias} right column${n(i)}`}
+                  value={condition.rightColumn}
+                  onChange={(e) => setCondition(i, { ...condition, rightColumn: e.target.value })}
+                >
+                  <option value="">Choose…</option>
+                  {columnsOf(schemas, source.table).map((c) => (
+                    <option key={c} value={c}>
+                      {source.alias}.{c}
+                    </option>
+                  ))}
+                </select>
+                {conditions.length > 1 && (
+                  <button
+                    type="button"
+                    aria-label={`Remove join ${source.alias} condition ${i + 1}`}
+                    onClick={() =>
+                      patchJoin(join.id, (j) => ({
+                        ...j,
+                        conditions: conditions.filter((_, k) => k !== i),
+                      }))
+                    }
+                  >
+                    <Trash2 />
+                  </button>
+                )}
+              </div>
+            ))}
             <button
               type="button"
-              aria-label={`Remove join ${source.alias}`}
-              onClick={() => onChange(removeSource(model, source.alias))}
+              onClick={() =>
+                patchJoin(join.id, (j) => ({ ...j, conditions: [...conditions, blank] }))
+              }
             >
-              <Trash2 />
+              <Plus />
+              Add condition to {source.alias}
             </button>
           </div>
         );

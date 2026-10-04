@@ -251,6 +251,10 @@ it("installs a signed cloud bundle, rejects tampering, and updates keeping recor
   expect(await notes()).toEqual(["written at runtime"]);
   const tables = await call<{ name: string }[]>("list_database_objects");
   expect(tables.map((t) => t.name)).toContain("tags");
+  expect(await call<Json>("runtime_installation_info")).toMatchObject({
+    version: "1.1.0",
+    appliedMigrations: ["Add tags"],
+  });
   const [installed] = await call<Json[]>("cloud_installed_apps");
   expect(installed).toMatchObject({ appId: APP_ID, version: "1.1.0", versionId: "v2" });
 

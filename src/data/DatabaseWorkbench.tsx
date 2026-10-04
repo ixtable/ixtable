@@ -5,13 +5,13 @@ import { CreateFormsOffer } from "../design/CreateFormsOffer";
 import { useDocumentConfig } from "../lib/config-store";
 import { deleteRecord, insertRecord, updateRecord } from "../lib/records";
 import type { CreateTableSpec, DbPage, NamedValue, Sort, TableSchema } from "../lib/types";
-import { applyTableChanges, previewTableChanges, storeCapabilities } from "../schema/api";
-import { ImpactDialog } from "../schema/ImpactDialog";
+import { storeCapabilities } from "../schema/api";
 import { logicalOf, valueFromText } from "../schema/logical";
-import type { ChangePlan, StoreCapabilities } from "../schema/types";
+import type { StoreCapabilities } from "../schema/types";
 import { useShell } from "../shell/context";
 import { createDatabaseTable } from "./api";
 import { CreateTableForm } from "./CreateTableForm";
+import { RelateDialog } from "./RelateDialog";
 import { showValue } from "./format";
 import {
   type DrawnRelationship,
@@ -26,11 +26,8 @@ export function DatabaseWorkbench() {
   const { objects, selection: active, select: onSelect, reloadMetadata, markDirty } = useShell();
   const { config, update, reload: reloadConfig } = useDocumentConfig();
   const [capabilities, setCapabilities] = useState<StoreCapabilities | null>(null);
-  const [relating, setRelating] = useState<{
-    drawn: DrawnRelationship;
-    plan: ChangePlan;
-    error: string;
-  } | null>(null);
+  // The relationship editor, opened by drawing on the diagram or by the New relationship button.
+  const [relating, setRelating] = useState<{ drawn: DrawnRelationship | null } | null>(null);
   const positions = useMemo(
     () =>
       ((config.navigationState as Record<string, unknown> | null)?.relationshipLayout ??
@@ -48,26 +45,13 @@ export function DatabaseWorkbench() {
       }),
       "Arrange relationship diagram",
     ).catch((e) => setError(asTauriError(e).message));
-  const relationOp = (r: DrawnRelationship) => [
-    {
-      operation: "add_foreign_key" as const,
-      foreignKey: {
-        columns: [r.childColumn],
-        targetTable: r.parentTable,
-        targetColumns: [r.parentColumn],
-        onUpdate: "NO ACTION",
-        onDelete: "NO ACTION",
-      },
-    },
-  ];
-  const relate = (drawn: DrawnRelationship) =>
-    previewTableChanges(drawn.childTable, relationOp(drawn))
-      .then((plan) => setRelating({ drawn, plan, error: "" }))
-      .catch((e) => setError(asTauriError(e).message));
   // `schemasFor` is the object list the schemas were inspected for. The designer
-  // waits until they match, so it never opens on (and is not then remounted
-  // from) a schema that a DDL change has just made stale.
+  // waits until they match before it opens, so it never opens on (and is not then
+  // remounted from) a schema that a DDL change has just made stale. Once open
+  // (`designedTable`), it stays mounted through a reload: it remounts only when the
+  // reloaded schema differs (its key), so a reload that changes nothing keeps drafts.
   const [schemasFor, setSchemasFor] = useState<typeof objects | null>(null);
+  const [designedTable, setDesignedTable] = useState("");
   const [schemas, setSchemas] = useState<TableSchema[]>([]),
     [page, setPage] = useState<DbPage | null>(null),
     [, setLoading] = useState(false),
@@ -198,6 +182,12 @@ export function DatabaseWorkbench() {
     }
   };
   const selectedSchema = schemas.find((schema) => schema.name === selected);
+  const schemasFresh = schemasFor === objects;
+  const designerOpen = designingSelected && designedTable === selected;
+  useEffect(() => {
+    if (!designingSelected) setDesignedTable("");
+    else if (schemasFresh && selectedSchema) setDesignedTable(selectedSchema.name);
+  }, [designingSelected, schemasFresh, selectedSchema]);
   const inspectorVisible = creating || !!selected;
   return (
     <section className={`workbench ${inspectorVisible ? "" : "relationship-only"}`}>
@@ -212,6 +202,12 @@ export function DatabaseWorkbench() {
             </b>
           </div>
           <span className="canvas-help">Drag to arrange · Scroll to zoom</span>
+          {schemas.length > 0 && (
+            <button onClick={() => setRelating({ drawn: null })}>
+              <Plus />
+              New relationship
+            </button>
+          )}
         </div>
         <RelationshipBrowser
           objects={objects}
@@ -223,21 +219,23 @@ export function DatabaseWorkbench() {
           }}
           positions={positions}
           onArrange={arrange}
-          onRelate={relate}
+          onRelate={(drawn) => setRelating({ drawn })}
         />
         {relating && (
-          <ImpactDialog
-            title={`Relate ${relating.drawn.childTable}.${relating.drawn.childColumn} to ${relating.drawn.parentTable}.${relating.drawn.parentColumn}?`}
-            plan={relating.plan}
-            confirmLabel="Create relationship"
-            error={relating.error}
-            onCancel={() => setRelating(null)}
-            onConfirm={() =>
-              applyTableChanges(relating.drawn.childTable, relationOp(relating.drawn))
-                .then(() => afterSchemaChange(relating.drawn.childTable))
-                .then(() => setRelating(null))
-                .catch((e) => setRelating({ ...relating, error: asTauriError(e).message }))
+          <RelateDialog
+            schemas={schemas}
+            capabilities={capabilities}
+            drawn={relating.drawn}
+            childTable={
+              selected && schemas.some((s) => s.name === selected)
+                ? selected
+                : (schemas[0]?.name ?? "")
             }
+            onCancel={() => setRelating(null)}
+            onApplied={async (table) => {
+              setRelating(null);
+              await afterSchemaChange(table);
+            }}
           />
         )}
       </div>
@@ -247,25 +245,26 @@ export function DatabaseWorkbench() {
             <span>•••</span>
           </div>
           <div className="pane data-pane">
-            {designingSelected && schemasFor !== objects ? (
+            {designingSelected && !schemasFresh && !designerOpen ? (
               <p role="status">Loading table design…</p>
             ) : designingSelected && selectedSchema ? (
-              <TableSchemaDesigner
-                key={JSON.stringify(selectedSchema)}
-                schema={selectedSchema}
-                tables={schemas}
-                capabilities={capabilities}
-                onChanged={(name) => afterSchemaChange(name)}
-                onDropped={() => afterSchemaChange(null)}
-                onCancel={() => setDesigningSelected(false)}
-              />
+              // Disabled while reloading: a remount on new schema would drop staged changes.
+              <fieldset className="contents" disabled={!schemasFresh} aria-busy={!schemasFresh}>
+                {!schemasFresh && <p role="status">Refreshing schema…</p>}
+                <TableSchemaDesigner
+                  key={JSON.stringify(selectedSchema)}
+                  schema={selectedSchema}
+                  tables={schemas}
+                  capabilities={capabilities}
+                  onChanged={(name) => afterSchemaChange(name)}
+                  onDropped={() => afterSchemaChange(null)}
+                  onCancel={() => setDesigningSelected(false)}
+                />
+              </fieldset>
             ) : creating ? (
               <CreateTableForm
                 tables={schemas}
-                maxPrecision={
-                  capabilities?.logicalTypes.find((t) => t.logicalType.startsWith("decimal"))
-                    ?.maxPrecision
-                }
+                capabilities={capabilities}
                 onCreate={createTable}
                 onCancel={() => onSelect(null)}
               />

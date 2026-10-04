@@ -2,6 +2,7 @@ import { Plus } from "lucide-react";
 import { useId, useState } from "react";
 import type { CreateForeignKeySpec, TableSchema } from "../lib/types";
 
+// Referential actions offered while store capabilities load.
 const ACTIONS = ["NO ACTION", "RESTRICT", "CASCADE", "SET NULL", "SET DEFAULT"];
 
 /** Ordered multi-column choice: columns are listed in the order they were ticked. */
@@ -41,17 +42,35 @@ export function ColumnPicker({
 export function ForeignKeyEditor({
   columns,
   tables,
+  actions = ACTIONS,
+  initial,
+  addLabel = "Add relationship",
   onAdd,
 }: {
   columns: string[];
   tables: Array<Pick<TableSchema, "name" | "columns">>;
+  // Referential actions the record store supports (`capabilities.foreignKeyActions`).
+  actions?: string[];
+  // Prefills the editor, e.g. from a relationship drawn on the diagram.
+  initial?: {
+    columns: string[];
+    targetTable: string;
+    targetColumns: string[];
+    onUpdate?: string | null;
+    onDelete?: string | null;
+  };
+  addLabel?: string;
   onAdd: (fk: CreateForeignKeySpec) => void;
 }) {
-  const [source, setSource] = useState<string[]>([]);
-  const [target, setTarget] = useState("");
-  const [targets, setTargets] = useState<Record<string, string>>({});
-  const [onUpdate, setOnUpdate] = useState("NO ACTION");
-  const [onDelete, setOnDelete] = useState("NO ACTION");
+  const [source, setSource] = useState<string[]>(initial?.columns ?? []);
+  const [target, setTarget] = useState(initial?.targetTable ?? "");
+  const [targets, setTargets] = useState<Record<string, string>>(() =>
+    Object.fromEntries(
+      (initial?.columns ?? []).map((c, i) => [c, initial?.targetColumns[i] ?? ""]),
+    ),
+  );
+  const [onUpdate, setOnUpdate] = useState(initial?.onUpdate ?? actions[0] ?? "NO ACTION");
+  const [onDelete, setOnDelete] = useState(initial?.onDelete ?? actions[0] ?? "NO ACTION");
   const targetColumns = tables.find((t) => t.name === target)?.columns.map((c) => c.name) ?? [];
   const ready = source.length > 0 && target && source.every((c) => targets[c]);
   return (
@@ -95,7 +114,7 @@ export function ForeignKeyEditor({
       <label>
         On update
         <select value={onUpdate} onChange={(e) => setOnUpdate(e.target.value)}>
-          {ACTIONS.map((a) => (
+          {actions.map((a) => (
             <option key={a}>{a}</option>
           ))}
         </select>
@@ -103,7 +122,7 @@ export function ForeignKeyEditor({
       <label>
         On delete
         <select value={onDelete} onChange={(e) => setOnDelete(e.target.value)}>
-          {ACTIONS.map((a) => (
+          {actions.map((a) => (
             <option key={a}>{a}</option>
           ))}
         </select>
@@ -124,7 +143,7 @@ export function ForeignKeyEditor({
         }}
       >
         <Plus aria-hidden="true" />
-        Add relationship
+        {addLabel}
       </button>
     </fieldset>
   );

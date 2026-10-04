@@ -331,6 +331,8 @@ pub fn run() {
             use tauri::Manager;
             // Durable state lives in the app's local data dir, resolved before any command runs.
             paths::init_app_dir(app.path().app_local_data_dir()?);
+            // Panics leave a redacted record in the local diagnostic log (PRD §27.5).
+            logging::install_panic_hook();
             // Read the first launch's file arguments before anything changes the cwd.
             let _ = launch_files();
             Ok(())
@@ -486,6 +488,9 @@ pub fn run() {
             }
         })
 }
+
+#[cfg(test)]
+mod durability_tests;
 
 #[cfg(test)]
 mod launch_args_tests {

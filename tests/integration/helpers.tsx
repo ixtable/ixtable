@@ -1,4 +1,4 @@
-import { render, screen, waitFor, within } from "@testing-library/react";
+import { act, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { invoke } from "@tauri-apps/api/core";
 import App from "../../src/App";
@@ -67,9 +67,27 @@ export async function readPage(table: string, sorts: unknown[] = [], filters: un
   }>("read_table_page", { windowLabel: "main", table, offset: 0, limit: 100, sorts, filters });
 }
 
+/** Waits until the object browser has no metadata reload in flight. */
+async function metadataSettled() {
+  await waitFor(
+    () => {
+      const objects = screen.queryByRole("region", { name: "Database objects" });
+      expect(objects && within(objects).queryByRole("status")).toBeFalsy();
+    },
+    { timeout: 20_000 },
+  );
+}
+
+/**
+ * Reloads database metadata and waits for that reload to finish. A reload still
+ * in flight (say, the initial one) would otherwise land later and remount views.
+ */
 export async function refreshDatabase() {
-  window.dispatchEvent(new Event("ixtable:database-changed"));
-  await waitFor(() => expect(screen.queryByText("Loading database…")).not.toBeInTheDocument());
+  await metadataSettled();
+  act(() => {
+    window.dispatchEvent(new Event("ixtable:database-changed"));
+  });
+  await metadataSettled();
 }
 
 export function grid() {

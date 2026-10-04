@@ -13,7 +13,8 @@
       "!src-tauri/gen",
       "!**/.evidence",
       "!**/test-results",
-      "!**/playwright-report"
+      "!**/playwright-report",
+      "!tests/fixtures/report-goldens"
     ]
   },
   "formatter": {

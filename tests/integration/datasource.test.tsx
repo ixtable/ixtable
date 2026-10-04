@@ -146,11 +146,10 @@ it.skipIf(!postgresUrl)(
     await user.clear(port);
     await user.type(port, url.port || "5432");
     await user.type(screen.getByRole("textbox", { name: "Database" }), url.pathname.slice(1));
-    await user.type(
-      screen.getByRole("textbox", { name: "User" }),
-      decodeURIComponent(url.username),
-    );
-    await user.type(screen.getByLabelText("Password"), secret);
+    await user.click(screen.getByRole("textbox", { name: "User" }));
+    await user.paste(decodeURIComponent(url.username));
+    await user.click(screen.getByLabelText("Password"));
+    await user.paste(secret);
     await user.selectOptions(screen.getByRole("combobox", { name: "TLS (sslmode)" }), "disable");
     await user.click(screen.getByRole("checkbox", { name: /accept connecting without TLS/ }));
     await user.click(screen.getByRole("button", { name: "Test connection" }));

@@ -191,12 +191,25 @@ it("sets pagination controls in the designer and keeps tables out of page bands"
     "region",
   );
   await user.click(screen.getByRole("checkbox", { name: "Group 1 starts a new page" }));
+  await user.click(screen.getByRole("checkbox", { name: "Group 1 starts a new page" }));
+  expect(screen.getByRole("checkbox", { name: "Group 1 starts a new page" })).not.toBeChecked();
   await user.click(screen.getByRole("checkbox", { name: "Group 1 restarts group page numbers" }));
+  const forcedNewPage = screen.getByRole("checkbox", { name: "Group 1 starts a new page" });
+  expect(forcedNewPage).toBeChecked();
+  expect(forcedNewPage).toBeDisabled();
+  expect(forcedNewPage).toHaveAccessibleDescription("Always on while group page numbers restart.");
+  await user.click(screen.getByRole("checkbox", { name: "Group 1 starts a new page" }));
   await selectBand(user, "Report header");
   await user.click(screen.getByRole("checkbox", { name: "Page break after" }));
 
   await selectBand(user, "Page footer");
-  expect(screen.getByRole("button", { name: "Add table" })).toBeDisabled();
+  const addTable = screen.getByRole("button", { name: "Add table" });
+  expect(addTable).toHaveAttribute("aria-disabled", "true");
+  expect(addTable).not.toBeDisabled();
+  expect(addTable).toHaveAccessibleDescription(
+    "Tables are not supported in page headers or footers.",
+  );
+  await user.click(addTable);
   expect(screen.queryByRole("checkbox", { name: "Page break before" })).not.toBeInTheDocument();
   await user.click(screen.getByRole("button", { name: "Add calculated" }));
   await setExpression(user, "'Part ' & groupPage & ' of ' & groupPages & ' / ' & page");
@@ -209,11 +222,19 @@ it("sets pagination controls in the designer and keeps tables out of page bands"
   expect(within(second).getByText("Part 1 of 1 / 2")).toBeInTheDocument();
 
   const config = await invoke<{
-    reports: Array<{ bands: { reportHeader: { pageBreakAfter?: boolean }; groups: unknown[] } }>;
+    reports: Array<{
+      bands: {
+        reportHeader: { pageBreakAfter?: boolean };
+        pageFooter: { components: Array<{ kind: string }> };
+        groups: unknown[];
+      };
+    }>;
   }>("read_document_config", { windowLabel: "main" });
   const bands = config.reports[0].bands;
   expect(bands.reportHeader.pageBreakAfter).toBe(true);
-  expect(bands.groups[0]).toMatchObject({ newPage: true, resetPageNumber: true });
+  expect(bands.pageFooter.components.map((c) => c.kind)).toEqual(["calculated"]);
+  expect(bands.groups[0]).toMatchObject({ resetPageNumber: true });
+  expect((bands.groups[0] as { newPage?: boolean }).newPage).toBeFalsy();
   const issues = await invoke<Array<{ objectKind: string }>>("validate_document", {
     windowLabel: "main",
   });

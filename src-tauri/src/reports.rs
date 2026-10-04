@@ -213,9 +213,15 @@ fn band_issues(
             issues.push(err(format!("{what} lies outside the band")));
         }
         if c.kind == "table" && page_band {
-            issues.push(err(format!(
-                "{what}: tables are not supported in page headers or footers"
-            )));
+            // A warning, not an error: older documents kept such tables and layout drops them.
+            issues.push(Issue::warning(
+                "report",
+                id,
+                format!(
+                    "{}: {what}: tables are not supported in page headers or footers and are left out",
+                    report.name
+                ),
+            ));
         }
         if c.kind == "table" {
             tables += 1;
@@ -519,7 +525,7 @@ mod tests {
     }
 
     #[test]
-    fn reports_validate_rejects_tables_in_page_bands() {
+    fn reports_validate_warns_about_tables_in_page_bands() {
         let mut r = valid_report();
         r.bands.page_header = Band {
             height: 20.0,
@@ -531,10 +537,14 @@ mod tests {
             components: vec![component("pf", "table", 0.0, 0.0, 100.0, 20.0)],
             ..Default::default()
         };
-        let text: Vec<String> = validate(&config_with(r))
-            .iter()
-            .map(|i| i.message.clone())
-            .collect();
+        let issues = validate(&config_with(r));
+        assert!(
+            issues
+                .iter()
+                .all(|i| i.severity == crate::validation::Severity::Warning),
+            "{issues:?}"
+        );
+        let text: Vec<String> = issues.iter().map(|i| i.message.clone()).collect();
         assert!(
             text.iter()
                 .any(|m| m.contains("Page header component ph: tables are not supported")),

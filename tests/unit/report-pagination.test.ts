@@ -158,6 +158,86 @@ describe("pagination controls", () => {
     }
   });
 
+  it("keeps a block that fits only without repeated headers out of the footer", () => {
+    const doc = layoutReport(
+      baseReport({
+        groups: [byRegion({ repeatHeader: true }, 40)],
+        detail: band(730, [field("d", "record.customer")]),
+        pageFooter: band(20, [field("pf", "page")]),
+      }),
+      orders.filter((o) => o.region === "West" || o.region === "East"),
+    );
+    const footerTop = 842 - 36 - 20;
+    for (const page of doc.pages) {
+      const body = page.items.filter((i) => i.kind === "text" && i.componentId !== "pf");
+      for (const item of body) expect(item.y).toBeLessThan(footerTop);
+      const details = body.filter((i) => i.kind === "text" && i.componentId === "d");
+      for (const d of details) expect(d.y + 730).toBeLessThanOrEqual(footerTop);
+    }
+    expect(texts(doc).map((p) => p.filter((t) => t[0] === "d").map((t) => t[1]))).toEqual([
+      [],
+      ["Birch"],
+      ["Dune"],
+      [],
+      ["Acme"],
+      ["Cobalt"],
+    ]);
+  });
+
+  it("splits a keepTogether table that fits only without repeated headers", () => {
+    const table: ReportComponent = {
+      id: "tbl",
+      kind: "table",
+      x: 0,
+      y: 0,
+      w: 300,
+      h: 20,
+      columns: [{ id: "c", header: "Customer", expression: "record.customer", width: 300 }],
+    };
+    const rows = Array.from({ length: 40 }, (_, i) => ({ region: "West", customer: `C${i}` }));
+    const doc = layoutReport(
+      baseReport({
+        groups: [
+          { ...byRegion({ repeatHeader: true }, 40), footer: band(20, [table], true) },
+        ],
+      }),
+      rows,
+    );
+    for (const page of doc.pages)
+      for (const item of page.items) expect(item.y + item.h).toBeLessThanOrEqual(842 - 36 + 1e-6);
+  });
+
+  it("repeats only the non-table items of a group header", () => {
+    const table: ReportComponent = {
+      id: "htbl",
+      kind: "table",
+      x: 0,
+      y: 20,
+      w: 300,
+      h: 20,
+      columns: [{ id: "c", header: "Customer", expression: "record.customer", width: 300 }],
+    };
+    const rows = Array.from({ length: 120 }, (_, i) => ({ region: "West", customer: `C${i}` }));
+    const doc = layoutReport(
+      baseReport({
+        groups: [byRegion({ repeatHeader: true }, 40)].map((g) => ({
+          ...g,
+          header: band(40, [field("gh", "record.region"), table]),
+        })),
+        detail: band(20, [field("d", "record.customer")]),
+      }),
+      rows,
+    );
+    expect(doc.pages.length).toBeGreaterThan(2);
+    const detailPages = texts(doc).filter((p) => p.some((t) => t[0] === "d"));
+    expect(detailPages.length).toBeGreaterThan(1);
+    for (const page of detailPages.slice(1)) {
+      expect(page[0]).toEqual(["gh", "West", 36]);
+      expect(page[1]).toEqual(["d", expect.any(String), 76]);
+      expect(page.some((t) => t[0] === "htbl")).toBe(false);
+    }
+  });
+
   it("restarts groupPage and groupPages per group, keeping page and pages", () => {
     const doc = layoutReport(
       baseReport({

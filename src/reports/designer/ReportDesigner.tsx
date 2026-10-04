@@ -88,6 +88,7 @@ export function ReportDesigner({
     );
   };
 
+  const tableBlocked = isPageBand(active.key);
   const add = (kind: ComponentKind) => {
     const band = active.band;
     const right = Math.max(0, ...band.components.map((c) => c.x + c.w));
@@ -113,18 +114,21 @@ export function ReportDesigner({
             <button
               key={kind}
               type="button"
-              disabled={kind === "table" && isPageBand(active.key)}
-              title={
-                kind === "table" && isPageBand(active.key)
-                  ? "Tables are not supported in page headers or footers"
-                  : undefined
-              }
-              onClick={() => add(kind)}
+              aria-disabled={kind === "table" && tableBlocked ? "true" : undefined}
+              aria-describedby={kind === "table" && tableBlocked ? "report-table-hint" : undefined}
+              onClick={() => {
+                if (!(kind === "table" && tableBlocked)) add(kind);
+              }}
             >
               <Icon /> {label}
             </button>
           ))}
         </div>
+        {tableBlocked && (
+          <p className="report-hint" id="report-table-hint">
+            Tables are not supported in page headers or footers.
+          </p>
+        )}
         <p className="report-hint" id="report-canvas-hint">
           Adding to: <b>{active.label}</b>. Click a band label to choose it. Drag components to move
           them and the corner handle to resize. With a component focused, arrow keys move it 1 pt

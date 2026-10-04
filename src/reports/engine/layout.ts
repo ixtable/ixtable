@@ -19,7 +19,7 @@ import {
 
 const EPS = 1e-6;
 
-/** Tables in page headers and footers are not laid out (validation rejects them). */
+/** Tables in page headers and footers are not laid out (validation warns about them). */
 export const PAGE_BAND_TABLE = "Tables are not supported in page headers or footers";
 
 /** `groupPage`/`groupPages` count pages since the last group with `resetPageNumber`. */
@@ -199,6 +199,8 @@ export function layoutReport(
   const bodyTop = m.top + bands.pageHeader.height;
   const bodyBottom = height - m.bottom - bands.pageFooter.height;
   const bodyHeight = bodyBottom - bodyTop;
+  // Repeated headers print their non-table items at design height (see `newPage`).
+  const repeatHeight = (b: Block) => b.repeat.reduce((sum, h) => sum + h.band.height, 0);
   const prepare = (block: Block): Prepared => {
     const comp = block.band.components.find((c): c is TableComponent => c.kind === "table");
     if (!comp)
@@ -210,7 +212,7 @@ export function layoutReport(
       };
     const geo = measureTable(comp, context(block.scope));
     const h = block.band.height + Math.max(0, geo.height - comp.h);
-    const splittable = !block.band.keepTogether || h > bodyHeight + EPS;
+    const splittable = !block.band.keepTogether || h > bodyHeight - repeatHeight(block) + EPS;
     const minFirst = splittable ? comp.y + geo.headerHeight + (geo.rowHeights[0] ?? 0) : h;
     return { ...block, table: { comp, geo }, height: h, splittable, minFirst };
   };
@@ -239,8 +241,8 @@ export function layoutReport(
     for (const h of repeat) {
       const r = prepareOnce(h);
       const oy = cursor;
-      add((ctx) => bandItems(r, left, oy, ctx, context, "all"));
-      cursor += r.height;
+      add((ctx) => bandItems(r, left, oy, ctx, context, "repeat"));
+      cursor += r.band.height;
     }
     pageTop = cursor;
   };
@@ -249,6 +251,9 @@ export function layoutReport(
   let pendingBreak = false;
 
   const firstNeed = (p: Prepared) => (p.splittable ? p.minFirst : p.height);
+  // A block that fits a page only without the repeated headers gets a page without them.
+  const pageFor = (p: Prepared) =>
+    newPage(firstNeed(p) > bodyHeight - repeatHeight(p) + EPS ? [] : p.repeat);
   for (let i = 0; i < prepared.length; i++) {
     const p = prepared[i];
     let need = firstNeed(p);
@@ -258,10 +263,10 @@ export function layoutReport(
       while (j < prepared.length && prepared[j].keepWithNext) need += prepared[j++].height;
       if (j < prepared.length) need += firstNeed(prepared[j]);
     }
-    if ((pendingBreak || p.breakBefore) && !atTop()) newPage(p.repeat);
+    if ((pendingBreak || p.breakBefore) && !atTop()) pageFor(p);
     pendingBreak = p.breakAfter;
     if (p.section) pageSection[pages.length - 1] = ++sections;
-    if (cursor + need > bodyBottom + EPS && !atTop()) newPage(p.repeat);
+    if (cursor + need > bodyBottom + EPS && !atTop()) pageFor(p);
     if (!p.table || cursor + p.height <= bodyBottom + EPS || !p.splittable) {
       const oy = cursor;
       add((ctx) => bandItems(p, left, oy, ctx, context, "all"));
@@ -373,7 +378,8 @@ function rowsBetween(
 /**
  * Items of one band instance at origin (left, oy). `part` selects components:
  * "all", "above" (everything not below the table, without the table), or
- * "below" (components under the table, placed relative to `oy`).
+ * "below" (components under the table, placed relative to `oy`), or "repeat"
+ * (every non-table component at its design position, for repeated headers).
  */
 function bandItems(
   p: Prepared,
@@ -381,13 +387,14 @@ function bandItems(
   oy: number,
   page: PageContext,
   context: (scope: Record<string, unknown>) => RenderContext,
-  part: "all" | "above" | "below",
+  part: "all" | "above" | "below" | "repeat",
 ): PositionedItem[] {
   const ctx = context({ ...p.scope, ...page });
   const table = p.table;
   const belowStart = table ? table.comp.y + table.comp.h : Number.POSITIVE_INFINITY;
   const growth = table ? Math.max(0, table.geo.height - table.comp.h) : 0;
   return p.band.components.flatMap((c) => {
+    if (part === "repeat") return c.kind === "table" ? [] : componentItems(c, left, oy, ctx);
     if (c.kind === "table") {
       if (part !== "all" || c !== table?.comp) return [];
       return [

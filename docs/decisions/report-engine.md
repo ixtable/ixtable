@@ -67,15 +67,22 @@ past its box.
 - A group with `repeatHeader` prints its header band again at the top of every
   page the group continues on, below the page header, including the pages a
   split table continues on. The repeat sees the group's `rows` and `group`.
-- A group with `resetPageNumber` starts every instance on a new page and
+  It prints the header's non-table components at the band's designed height;
+  a table in the header prints only once. Pagination reserves that height: a
+  block that fits a page only without the repeated headers starts a page
+  without them, and a `keepTogether` table that doesn't fit below them splits.
+- A group with `resetPageNumber` starts every instance on a new page, so the
+  designer shows its "starts a new page" option checked and disabled. It also
   restarts `groupPage` and `groupPages` there. They count the pages since the
   last such group start (or since the first page). Without any such group they
   equal `page` and `pages`, and `page` and `pages` always count the whole report.
 - All of these default to off and are left out of the stored definition, so
   older reports lay out exactly as before.
 - Page header and footer bands can't hold a table. The designer lists it as a
-  problem and disables Add table on those bands, `reports::validate` rejects
-  it, and layout reports a diagnostic instead of dropping the table silently.
+  problem and marks Add table `aria-disabled` with a visible reason on those
+  bands. `reports::validate` returns a warning, not an error, so older
+  documents that hold one still export. Layout leaves the table out and reports
+  a diagnostic.
 - Text boxes don't grow. Lines past the box height are dropped, and at least one
   line always shows.
 

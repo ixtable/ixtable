@@ -1,0 +1,11 @@
+{
+  "function": "health",
+  "status": 200,
+  "request": {},
+  "response": {
+    "ok": true,
+    "db": true,
+    "storage": true,
+    "version": "0.1.0-local"
+  }
+}

@@ -1,0 +1,32 @@
+{
+  "_comment": "Static copy of the plan catalog seeded in supabase/migrations/20261003000200_cloud_storage_plans.sql. Signed-out visitors see this because RLS lets only signed-in users read public.plans. Keep both in sync.",
+  "plans": [
+    {
+      "id": "starter",
+      "name": "Starter",
+      "price_cents": 1900,
+      "currency": "usd",
+      "interval": "month",
+      "runtime_user_allowance": 5,
+      "storage_gb": 5
+    },
+    {
+      "id": "team",
+      "name": "Team",
+      "price_cents": 4900,
+      "currency": "usd",
+      "interval": "month",
+      "runtime_user_allowance": 25,
+      "storage_gb": 25
+    },
+    {
+      "id": "business",
+      "name": "Business",
+      "price_cents": 14900,
+      "currency": "usd",
+      "interval": "month",
+      "runtime_user_allowance": 100,
+      "storage_gb": 100
+    }
+  ]
+}

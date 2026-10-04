@@ -1,13 +1,29 @@
 import "@testing-library/jest-dom/vitest";
+import { cleanup } from "@testing-library/react";
+import { mkdtempSync, rmSync } from "node:fs";
 import { createRequire } from "node:module";
-import { vi } from "vitest";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { afterAll, afterEach, vi } from "vitest";
 import { createElement } from "react";
 
+// Set before loading the native module: Rust creates its process-wide
+// DocumentManager (recent files, recovery sessions) on the first command.
+export const stateDirectory = mkdtempSync(join(tmpdir(), `ixtable-screenshot-${process.pid}-`));
+process.env.IXTABLE_STATE_DIR = stateDirectory;
 const require = createRequire(import.meta.url);
 const bridge = require("../src-tauri/target/index.cjs") as {
   invoke: (cmd: string, args?: Record<string, unknown>) => Promise<unknown>;
 };
 vi.mock("@tauri-apps/api/core", () => ({ invoke: bridge.invoke }));
+
+/** Native file dialogs: specs queue the path the user would pick. */
+export const dialogMock = {
+  open: vi.fn<() => Promise<string | null>>(),
+  save: vi.fn<() => Promise<string | null>>(),
+};
+vi.mock("@tauri-apps/plugin-dialog", () => dialogMock);
+vi.mock("@tauri-apps/api/event", () => ({ listen: async () => () => undefined }));
 vi.mock("@monaco-editor/react", () => ({
   default: ({ value, onChange }: { value: string; onChange: (value: string) => void }) =>
     createElement("textarea", {
@@ -17,8 +33,45 @@ vi.mock("@monaco-editor/react", () => ({
     }),
 }));
 
+Object.defineProperty(window, "matchMedia", {
+  writable: true,
+  value: (query: string) => ({
+    matches: false,
+    media: query,
+    onchange: null,
+    addListener() {},
+    removeListener() {},
+    addEventListener() {},
+    removeEventListener() {},
+    dispatchEvent: () => false,
+  }),
+});
+Object.defineProperty(HTMLElement.prototype, "scrollIntoView", {
+  configurable: true,
+  value() {},
+});
+if (!globalThis.PointerEvent) globalThis.PointerEvent = MouseEvent as typeof PointerEvent;
+// jsdom has no print dialog; report print specs spy on it when they assert it.
+window.print = () => undefined;
+
+afterEach(async () => {
+  cleanup();
+  vi.restoreAllMocks();
+  dialogMock.open.mockReset();
+  dialogMock.save.mockReset();
+  for (const windowLabel of ["main", "seed", "crashy"])
+    await bridge.invoke("close_document", { windowLabel, force: true }).catch(() => undefined);
+});
+afterAll(() => rmSync(stateDirectory, { recursive: true, force: true }));
+
 type Size = { width: number; height: number };
 const CANVAS: Size = { width: 1000, height: 300 };
+/**
+ * Shared grid canvases (forms, dashboards) pick their breakpoint from the
+ * measured width. jsdom measures 0, which would select the narrowest layout;
+ * report the width of the desktop workspace column instead.
+ */
+const GRID_CANVAS: Size = { width: 760, height: 480 };
 
 // jsdom exposes no DOMMatrix implementation. React Flow only needs the
 // vertical scale from the viewport transform while measuring node internals.
@@ -63,6 +116,7 @@ function measuredSize(element: Element): Size {
     return { width: 190, height: 35 + fields * 24 };
   }
   if (element.matches(".react-flow__handle")) return { width: 7, height: 7 };
+  if (element.matches(".grid-canvas")) return GRID_CANVAS;
   return { width: 0, height: 0 };
 }
 

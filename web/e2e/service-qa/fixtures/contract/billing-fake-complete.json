@@ -1,0 +1,13 @@
+{
+  "function": "billing-fake-complete",
+  "status": 200,
+  "request": {
+    "sessionId": "cs_fake__Y7AB9DAylyB6WqO",
+    "appId": "d5c5216b-2a16-48b4-86c4-488a9074a42d",
+    "planId": "team"
+  },
+  "response": {
+    "ok": true,
+    "status": "active"
+  }
+}

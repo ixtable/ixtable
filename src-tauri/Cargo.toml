@@ -7,7 +7,7 @@ edition = "2021"
 
 [lib]
 name = "ixtable_lib"
-crate-type = ["staticlib", "cdylib", "rlib"]
+crate-type = ["cdylib", "rlib"]
 
 [build-dependencies]
 tauri-build = { version = "2", features = [] }
@@ -25,15 +25,51 @@ napi-derive = { version = "2", optional = true }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 serde_yaml = "0.9.34"
-rusqlite = { version = "0.32", features = ["bundled"] }
+rusqlite = { version = "0.32", features = ["bundled", "hooks"] }
 zstd = "0.13"
 sha2 = "0.10"
-uuid = { version = "1", features = ["v4", "serde"] }
+# Unpacks the bundled DuckDB extension archives (data/extensions.rs).
+flate2 = "1"
+uuid = { version = "1", features = ["v4", "v7", "serde"] }
 chrono = { version = "0.4", features = ["serde"] }
 thiserror = "2"
 base64 = "0.22"
 duckdb = { version = "=1.10505.0", features = ["bundled"] }
 tauri-plugin-dialog = "2"
+# One app process per user: a second launch forwards its file arguments (lib.rs run()).
+tauri-plugin-single-instance = "2"
+# Signed in-app updates (updater.rs): minisign-verified before install, fail-closed.
+tauri-plugin-updater = "2"
+# RecordStore: PostgreSQL write path (TLS via the platform stack) and the local
+# datasource-credential store (uses chacha20poly1305 below; no custom primitives).
+postgres = "0.19"
+postgres-native-tls = "0.5"
+native-tls = "0.2"
+# Runtime bundles (bundle.rs): signatures, password KDF, AEAD, version checks.
+ed25519-dalek = { version = "2", features = ["rand_core"] }
+rand_core = { version = "0.6", features = ["getrandom"] }
+argon2 = "0.5"
+chacha20poly1305 = "0.10"
+semver = "1"
+# ixtable Cloud client (cloud/): HTTPS through rustls with the ring provider and the
+# OS trust store (rustls-platform-verifier); blocking calls run off the UI thread.
+reqwest = { version = "0.13", default-features = false, features = ["rustls-no-provider", "json", "blocking", "stream"] }
+rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12"] }
+# Opens the browser for Google/Microsoft sign-in hand-off (PKCE).
+tauri-plugin-opener = "2"
+
+[target.'cfg(unix)'.dependencies]
+# geteuid() for the owner check on key and secret files (paths.rs).
+libc = "0.2"
 
 [dev-dependencies]
 proptest = "1.7"
+# updater tests verify fixture signatures exactly as tauri-plugin-updater does.
+minisign-verify = "0.2"
+
+# Desktop-only (PRD §6.2): no staticlib, and lean debug info keeps test-bridge builds small.
+[profile.dev]
+debug = "line-tables-only"
+
+[profile.dev.package."*"]
+debug = false

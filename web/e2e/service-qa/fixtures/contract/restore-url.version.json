@@ -1,0 +1,18 @@
+{
+  "function": "restore-url",
+  "status": 200,
+  "request": {
+    "appId": "d5c5216b-2a16-48b4-86c4-488a9074a42d",
+    "versionId": "0d70d41f-620c-4258-bf96-389cf330d8fc"
+  },
+  "response": {
+    "signedUrl": "http://127.0.0.1:54321/storage/v1/object/sign/app-archives/apps/d5c5216b-2a16-48b4-86c4-488a9074a42d/versions/0d70d41f-620c-4258-bf96-389cf330d8fc.ixt?token=redacted",
+    "sha256": "096a77d5cadbcb25219a62f0d165a3f8909ed988f71ccfdc0f5aace8c3f54a01",
+    "size": 4096,
+    "isPostgres": false,
+    "warning": null,
+    "kind": "version",
+    "id": "0d70d41f-620c-4258-bf96-389cf330d8fc",
+    "expiresAt": "2026-10-03T23:29:34.028Z"
+  }
+}

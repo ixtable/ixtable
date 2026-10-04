@@ -1,0 +1,18 @@
+{
+  "function": "restore-url",
+  "status": 200,
+  "request": {
+    "appId": "d5c5216b-2a16-48b4-86c4-488a9074a42d",
+    "backupId": "4d0213df-4045-487f-b0f5-9dd9f4e80c3a"
+  },
+  "response": {
+    "signedUrl": "http://127.0.0.1:54321/storage/v1/object/sign/app-archives/apps/d5c5216b-2a16-48b4-86c4-488a9074a42d/installations/1523108e-c39c-40cb-ba4f-a9956f003949/6c0015d3-6817-4894-aac5-1a10e44f7b30/4d0213df-4045-487f-b0f5-9dd9f4e80c3a.ixt?token=redacted",
+    "sha256": "bc01e1b574f80e5bef22da4a92824bf1ca40d888c9878b73c81d7a62045fb2ae",
+    "size": 2048,
+    "isPostgres": false,
+    "warning": null,
+    "kind": "backup",
+    "id": "4d0213df-4045-487f-b0f5-9dd9f4e80c3a",
+    "expiresAt": "2026-10-03T23:29:33.817Z"
+  }
+}

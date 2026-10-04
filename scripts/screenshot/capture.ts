@@ -8,6 +8,12 @@ export type CaptureOptions = {
   expectations: string[];
   viewport?: { width: number; height: number };
   selector?: string;
+  /**
+   * CSS selector of a scroll container whose whole content should be visible.
+   * Chromium lifts the height and overflow limits of that element and its
+   * ancestors, so content a user reaches by scrolling the pane is captured.
+   */
+  expand?: string;
 };
 
 const REACT_FLOW_READY_TIMEOUT_MS = 2_000;
@@ -25,6 +31,7 @@ async function waitForReactFlow(doc: Document, timeoutMs = REACT_FLOW_READY_TIME
   if (!doc.querySelector(".react-flow")) return;
   const deadline = Date.now() + timeoutMs;
   let summary = "no nodes or edges";
+  let nodesReady = false;
   while (Date.now() < deadline) {
     const states = reactFlowState(doc);
     const ready = states.every(({ nodes, edges, minimapNodes }) => {
@@ -35,11 +42,14 @@ async function waitForReactFlow(doc: Document, timeoutMs = REACT_FLOW_READY_TIME
           node.getBoundingClientRect().width > 0,
       );
       summary = `${visibleNodes.length}/${nodes.length} visible nodes, ${edges.length} edges, ${minimapNodes.length} minimap nodes`;
-      return nodes.length > 0 && visibleNodes.length === nodes.length && edges.length > 0;
+      nodesReady = nodes.length > 0 && visibleNodes.length === nodes.length;
+      return nodesReady && edges.length > 0;
     });
     if (ready) return;
     await new Promise((resolve) => setTimeout(resolve, 20));
   }
+  // A diagram without relationships legitimately has no edges.
+  if (nodesReady) return;
   throw new Error(
     `Timed out waiting for React Flow to initialize before screenshot capture (${summary}).`,
   );
@@ -47,7 +57,7 @@ async function waitForReactFlow(doc: Document, timeoutMs = REACT_FLOW_READY_TIME
 
 export async function captureDocument(
   doc: Document,
-  { name, expectations, viewport = { width: 1280, height: 800 }, selector }: CaptureOptions,
+  { name, expectations, viewport = { width: 1280, height: 800 }, selector, expand }: CaptureOptions,
 ) {
   if (!expectations.length || expectations.length > 3)
     throw new Error("A capture needs 1–3 visual expectations.");
@@ -95,6 +105,17 @@ export async function captureDocument(
   try {
     const page = await browser.newPage({ viewport });
     await page.goto(`file://${htmlPath}`);
+    if (expand) {
+      const count = await page.locator(expand).count();
+      if (count !== 1) throw new Error(`Expand selector ${expand} must match exactly one element.`);
+      await page.locator(expand).evaluate((element: HTMLElement) => {
+        for (let node: HTMLElement | null = element; node; node = node.parentElement) {
+          node.style.height = "auto";
+          node.style.maxHeight = "none";
+          node.style.overflow = "visible";
+        }
+      });
+    }
     if (selector) {
       const element = page.locator(selector);
       if ((await element.count()) !== 1)
@@ -119,9 +140,10 @@ export async function captureDocument(
         const rect = canvas.getBoundingClientRect();
         if (rect.width <= 0 || rect.height <= 0)
           throw new Error(`Screenshot selector is zero-sized (${rect.width}x${rect.height}).`);
-        if (nodes.length < 4 || edges.length < 3)
+        const allNodes = canvas.querySelectorAll(".react-flow__node").length;
+        if (!nodes.length || nodes.length !== allNodes)
           throw new Error(
-            `React Flow capture needs at least four visible nodes and three edges; found ${nodes.length} and ${edges.length}.`,
+            `React Flow capture needs every node visible; found ${nodes.length} of ${allNodes} (${edges.length} edges).`,
           );
 
         // Fit the authored node positions in the actual browser that takes the
@@ -173,6 +195,14 @@ export async function captureDocument(
         throw new Error("React Flow fit left one or more nodes outside the capture canvas.");
       await element.screenshot({ path: pngPath });
     } else {
+      // Grow the viewport to the document height instead of a fullPage stitch:
+      // the Studio sidebar is position: fixed, so a stitched capture would cut
+      // it off below the first viewport.
+      const height = await page.evaluate(() =>
+        Math.max(document.documentElement.scrollHeight, document.body.scrollHeight),
+      );
+      if (height > viewport.height)
+        await page.setViewportSize({ width: viewport.width, height: Math.min(height, 4000) });
       await page.locator(".flow-browser").evaluateAll((canvases: HTMLElement[]) => {
         for (const canvas of canvases) {
           const nodes = Array.from(
@@ -190,9 +220,10 @@ export async function captureDocument(
           const edges = Array.from(
             canvas.querySelectorAll<SVGPathElement>(".react-flow__edge-path"),
           ).filter((edge) => getComputedStyle(edge).display !== "none");
-          if (nodes.length < 4 || edges.length < 3)
+          const allNodes = canvas.querySelectorAll(".react-flow__node").length;
+          if (!nodes.length || nodes.length !== allNodes)
             throw new Error(
-              `Full-page React Flow capture needs four visible nodes and three edges; found ${nodes.length} and ${edges.length}.`,
+              `Full-page React Flow capture needs every node visible; found ${nodes.length} of ${allNodes} (${edges.length} edges).`,
             );
           const viewport = canvas.querySelector<HTMLElement>(".react-flow__viewport");
           if (!viewport) throw new Error("React Flow viewport is missing.");

@@ -1,0 +1,22 @@
+{
+  "function": "billing-invoices",
+  "status": 200,
+  "request": {
+    "appId": "d5c5216b-2a16-48b4-86c4-488a9074a42d"
+  },
+  "response": {
+    "invoices": [
+      {
+        "id": "in_fake_cus_fake_v5lIj7OTKQ6L",
+        "number": "FAKE-0001",
+        "status": "paid",
+        "amountDue": 0,
+        "amountPaid": 0,
+        "currency": "usd",
+        "created": "2026-10-03T23:14:30.350Z",
+        "hostedInvoiceUrl": null,
+        "pdfUrl": null
+      }
+    ]
+  }
+}

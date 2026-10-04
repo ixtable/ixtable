@@ -1,0 +1,21 @@
+{
+  "function": "members-update",
+  "status": 200,
+  "request": {
+    "appId": "d5c5216b-2a16-48b4-86c4-488a9074a42d",
+    "userId": "1523108e-c39c-40cb-ba4f-a9956f003949",
+    "roleId": "bec9f701-f53f-431c-8ad5-4d4caf520c6b"
+  },
+  "response": {
+    "member": {
+      "app_id": "d5c5216b-2a16-48b4-86c4-488a9074a42d",
+      "user_id": "1523108e-c39c-40cb-ba4f-a9956f003949",
+      "role_id": "bec9f701-f53f-431c-8ad5-4d4caf520c6b",
+      "status": "active",
+      "invited_by": "b55a0145-e352-4790-a67c-b55fec436618",
+      "created_at": "2026-10-03T23:14:31.765908+00:00",
+      "updated_at": "2026-10-03T23:14:32.022309+00:00",
+      "revoked_at": null
+    }
+  }
+}

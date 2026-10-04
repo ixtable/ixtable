@@ -1,0 +1,39 @@
+{
+  "function": "publish-checkpoint",
+  "status": 409,
+  "request": {
+    "appId": "d5c5216b-2a16-48b4-86c4-488a9074a42d",
+    "uploadId": "17c96701-83d1-4a19-a486-fe27bec1865c",
+    "version": "1.1.0",
+    "releaseNotes": "First release",
+    "minRuntimeVersion": "0.1.0",
+    "migrations": [
+      {
+        "id": "m-0001",
+        "name": "Create customers"
+      }
+    ],
+    "security": {
+      "store": "sqlite",
+      "tls": true,
+      "concurrencyPoliciesResolved": true,
+      "credentialMode": null,
+      "sslmode": null,
+      "insecureOverrideConfirmed": false,
+      "sharedCredentialWarning": false,
+      "entityPoliciesResolved": true,
+      "unresolvedEntities": []
+    },
+    "expectedHeadVersionId": "0e05688a-b7e8-4af8-9a44-93cf8299c11d"
+  },
+  "response": {
+    "error": {
+      "code": "VERSION_CONFLICT",
+      "message": "The published head has moved since this archive was based on it",
+      "details": {
+        "headVersionId": "0d70d41f-620c-4258-bf96-389cf330d8fc",
+        "expectedHeadVersionId": "0e05688a-b7e8-4af8-9a44-93cf8299c11d"
+      }
+    }
+  }
+}

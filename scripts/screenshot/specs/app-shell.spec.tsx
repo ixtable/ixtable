@@ -1,10 +1,11 @@
-import { act, render, screen, waitFor } from "@testing-library/react";
+import { act, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { expect, it, vi } from "vitest";
 import { invoke } from "@tauri-apps/api/core";
 import App from "../../../src/App";
-import type { DocumentConfig, SessionState } from "../../../src/App";
+import type { DocumentConfig, SessionState } from "../../../src/lib/types";
 import { captureDocument } from "../capture";
+import { dialogMock } from "./fixtures";
 
 const column = (name: string, type = "TEXT", primaryKeyPosition = 0) => ({
   name,
@@ -236,13 +237,14 @@ it("captures the document lifecycle shell", async () => {
     expect(inserted.rows).toHaveLength(3);
   });
   await user.click(screen.getByRole("button", { name: "New query" }));
+  await user.click(await screen.findByRole("tab", { name: "SQL" }));
   const sqlEditor = await screen.findByRole("textbox", { name: "SQL editor" });
   await user.clear(sqlEditor);
   await user.type(sqlEditor, "SELECT Company FROM Customers");
   await user.click(screen.getByRole("button", { name: "Run" }));
   expect(await screen.findByText("Northstar Goods")).toBeInTheDocument();
   await user.click(screen.getByRole("button", { name: "Save query" }));
-  expect(await screen.findByRole("button", { name: /^Untitled Query\b/ })).toHaveAttribute(
+  expect(await screen.findByRole("button", { name: /^Untitled query\b/ })).toHaveAttribute(
     "aria-pressed",
     "true",
   );
@@ -254,47 +256,14 @@ it("captures the document lifecycle shell", async () => {
       "The saved query appears selected in the sidebar without replacing table metadata.",
     ],
   });
-  const currentConfig = await invoke<DocumentConfig>("read_document_config", {
-    windowLabel: "main",
-  });
-  await invoke("update_document_config", {
-    windowLabel: "main",
-    config: {
-      ...currentConfig,
-      design: {
-        version: 1,
-        forms: [
-          {
-            id: "products",
-            name: "Products",
-            table: "Products",
-            layout: { columns: 2, gap: 16 },
-            controls: [
-              {
-                id: "name",
-                kind: "text",
-                label: "Product name",
-                binding: { table: "Products", column: "Product Name" },
-                validation: { required: true },
-                width: "full",
-              },
-              {
-                id: "price",
-                kind: "number",
-                label: "Price",
-                binding: { table: "Products", column: "Price" },
-                validation: { required: false },
-                width: "half",
-              },
-            ],
-          },
-        ],
-        navigation: [{ id: "products", label: "Products", formId: "products" }],
-      },
-    },
-  });
   await user.click(screen.getByRole("button", { name: "Design" }));
   await screen.findByRole("heading", { name: "Form builder" });
+  await user.selectOptions(
+    screen.getByRole("combobox", { name: "Table to generate from" }),
+    "Products",
+  );
+  await user.click(screen.getByRole("button", { name: "Generate form from table" }));
+  await screen.findByRole("group", { name: "Product Name" }, { timeout: 20_000 });
   const designConfig = await invoke<DocumentConfig>("read_document_config", {
     windowLabel: "main",
   });
@@ -307,8 +276,9 @@ it("captures the document lifecycle shell", async () => {
       "The component library, form canvas, and properties panel are visible.",
     ],
   });
-  await user.click(screen.getByRole("button", { name: "Preview app" }));
-  expect(screen.getByRole("region", { name: "Products preview" })).toBeInTheDocument();
+  await user.click(screen.getByRole("button", { name: "Preview" }));
+  const preview = await screen.findByRole("region", { name: /preview$/ });
+  await within(preview).findByDisplayValue("PROD-101", {}, { timeout: 20_000 });
   await captureDocument(document, {
     name: "app-qa-07-app-preview",
     expectations: [
@@ -316,13 +286,15 @@ it("captures the document lifecycle shell", async () => {
       "Bound labels and live product records are visible.",
     ],
   });
+  // An untitled document asks where to save; cancelling the dialog keeps it open.
   await user.click(screen.getByRole("button", { name: "Save project" }));
-  expect(await screen.findByRole("alert")).toHaveTextContent("SAVE_AS_REQUIRED");
+  await waitFor(() => expect(dialogMock.save).toHaveBeenCalledOnce());
+  expect(screen.getByRole("group", { name: "Save status" })).toHaveTextContent("Unsaved changes");
   await captureDocument(document, {
-    name: "app-qa-08-save-error",
+    name: "app-qa-08-save-cancelled",
     expectations: [
-      "The real backend error explains that an untitled project needs Save As.",
-      "The project remains open with its unsaved state visible.",
+      "Cancelling Save As leaves the untitled project open.",
+      "The sidebar status still reads Unsaved changes.",
     ],
   });
   vi.spyOn(window, "confirm").mockReturnValue(true);

@@ -1,0 +1,172 @@
+[
+  {
+    "id": "01a100fd-deca-7a05-8f33-87d2d2ba675b",
+    "name": "Sales rep",
+    "permissions": {
+      "actions": ["01a100fd-dec8-7447-bac5-36865210bf78", "01a100fd-debe-7dfd-8498-03b3edb6f7cf"],
+      "navigation": [
+        "01a100fd-ded3-764b-97e4-c46a9e999500",
+        "01a100fd-ded2-778f-953e-fbcc4871657e",
+        "01a100fd-deda-784b-8095-d38a29060e3c",
+        "01a100fd-dee2-78ba-80f1-c20f98fb9755",
+        "01a100fd-decb-75a5-a55c-16bf565e6366",
+        "01a100fd-dedb-7766-a131-0a379d03e51c",
+        "01a100fd-debf-7ecb-b083-7b298b6014c1"
+      ],
+      "objects": [
+        {
+          "create": false,
+          "delete": false,
+          "id": "01a100fd-dece-7ec7-a993-1e618e8684b8",
+          "kind": "dashboard",
+          "read": true,
+          "update": false
+        },
+        {
+          "create": false,
+          "delete": false,
+          "id": "01a100fd-dec2-729c-b560-f6a9abbde37b",
+          "kind": "report",
+          "read": true,
+          "update": false
+        },
+        {
+          "create": false,
+          "delete": false,
+          "id": "01a100fd-decd-7fa8-ae27-1bb43f0171af",
+          "kind": "form",
+          "read": true,
+          "update": false
+        },
+        {
+          "create": true,
+          "delete": false,
+          "id": "01a100fd-ded8-7edf-9282-be48911524cb",
+          "kind": "form",
+          "read": true,
+          "update": true
+        },
+        {
+          "create": false,
+          "delete": false,
+          "id": "01a100fd-ded1-7daa-8f27-c1eb7dea313a",
+          "kind": "form",
+          "read": true,
+          "update": false
+        },
+        {
+          "create": true,
+          "delete": true,
+          "id": "01a100fd-ded7-7b45-956a-5253f9d931a3",
+          "kind": "form",
+          "read": true,
+          "update": true
+        },
+        {
+          "create": false,
+          "delete": false,
+          "id": "01a100fd-dedd-7ddb-98e1-141bd197f27f",
+          "kind": "form",
+          "read": true,
+          "update": false
+        },
+        {
+          "create": true,
+          "delete": true,
+          "id": "01a100fd-dee0-73b4-978e-dc64352cd567",
+          "kind": "form",
+          "read": true,
+          "update": true
+        },
+        {
+          "create": false,
+          "delete": false,
+          "id": "01a100fd-dec6-7c64-9f90-16a158f3a460",
+          "kind": "form",
+          "read": true,
+          "update": false
+        },
+        {
+          "create": true,
+          "delete": true,
+          "id": "01a100fd-decf-7db0-80c0-f982bf87375c",
+          "kind": "form",
+          "read": true,
+          "update": true
+        },
+        {
+          "create": false,
+          "delete": false,
+          "id": "deals",
+          "kind": "table",
+          "read": true,
+          "update": true
+        },
+        {
+          "create": true,
+          "delete": false,
+          "id": "activities",
+          "kind": "table",
+          "read": true,
+          "update": false
+        },
+        {
+          "create": false,
+          "delete": false,
+          "id": "deal_stages",
+          "kind": "table",
+          "read": true,
+          "update": false
+        },
+        {
+          "create": false,
+          "delete": false,
+          "id": "01a100fd-dedc-7843-b7b6-8e10fb4812d0",
+          "kind": "query",
+          "read": true,
+          "update": false
+        },
+        {
+          "create": false,
+          "delete": false,
+          "id": "01a100fd-dec7-7431-b61f-9847762f365f",
+          "kind": "query",
+          "read": true,
+          "update": false
+        },
+        {
+          "create": false,
+          "delete": false,
+          "id": "01a100fd-dec5-7021-bf07-58f8d6eefb7f",
+          "kind": "query",
+          "read": true,
+          "update": false
+        },
+        {
+          "create": false,
+          "delete": false,
+          "id": "01a100fd-ded9-704a-8479-c35c56a14fde",
+          "kind": "query",
+          "read": true,
+          "update": false
+        },
+        {
+          "create": false,
+          "delete": false,
+          "id": "01a100fd-ded0-719e-a76c-eb7f2875fe0a",
+          "kind": "query",
+          "read": true,
+          "update": false
+        },
+        {
+          "create": false,
+          "delete": false,
+          "id": "01a100fd-ded4-7fb1-a6fe-bcb430b1d314",
+          "kind": "query",
+          "read": true,
+          "update": false
+        }
+      ]
+    }
+  }
+]

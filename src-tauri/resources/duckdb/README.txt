@@ -1,2 +1,3 @@
-Generated DuckDB runtimes and the signed sqlite_scanner extension are placed
-under target-specific subdirectories here by scripts/prepare-duckdb-artifacts.sh.
+scripts/prepare-duckdb-artifacts.sh places the pinned sqlite_scanner and postgres_scanner
+extensions in target-specific subdirectories here: the official .duckdb_extension.gz archives
+(the only files the app bundles) and unpacked copies for dev builds and tests.

@@ -23,13 +23,37 @@
       }
     ],
     "security": {
-      "csp": null
+      "csp": {
+        "default-src": "'self'",
+        "script-src": "'self'",
+        "style-src": "'self' 'unsafe-inline'",
+        "img-src": "'self' data: blob:",
+        "font-src": "'self' data:",
+        "connect-src": "'self' ipc: http://ipc.localhost http://127.0.0.1:54321",
+        "worker-src": "'self' blob:",
+        "object-src": "'none'",
+        "base-uri": "'self'",
+        "form-action": "'none'"
+      },
+      "devCsp": {
+        "default-src": "'self'",
+        "script-src": "'self'",
+        "style-src": "'self' 'unsafe-inline'",
+        "img-src": "'self' data: blob:",
+        "font-src": "'self' data:",
+        "connect-src": "'self' ipc: http://ipc.localhost http://127.0.0.1:54321 ws://127.0.0.1:1420 http://127.0.0.1:1420",
+        "worker-src": "'self' blob:",
+        "object-src": "'none'",
+        "base-uri": "'self'",
+        "form-action": "'none'"
+      },
+      "dangerousDisableAssetCspModification": ["style-src"]
     }
   },
   "bundle": {
     "active": true,
     "targets": "all",
-    "resources": ["resources/duckdb/**/*"],
+    "resources": ["resources/duckdb/*/*.duckdb_extension.gz"],
     "fileAssociations": [
       {
         "ext": ["ixt"],
@@ -37,7 +61,46 @@
         "description": "Portable ixtable database archive",
         "role": "Editor",
         "mimeType": "application/x-ixtable"
+      },
+      {
+        "ext": ["ixtr"],
+        "name": "ixtable Runtime Bundle",
+        "description": "Signed ixtable application bundle",
+        "role": "Viewer",
+        "mimeType": "application/x-ixtable-runtime"
       }
-    ]
+    ],
+    "createUpdaterArtifacts": true,
+    "macOS": {
+      "minimumSystemVersion": "11.0",
+      "hardenedRuntime": true,
+      "entitlements": "./entitlements.plist"
+    },
+    "windows": {
+      "digestAlgorithm": "sha256",
+      "timestampUrl": "http://timestamp.digicert.com",
+      "webviewInstallMode": {
+        "type": "downloadBootstrapper"
+      }
+    },
+    "linux": {
+      "deb": {
+        "section": "office"
+      },
+      "rpm": {
+        "release": "1"
+      }
+    }
+  },
+  "plugins": {
+    "updater": {
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IERGQTk4MzA1RUUxMEVENUEKUldSYTdSRHVCWU9wMzNZUDVqQ1dsaWpsemdCRy9TWHpPZjV1d2RvMUFzS1ZycVluai9JSWhMVFMK",
+      "endpoints": [
+        "https://releases.ixtable.app/stable/latest.json?target={{target}}&arch={{arch}}&current_version={{current_version}}"
+      ],
+      "windows": {
+        "installMode": "passive"
+      }
+    }
   }
 }

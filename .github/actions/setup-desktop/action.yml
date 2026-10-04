@@ -1,0 +1,62 @@
+name: Set up desktop toolchain
+description: >
+  Node + npm ci, stable Rust with a shared cargo cache, Linux WebKitGTK
+  build deps, and the pinned DuckDB extensions for the runner's platform.
+inputs:
+  cache-key:
+    description: Shared rust-cache key (jobs that build the same artifacts share one).
+    default: desktop
+runs:
+  using: composite
+  steps:
+    - uses: actions/setup-node@v4
+      with:
+        node-version: lts/*
+        cache: npm
+        cache-dependency-path: package-lock.json
+
+    - uses: dtolnay/rust-toolchain@stable
+
+    - uses: Swatinem/rust-cache@v2
+      with:
+        workspaces: src-tauri -> target
+        shared-key: ${{ inputs.cache-key }}
+
+    - name: Install Linux system dependencies
+      if: runner.os == 'Linux'
+      shell: bash
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y --no-install-recommends \
+          libwebkit2gtk-4.1-dev libgtk-3-dev libsoup-3.0-dev \
+          libjavascriptcoregtk-4.1-dev librsvg2-dev libssl-dev pkg-config
+
+    - name: Select DuckDB extension platform
+      id: duckdb
+      shell: bash
+      run: |
+        case "$RUNNER_OS" in
+          Linux)   echo "platform=linux-x64" >> "$GITHUB_OUTPUT" ;;
+          macOS)   echo "platform=macos-universal" >> "$GITHUB_OUTPUT" ;;
+          Windows) echo "platform=windows-x64" >> "$GITHUB_OUTPUT" ;;
+        esac
+
+    # The script pins every download by SHA-256, so its hash is a safe cache key.
+    - name: Cache DuckDB extensions
+      id: duckdb-cache
+      uses: actions/cache@v4
+      with:
+        path: |
+          src-tauri/resources/duckdb/linux-x64
+          src-tauri/resources/duckdb/macos-*
+          src-tauri/resources/duckdb/windows-x64
+        key: duckdb-ext-${{ steps.duckdb.outputs.platform }}-${{ hashFiles('scripts/prepare-duckdb-artifacts.sh') }}
+
+    - name: Download pinned DuckDB extensions
+      if: steps.duckdb-cache.outputs.cache-hit != 'true'
+      shell: bash
+      run: bash scripts/prepare-duckdb-artifacts.sh "${{ steps.duckdb.outputs.platform }}"
+
+    - name: Install npm dependencies
+      shell: bash
+      run: npm ci

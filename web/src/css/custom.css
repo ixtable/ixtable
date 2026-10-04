@@ -1,8 +1,4 @@
-/**
- * Any CSS included here will be global. The classic template
- * bundles Infima by default. Infima is a CSS framework designed to
- * work well for content-centric websites.
- */
+/* Global site styles. Infima (bundled with the classic theme) supplies the base. */
 
 :root {
   --ifm-color-primary: #315c45;
@@ -51,4 +47,347 @@
 .auth-form-error {
   color: var(--ifm-color-danger);
   font-size: 0.9rem;
+}
+
+/* Auth pages ------------------------------------------------------------- */
+
+.auth-tabs {
+  margin-bottom: 1rem;
+}
+
+.auth-form input,
+.cloud-field input,
+.cloud-field select,
+.cloud-field textarea,
+.cloud-inline-form input,
+.cloud-inline-form select {
+  padding: 0.5rem 0.625rem;
+  border: 1px solid var(--ifm-color-emphasis-500);
+  border-radius: 6px;
+  background: var(--ifm-background-surface-color);
+  color: var(--ifm-font-color-base);
+  font: inherit;
+  min-height: 2.5rem;
+}
+
+.auth-divider {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  margin: 1.5rem 0 1rem;
+  color: var(--ifm-color-emphasis-700);
+  font-size: 0.875rem;
+}
+.auth-divider::before,
+.auth-divider::after {
+  content: "";
+  flex: 1;
+  border-top: 1px solid var(--ifm-color-emphasis-300);
+}
+
+.auth-oauth {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  margin-bottom: 1rem;
+}
+.auth-oauth__hint {
+  margin: 0.25rem 0 0;
+}
+
+/* Cloud dashboard -------------------------------------------------------- */
+
+.cloud-page {
+  max-width: 72rem;
+  margin: 0 auto;
+  padding: 2rem 1rem 4rem;
+  width: 100%;
+  min-width: 0;
+}
+.cloud-page--narrow {
+  max-width: 36rem;
+}
+
+.cloud-muted {
+  color: var(--ifm-color-emphasis-700);
+  font-size: 0.9rem;
+}
+.cloud-empty {
+  padding: 1rem;
+  border: 1px dashed var(--ifm-color-emphasis-400);
+  border-radius: 8px;
+  color: var(--ifm-color-emphasis-800);
+}
+
+.cloud-notice {
+  margin: 1rem 0;
+}
+.cloud-notice__title {
+  display: block;
+  margin-bottom: 0.25rem;
+}
+
+.cloud-header {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 1rem;
+  margin-bottom: 1.5rem;
+}
+.cloud-header h1 {
+  margin: 0;
+}
+
+.cloud-section {
+  margin: 2rem 0;
+}
+.cloud-section__head {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 0.75rem;
+  margin-bottom: 0.75rem;
+}
+.cloud-section__head h2 {
+  font-size: 1.25rem;
+  margin: 0 0 0.25rem;
+}
+.cloud-section__actions,
+.cloud-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  align-items: center;
+}
+
+.cloud-table-wrap {
+  margin-bottom: 1rem;
+  overflow-x: auto;
+  max-width: 100%;
+  border: 1px solid var(--ifm-color-emphasis-300);
+  border-radius: 8px;
+}
+.cloud-table-wrap:focus-visible {
+  outline: 2px solid var(--ifm-color-primary);
+  outline-offset: 2px;
+}
+.cloud-table {
+  display: table;
+  width: 100%;
+  margin: 0;
+  border-collapse: collapse;
+  font-size: 0.9rem;
+}
+.cloud-table th,
+.cloud-table td {
+  border: 0;
+  border-bottom: 1px solid var(--ifm-color-emphasis-200);
+  padding: 0.5rem 0.75rem;
+  text-align: left;
+  vertical-align: top;
+}
+.cloud-table thead th {
+  background: var(--ifm-color-emphasis-100);
+  font-weight: 600;
+  white-space: nowrap;
+}
+.cloud-table tr:nth-child(2n) {
+  background: transparent;
+}
+
+.cloud-badge {
+  display: inline-block;
+  padding: 0.05rem 0.5rem;
+  border-radius: 999px;
+  font-size: 0.75rem;
+  font-weight: 600;
+  white-space: nowrap;
+  border: 1px solid currentColor;
+}
+.cloud-badge--neutral {
+  color: var(--ifm-color-emphasis-800);
+}
+.cloud-badge--success {
+  color: var(--ifm-color-success-darkest);
+}
+.cloud-badge--warning {
+  color: var(--ifm-color-warning-darkest);
+}
+.cloud-badge--danger {
+  color: var(--ifm-color-danger-darkest);
+}
+.cloud-badge--info {
+  color: var(--ifm-color-info-darkest);
+}
+[data-theme="dark"] .cloud-badge--success {
+  color: var(--ifm-color-success-lightest);
+}
+[data-theme="dark"] .cloud-badge--warning {
+  color: var(--ifm-color-warning-lightest);
+}
+[data-theme="dark"] .cloud-badge--danger {
+  color: var(--ifm-color-danger-lightest);
+}
+[data-theme="dark"] .cloud-badge--info {
+  color: var(--ifm-color-info-lightest);
+}
+
+.cloud-tabs {
+  display: flex;
+  gap: 0.25rem;
+  overflow-x: auto;
+  border-bottom: 1px solid var(--ifm-color-emphasis-300);
+  margin-bottom: 1rem;
+}
+.cloud-tab {
+  flex: none;
+  border: 0;
+  border-bottom: 3px solid transparent;
+  background: none;
+  padding: 0.5rem 0.75rem;
+  font: inherit;
+  font-size: 0.9rem;
+  color: var(--ifm-color-emphasis-800);
+  cursor: pointer;
+}
+.cloud-tab[aria-selected="true"] {
+  border-bottom-color: var(--ifm-color-primary);
+  color: var(--ifm-font-color-base);
+  font-weight: 600;
+}
+
+.cloud-tab:focus-visible,
+.cloud-page button:focus-visible,
+.cloud-page a:focus-visible,
+.cloud-page input:focus-visible,
+.cloud-page select:focus-visible,
+.cloud-page textarea:focus-visible,
+.cloud-dialog :focus-visible,
+.auth-form :focus-visible {
+  outline: 2px solid var(--ifm-color-primary);
+  outline-offset: 2px;
+}
+
+.cloud-field {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  margin-bottom: 0.75rem;
+}
+.cloud-field label {
+  font-weight: 600;
+  font-size: 0.9rem;
+}
+.cloud-inline-form {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  align-items: flex-end;
+}
+.cloud-inline-form .cloud-field {
+  margin: 0;
+  flex: 1 1 12rem;
+  min-width: 0;
+}
+.cloud-check {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.5rem;
+  margin: 0.5rem 0;
+}
+.cloud-check input {
+  margin-top: 0.3rem;
+}
+
+.cloud-dl {
+  display: grid;
+  grid-template-columns: max-content 1fr;
+  gap: 0.35rem 1rem;
+  margin: 1rem 0;
+}
+.cloud-dl dt {
+  font-weight: 600;
+}
+.cloud-dl dd {
+  margin: 0;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.cloud-meter {
+  width: 8rem;
+  height: 0.5rem;
+  vertical-align: middle;
+}
+
+.cloud-dialog {
+  max-width: min(32rem, calc(100vw - 2rem));
+  border: 1px solid var(--ifm-color-emphasis-300);
+  border-radius: 10px;
+  padding: 1.5rem;
+  background: var(--ifm-background-surface-color);
+  color: var(--ifm-font-color-base);
+}
+.cloud-dialog::backdrop {
+  background: rgb(0 0 0 / 0.45);
+}
+.cloud-dialog h2 {
+  font-size: 1.2rem;
+}
+.cloud-dialog__actions {
+  display: flex;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  margin-top: 1rem;
+}
+
+.cloud-code {
+  font-family: var(--ifm-font-family-monospace);
+  font-size: 0.8rem;
+  overflow-wrap: anywhere;
+}
+
+@media (max-width: 600px) {
+  .cloud-dl {
+    grid-template-columns: 1fr;
+  }
+  .cloud-dl dd {
+    margin-bottom: 0.5rem;
+  }
+}
+
+/* Pricing ---------------------------------------------------------------- */
+
+.pricing-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(16rem, 1fr));
+  gap: 1rem;
+  margin: 2rem 0;
+}
+.pricing-card {
+  border: 1px solid var(--ifm-color-emphasis-300);
+  border-radius: 10px;
+  padding: 1.5rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+.pricing-card h2 {
+  margin: 0;
+}
+.pricing-price {
+  font-size: 1.75rem;
+  font-weight: 700;
+}
+.pricing-card ul {
+  margin: 0;
+  padding-left: 1.25rem;
+  flex: 1;
+}
+
+.cloud-table th[scope="row"] {
+  min-width: 9rem;
 }

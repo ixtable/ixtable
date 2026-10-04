@@ -9,7 +9,11 @@
       "!**/target",
       "!**/.docusaurus",
       "!**/.generated",
-      "!src-tauri/resources"
+      "!src-tauri/resources",
+      "!src-tauri/gen",
+      "!**/.evidence",
+      "!**/test-results",
+      "!**/playwright-report"
     ]
   },
   "formatter": {

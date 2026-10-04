@@ -3,18 +3,28 @@ set -euo pipefail
 
 # duckdb-rs 1.10505.0 embeds DuckDB 1.5.5. Extensions are ABI-specific, so
 # these versions must move together. Runtime installation/autoload is disabled.
+#
+# Each platform dir gets the official compressed `<ext>.duckdb_extension.gz`
+# (the only file the app bundles; the app unpacks it into the per-user state
+# dir on first use, see src-tauri/src/data/extensions.rs) and an uncompressed
+# copy that dev builds and tests load directly.
 VERSION=1.5.5
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 DEST="$ROOT/src-tauri/resources/duckdb"
 
 fetch() {
-  platform="$1"; target="$2"; expected="$3"
-  url="https://extensions.duckdb.org/v${VERSION}/${platform}/sqlite_scanner.duckdb_extension.gz"
+  platform="$1"; target="$2"; expected="$3"; extension="${4:-sqlite_scanner}"
+  url="https://extensions.duckdb.org/v${VERSION}/${platform}/${extension}.duckdb_extension.gz"
   tmp="$(mktemp)"; trap 'rm -f "$tmp"' RETURN
   curl --fail --location --proto '=https' --tlsv1.2 "$url" -o "$tmp"
-  printf '%s  %s\n' "$expected" "$tmp" | shasum -a 256 -c -
+  # shasum ships with macOS/Perl; Git Bash on Windows and minimal Linux have sha256sum.
+  if command -v shasum >/dev/null 2>&1; then sha=(shasum -a 256); else sha=(sha256sum); fi
+  printf '%s  %s\n' "$expected" "$tmp" | "${sha[@]}" -c -
   mkdir -p "$DEST/$target"
-  gzip -dc "$tmp" > "$DEST/$target/sqlite_scanner.duckdb_extension"
+  # mktemp files are 0600; installed resources must be readable by every user.
+  cp "$tmp" "$DEST/$target/${extension}.duckdb_extension.gz"
+  chmod 644 "$DEST/$target/${extension}.duckdb_extension.gz"
+  gzip -dc "$tmp" > "$DEST/$target/${extension}.duckdb_extension"
   printf '%s\n' "$VERSION" > "$DEST/$target/VERSION"
 }
 
@@ -22,8 +32,16 @@ case "${1:-}" in
   macos-universal)
     fetch osx_arm64 macos-arm64 d7514249b0cce24bb63856b4c752a889ef2f739c6fd821109988e4e13afd7058
     fetch osx_amd64 macos-x64 1b96e4ac03a4394708166f75236614a80fd1f9ab810fb3f35ea7aa5a9a833501
+    fetch osx_arm64 macos-arm64 4fb5079e67b00e6643e6ee91545a355010004d1dad50b43f1c060de0cb789c8e postgres_scanner
+    fetch osx_amd64 macos-x64 b8764ed496be635fbac3e5e6a6c8e3e3c2dbfcaa862ce0422c21cad6fcc6c353 postgres_scanner
     ;;
-  windows-x64) fetch windows_amd64 windows-x64 b6139c7f3b40a1b3ba5ef605e4590eda4a55e4e8deefc8182a2644e4a5797f69 ;;
-  linux-x64) fetch linux_amd64 linux-x64 01292812092200c2d0b76324df9568d336ddaa5a198e7cc8fed124e84088e14e ;;
+  windows-x64)
+    fetch windows_amd64 windows-x64 b6139c7f3b40a1b3ba5ef605e4590eda4a55e4e8deefc8182a2644e4a5797f69
+    fetch windows_amd64 windows-x64 65b31f002c70ac5f812d293b8552b977d1c0e6752d0a1127176454c8184ed001 postgres_scanner
+    ;;
+  linux-x64)
+    fetch linux_amd64 linux-x64 01292812092200c2d0b76324df9568d336ddaa5a198e7cc8fed124e84088e14e
+    fetch linux_amd64 linux-x64 e0f631a5535f165468bc8a20501f8bc1490adbc877d38fcdff2f8d05531e1e5b postgres_scanner
+    ;;
   *) echo "usage: $0 {macos-universal|windows-x64|linux-x64}" >&2; exit 2 ;;
 esac

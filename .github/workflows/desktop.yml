@@ -1,0 +1,206 @@
+name: Desktop
+
+# Studio + local Runtime (PRD §6.1, §26.5): Windows, macOS, and Linux are all
+# release-blocking, so every test job runs on all three.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'src/**'
+      - 'src-tauri/**'
+      - 'tests/**'
+      - 'scripts/**'
+      - 'package.json'
+      - 'package-lock.json'
+      - 'vite.config.ts'
+      - 'vitest*.config.ts'
+      - 'tsconfig*.json'
+      - 'biome.json'
+      - 'eslint.config.js'
+      - 'eslint-rules/**'
+      - 'sgconfig.yml'
+      - 'test/**'
+      - '.github/actions/setup-desktop/**'
+      - '.github/workflows/desktop.yml'
+  pull_request:
+    paths:
+      - 'src/**'
+      - 'src-tauri/**'
+      - 'tests/**'
+      - 'scripts/**'
+      - 'package.json'
+      - 'package-lock.json'
+      - 'vite.config.ts'
+      - 'vitest*.config.ts'
+      - 'tsconfig*.json'
+      - 'biome.json'
+      - 'eslint.config.js'
+      - 'eslint-rules/**'
+      - 'sgconfig.yml'
+      - 'test/**'
+      - '.github/actions/setup-desktop/**'
+      - '.github/workflows/desktop.yml'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: desktop-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: 0
+
+# Git Bash on Windows, so every step uses the same quoting rules.
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  lint:
+    name: Lint and typecheck
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: lts/*
+          cache: npm
+      - run: npm ci
+      - name: Typecheck
+        run: npx tsc --noEmit
+      - name: Lint (oxlint, eslint, ast-grep)
+        run: npm run lint
+      # Non-blocking until the Wave 3 formatting pass lands: the tree still has
+      # files from in-flight feature work that biome would reformat. Flip
+      # continue-on-error to false once `npm run format:check` is clean.
+      - name: Format check (biome)
+        continue-on-error: true
+        run: npm run format:check
+
+  test:
+    name: Test (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      # Keep LF endings so fixtures and snapshots match on Windows.
+      - name: Disable CRLF conversion
+        if: runner.os == 'Windows'
+        run: git config --global core.autocrlf false
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/setup-desktop
+      - name: Rust unit tests
+        working-directory: src-tauri
+        run: cargo test --lib
+      - name: Build NAPI test bridge
+        run: npm run pretest
+      # Same as `npm test`, plus JUnit reports. Golden apps run in their own job.
+      - name: Unit tests (vitest)
+        run: npx vitest run --passWithNoTests --reporter=default --reporter=junit --outputFile.junit=reports/unit.xml
+      - name: Integration tests (real Rust bridge)
+        run: >-
+          npx vitest run --config vitest.integration.config.ts
+          --exclude "tests/integration/golden/**"
+          --reporter=default --reporter=junit --outputFile.junit=reports/integration.xml
+      - name: Upload test evidence
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-evidence-${{ matrix.os }}
+          path: |
+            reports/
+            scripts/screenshot/.generated/
+          if-no-files-found: ignore
+          retention-days: 7
+
+  postgres:
+    name: PostgreSQL conformance
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: ixtable
+          POSTGRES_PASSWORD: ixtable
+          POSTGRES_DB: ixtable_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U ixtable -d ixtable_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      IXTABLE_TEST_POSTGRES_URL: postgresql://ixtable:ixtable@localhost:5432/ixtable_test?sslmode=disable
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/setup-desktop
+      # The RecordStore conformance suite runs every scenario on SQLite and,
+      # with IXTABLE_TEST_POSTGRES_URL set, on PostgreSQL (reads via DuckDB).
+      - name: RecordStore conformance (Rust)
+        working-directory: src-tauri
+        run: cargo test --lib -- recordstore postgres migrations data
+      - name: Build NAPI test bridge
+        run: npm run pretest
+      - name: PostgreSQL datasource integration tests
+        run: >-
+          npx vitest run --config vitest.integration.config.ts tests/integration/datasource
+          --reporter=default --reporter=junit --outputFile.junit=reports/postgres.xml
+      - name: Upload test evidence
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-evidence-postgres
+          path: reports/
+          if-no-files-found: ignore
+          retention-days: 7
+
+  golden:
+    name: Golden apps (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      # Keep LF endings so fixtures and snapshots match on Windows.
+      - name: Disable CRLF conversion
+        if: runner.os == 'Windows'
+        run: git config --global core.autocrlf false
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/setup-desktop
+      - name: Build NAPI test bridge
+        run: npm run pretest
+      # Placeholder until the golden CRM / inventory / work-order suites land
+      # (PRD §26); passes when no golden spec exists yet.
+      - name: Golden application suite
+        run: >-
+          npx vitest run --config vitest.integration.config.ts tests/integration/golden
+          --passWithNoTests
+          --reporter=default --reporter=junit --outputFile.junit=reports/golden.xml
+      - name: Upload test evidence
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: golden-evidence-${{ matrix.os }}
+          path: |
+            reports/
+            scripts/screenshot/.generated/
+          if-no-files-found: ignore
+          retention-days: 7
+
+  build:
+    name: Desktop binary links (ubuntu)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/setup-desktop
+        with:
+          cache-key: desktop-build
+      - name: tauri build (debug, no bundle)
+        run: npm run tauri build -- --debug --no-bundle

@@ -1,0 +1,508 @@
+# Lightweight CRM golden application (PRD §26.2).
+# Pure definition data: the same DocumentConfig YAML the Settings › YAML tab edits.
+# Records come from seed.sql, applied as the "Seed sample data" migration.
+# Object ids are fixed UUIDv7 literals. A trailing comment names each top-level object.
+version: 3
+name: CRM
+activeMode: run
+settings:
+  template: crm
+  description: Companies, contacts, a deal pipeline, and activities, with a pipeline dashboard and an activity report.
+release:
+  version: 1.0.0
+  notes: Golden CRM template.
+datasource:
+  kind: sqlite
+  id: 01a100fd-e074-7308-8b0f-848b7a3edf07  # crm-datasource
+entities:
+  - { id: 01a100fd-dec0-747e-8af6-5e6134eabeb4, table: deal_stages, concurrency: optimistic }  # crm-entity-deal-stages
+  - { id: 01a100fd-dec4-7ce0-8654-c9170cc02413, table: companies, concurrency: optimistic }  # crm-entity-companies
+  - { id: 01a100fd-dec9-7ccc-87af-243a5ace4d68, table: contacts, concurrency: optimistic }  # crm-entity-contacts
+  - { id: 01a100fd-ded5-7e50-b511-6edc507c9034, table: deals, concurrency: optimistic }  # crm-entity-deals
+  - { id: 01a100fd-dec1-7375-a52f-0cc74c81353e, table: activities, concurrency: lastWriteWins }  # crm-entity-activities
+migrations:
+  - id: 01a100fd-dedf-75b0-9baa-6cc414a6e63a  # crm-001-schema
+    name: 001 Create CRM schema
+    order: 1
+    targetStore: sqlite
+    up: |
+      CREATE TABLE deal_stages (
+        id INTEGER PRIMARY KEY,
+        name TEXT NOT NULL UNIQUE,
+        position INTEGER NOT NULL UNIQUE,
+        probability REAL NOT NULL DEFAULT 0 CHECK (probability BETWEEN 0 AND 1),
+        is_closed INTEGER NOT NULL DEFAULT 0 CHECK (is_closed IN (0, 1))
+      );
+      CREATE TABLE companies (
+        id INTEGER PRIMARY KEY,
+        name TEXT NOT NULL UNIQUE,
+        industry TEXT,
+        website TEXT,
+        city TEXT,
+        created_on DATE NOT NULL DEFAULT (date('now'))
+      );
+      CREATE TABLE contacts (
+        id INTEGER PRIMARY KEY,
+        company_id INTEGER NOT NULL REFERENCES companies(id) ON DELETE CASCADE,
+        name TEXT NOT NULL,
+        email TEXT UNIQUE CHECK (email IS NULL OR email LIKE '%_@_%._%'),
+        phone TEXT,
+        title TEXT
+      );
+      CREATE TABLE deals (
+        id INTEGER PRIMARY KEY,
+        company_id INTEGER NOT NULL REFERENCES companies(id) ON DELETE CASCADE,
+        contact_id INTEGER REFERENCES contacts(id) ON DELETE SET NULL,
+        stage_id INTEGER NOT NULL REFERENCES deal_stages(id),
+        title TEXT NOT NULL,
+        amount REAL NOT NULL DEFAULT 0 CHECK (amount >= 0),
+        status TEXT NOT NULL DEFAULT 'open' CHECK (status IN ('open', 'won', 'lost')),
+        close_date DATE,
+        owner TEXT
+      );
+      CREATE TABLE activities (
+        id INTEGER PRIMARY KEY,
+        company_id INTEGER NOT NULL REFERENCES companies(id) ON DELETE CASCADE,
+        deal_id INTEGER REFERENCES deals(id) ON DELETE CASCADE,
+        contact_id INTEGER REFERENCES contacts(id) ON DELETE SET NULL,
+        kind TEXT NOT NULL CHECK (kind IN ('call', 'email', 'meeting', 'note')),
+        subject TEXT NOT NULL,
+        due_date DATE,
+        done INTEGER NOT NULL DEFAULT 0 CHECK (done IN (0, 1)),
+        notes TEXT
+      );
+      CREATE INDEX contacts_company ON contacts(company_id);
+      CREATE INDEX deals_company ON deals(company_id);
+      CREATE INDEX deals_stage_status ON deals(stage_id, status);
+      CREATE INDEX activities_company ON activities(company_id, due_date);
+savedQueries:
+  - id: 01a100fd-dec5-7021-bf07-58f8d6eefb7f  # crm-q-deals-by-stage
+    name: Deals by stage
+    sql: |
+      SELECT s.name AS stage, count(d.id) AS deals, coalesce(sum(d.amount), 0) AS total
+      FROM deal_stages s LEFT JOIN deals d ON d.stage_id = s.id
+      WHERE ($stage IS NULL OR s.name = $stage)
+      GROUP BY s.id, s.name, s.position
+      ORDER BY s.position
+    parameters:
+      - { name: stage, logicalType: text }
+  - id: 01a100fd-dec7-7431-b61f-9847762f365f  # crm-q-open-pipeline
+    name: Open pipeline
+    sql: |
+      SELECT s.name AS stage, count(d.id) AS deals, coalesce(sum(d.amount), 0) AS total,
+        coalesce(sum(d.amount * s.probability), 0) AS weighted
+      FROM deals d JOIN deal_stages s ON s.id = d.stage_id
+      WHERE d.status = 'open' AND ($stage IS NULL OR s.name = $stage)
+      GROUP BY s.id, s.name, s.position
+      ORDER BY s.position
+    parameters:
+      - { name: stage, logicalType: text }
+  - id: 01a100fd-ded9-704a-8479-c35c56a14fde  # crm-q-open-deals
+    name: Open deals
+    sql: |
+      SELECT d.id, d.title, c.name AS company, s.name AS stage, d.amount, d.close_date
+      FROM deals d
+      JOIN companies c ON c.id = d.company_id
+      JOIN deal_stages s ON s.id = d.stage_id
+      WHERE d.status = 'open' AND ($min_amount IS NULL OR d.amount >= $min_amount)
+        AND ($stage IS NULL OR s.name = $stage)
+      ORDER BY d.amount DESC, d.id
+    parameters:
+      - { name: min_amount, logicalType: number }
+      - { name: stage, logicalType: text }
+  - id: 01a100fd-ded0-719e-a76c-eb7f2875fe0a  # crm-q-stage-names
+    name: Stage names
+    sql: SELECT name FROM deal_stages ORDER BY position
+  - id: 01a100fd-dedc-7843-b7b6-8e10fb4812d0  # crm-q-won-stage
+    name: Won stage
+    sql: SELECT id FROM deal_stages WHERE name = 'Won'
+  - id: 01a100fd-ded4-7fb1-a6fe-bcb430b1d314  # crm-q-activities
+    name: Activities by company
+    sql: |
+      SELECT c.name AS company, a.kind, a.subject, a.due_date,
+        CASE WHEN a.done = 1 THEN 'Done' ELSE 'Open' END AS state,
+        coalesce(d.title, '') AS deal
+      FROM activities a
+      JOIN companies c ON c.id = a.company_id
+      LEFT JOIN deals d ON d.id = a.deal_id
+      ORDER BY c.name, a.due_date, a.id
+design:
+  version: 3
+  startPage: 01a100fd-ded3-764b-97e4-c46a9e999500
+  navigation:
+    - { id: 01a100fd-ded3-764b-97e4-c46a9e999500, label: Pipeline, kind: dashboard, targetId: 01a100fd-dece-7ec7-a993-1e618e8684b8 }  # crm-nav-dashboard
+    - { id: 01a100fd-ded2-778f-953e-fbcc4871657e, label: Companies, kind: form, targetId: 01a100fd-decd-7fa8-ae27-1bb43f0171af }  # crm-nav-companies
+    - { id: 01a100fd-deda-784b-8095-d38a29060e3c, label: Contacts, kind: form, targetId: 01a100fd-ded1-7daa-8f27-c1eb7dea313a }  # crm-nav-contacts
+    - { id: 01a100fd-dee2-78ba-80f1-c20f98fb9755, label: Deals, kind: form, targetId: 01a100fd-dedd-7ddb-98e1-141bd197f27f }  # crm-nav-deals
+    - { id: 01a100fd-decb-75a5-a55c-16bf565e6366, label: Activities, kind: form, targetId: 01a100fd-dec6-7c64-9f90-16a158f3a460 }  # crm-nav-activities
+    - id: 01a100fd-dedb-7766-a131-0a379d03e51c  # crm-nav-reports
+      label: Reports
+      kind: group
+      children:
+        - { id: 01a100fd-debf-7ecb-b083-7b298b6014c1, label: Activity report, kind: report, targetId: 01a100fd-dec2-729c-b560-f6a9abbde37b }  # crm-nav-activity-report
+    - id: 01a100fd-dee1-7033-bc69-347fc55ae1e3  # crm-nav-setup
+      label: Setup
+      kind: group
+      children:
+        - { id: 01a100fd-dede-7008-8425-9ed9e3fd9ad0, label: Deal stages, kind: table, targetId: deal_stages }  # crm-nav-stages
+  forms:
+    - id: 01a100fd-decd-7fa8-ae27-1bb43f0171af  # crm-form-companies
+      name: Companies
+      source: { kind: table, table: companies }
+      modes: [list]
+      listColumns: [name, industry, city]
+      detailFormId: 01a100fd-ded8-7edf-9282-be48911524cb
+      controls:
+        - { id: 01a100fd-de80-7a09-bb94-ae07628e166f, kind: text, label: Name, binding: { column: name }, placement: { column: 1, row: 1, columnSpan: 6 } }
+        - { id: 01a100fd-de81-72a8-bce1-fe34a658564b, kind: text, label: Industry, binding: { column: industry }, placement: { column: 7, row: 1, columnSpan: 3 } }
+        - { id: 01a100fd-de82-7a99-83c1-cb5e28f0ede5, kind: text, label: City, binding: { column: city }, placement: { column: 10, row: 1, columnSpan: 3 } }
+    - id: 01a100fd-ded8-7edf-9282-be48911524cb  # crm-form-company
+      name: Company
+      source: { kind: table, table: companies }
+      modes: [detail, create, edit]
+      controls:
+        - id: 01a100fd-de83-7f6d-8b7e-475b4cef76b6
+          kind: text
+          label: Name
+          binding: { column: name }
+          validation: { required: true }
+          placement: { column: 1, row: 1, columnSpan: 6 }
+        - id: 01a100fd-de84-7990-903e-7dfa2ca90814
+          kind: select
+          label: Industry
+          binding: { column: industry }
+          options:
+            - { value: Energy, label: Energy }
+            - { value: Healthcare, label: Healthcare }
+            - { value: Logistics, label: Logistics }
+            - { value: Manufacturing, label: Manufacturing }
+            - { value: Software, label: Software }
+          placement: { column: 7, row: 1, columnSpan: 3 }
+        - { id: 01a100fd-de85-7f7c-86d6-71b650ed0208, kind: text, label: City, binding: { column: city }, placement: { column: 10, row: 1, columnSpan: 3 } }
+        - id: 01a100fd-de86-7f68-a7a2-777ec78e05c6
+          kind: text
+          label: Website
+          binding: { column: website }
+          validation: { required: false, pattern: "https?://\\S+", message: Enter a web address starting with http:// or https://. }
+          placement: { column: 1, row: 2, columnSpan: 6 }
+        - id: 01a100fd-de87-778d-9f70-bebbea5fe24b
+          kind: relatedList
+          label: Contacts
+          related: { table: contacts, foreignKey: company_id, parentColumn: id, columns: [name, email, title], formId: 01a100fd-ded7-7b45-956a-5253f9d931a3 }
+          placement: { column: 1, row: 3, columnSpan: 12 }
+        - id: 01a100fd-de88-7cc0-91f0-889fc1d74011
+          kind: relatedList
+          label: Deals
+          related: { table: deals, foreignKey: company_id, parentColumn: id, columns: [title, amount, status], formId: 01a100fd-dee0-73b4-978e-dc64352cd567 }
+          placement: { column: 1, row: 4, columnSpan: 12 }
+    - id: 01a100fd-ded1-7daa-8f27-c1eb7dea313a  # crm-form-contacts
+      name: Contacts
+      source: { kind: table, table: contacts }
+      modes: [list]
+      listColumns: [name, email, title]
+      detailFormId: 01a100fd-ded7-7b45-956a-5253f9d931a3
+    - id: 01a100fd-ded7-7b45-956a-5253f9d931a3  # crm-form-contact
+      name: Contact
+      source: { kind: table, table: contacts }
+      modes: [detail, create, edit]
+      controls:
+        - { id: 01a100fd-de89-72a1-9509-98d4e95499a0, kind: text, label: Name, binding: { column: name }, validation: { required: true }, placement: { column: 1, row: 1, columnSpan: 6 } }
+        - id: 01a100fd-de8a-7d59-ab36-d0d85ea9e4ba
+          kind: relationship
+          label: Company
+          binding: { column: company_id }
+          validation: { required: true }
+          relationship: { table: companies, valueColumn: id, displayColumn: name }
+          placement: { column: 7, row: 1, columnSpan: 6 }
+        - id: 01a100fd-de8b-7227-850f-4dbf60c9c12a
+          kind: text
+          label: Email
+          binding: { column: email }
+          validation: { required: false, pattern: "[^@\\s]+@[^@\\s]+\\.[^@\\s]+", message: Enter an email address like name@example.com. }
+          placement: { column: 1, row: 2, columnSpan: 6 }
+        - { id: 01a100fd-de8c-7762-bba2-c5b60bc116ce, kind: text, label: Phone, binding: { column: phone }, placement: { column: 7, row: 2, columnSpan: 3 } }
+        - { id: 01a100fd-de8d-7884-ab16-f1ee18b862ff, kind: text, label: Job title, binding: { column: title }, placement: { column: 10, row: 2, columnSpan: 3 } }
+    - id: 01a100fd-dedd-7ddb-98e1-141bd197f27f  # crm-form-deals
+      name: Deals
+      source: { kind: table, table: deals }
+      modes: [list]
+      listColumns: [title, amount, status, close_date]
+      detailFormId: 01a100fd-dee0-73b4-978e-dc64352cd567
+      controls:
+        - { id: 01a100fd-de8e-7670-95ed-301530e3d066, kind: text, label: Title, binding: { column: title }, placement: { column: 1, row: 1, columnSpan: 6 } }
+        - { id: 01a100fd-de8f-711d-a67f-1f93755f9c7a, kind: decimal, label: Amount, binding: { column: amount }, format: "$#,##0.00", placement: { column: 7, row: 1, columnSpan: 2 } }
+        - { id: 01a100fd-de90-7eff-a4bb-7a1c809dc071, kind: text, label: Status, binding: { column: status }, placement: { column: 9, row: 1, columnSpan: 2 } }
+        - { id: 01a100fd-de91-7dca-be62-b4fe7aa2b479, kind: date, label: Close date, binding: { column: close_date }, placement: { column: 11, row: 1, columnSpan: 2 } }
+    - id: 01a100fd-dee0-73b4-978e-dc64352cd567  # crm-form-deal
+      name: Deal
+      source: { kind: table, table: deals }
+      modes: [detail, create, edit]
+      rules:
+        - { id: 01a100fd-decc-79dc-8d4a-501d2a33adc2, expression: "record.status <> 'won' or record.close_date is not null", message: A won deal needs a close date. }  # crm-rule-won-stage
+      controls:
+        - { id: 01a100fd-de92-7a83-9403-e29bfcb19b3f, kind: text, label: Title, binding: { column: title }, validation: { required: true }, placement: { column: 1, row: 1, columnSpan: 6 } }
+        - id: 01a100fd-de93-7e0b-93d6-f940cbc9fb4a
+          kind: relationship
+          label: Company
+          binding: { column: company_id }
+          validation: { required: true }
+          relationship: { table: companies, valueColumn: id, displayColumn: name }
+          placement: { column: 7, row: 1, columnSpan: 6 }
+        - id: 01a100fd-de94-75e4-a605-d860342cc8f3
+          kind: relationship
+          label: Stage
+          binding: { column: stage_id }
+          validation: { required: true }
+          relationship: { table: deal_stages, valueColumn: id, displayColumn: name }
+          defaultValue: "1"
+          placement: { column: 1, row: 2, columnSpan: 4 }
+        - id: 01a100fd-de95-7282-8748-045229cdc0f6
+          kind: relationship
+          label: Contact
+          binding: { column: contact_id }
+          relationship: { table: contacts, valueColumn: id, displayColumn: name }
+          placement: { column: 5, row: 2, columnSpan: 4 }
+        - id: 01a100fd-de96-7a85-ba8f-b290de32e8b0
+          kind: decimal
+          label: Amount
+          binding: { column: amount }
+          format: "$#,##0.00"
+          validation: { required: true, expression: value >= 0, message: Amount cannot be negative. }
+          placement: { column: 9, row: 2, columnSpan: 4 }
+        - id: 01a100fd-de97-7e77-8441-5d2bbfd2d1b1
+          kind: select
+          label: Status
+          binding: { column: status }
+          defaultValue: "'open'"
+          options:
+            - { value: open, label: Open }
+            - { value: won, label: Won }
+            - { value: lost, label: Lost }
+          placement: { column: 1, row: 3, columnSpan: 4 }
+        - { id: 01a100fd-de98-7649-850f-bcb79178b866, kind: date, label: Close date, binding: { column: close_date }, placement: { column: 5, row: 3, columnSpan: 4 } }
+        - { id: 01a100fd-de99-7362-bac5-78a072b8c6b3, kind: text, label: Owner, binding: { column: owner }, placement: { column: 9, row: 3, columnSpan: 4 } }
+        - id: 01a100fd-de9a-71cb-8b25-2642f5e9064c
+          kind: button
+          label: Mark deal won
+          actionId: 01a100fd-dec8-7447-bac5-36865210bf78
+          enabledWhen: "record.status = 'open'"
+          placement: { column: 1, row: 4, columnSpan: 4 }
+    - id: 01a100fd-dec6-7c64-9f90-16a158f3a460  # crm-form-activities
+      name: Activities
+      source: { kind: table, table: activities }
+      modes: [list]
+      listColumns: [subject, kind, due_date, done]
+      detailFormId: 01a100fd-decf-7db0-80c0-f982bf87375c
+    - id: 01a100fd-decf-7db0-80c0-f982bf87375c  # crm-form-activity
+      name: Activity
+      source: { kind: table, table: activities }
+      modes: [detail, create, edit]
+      controls:
+        - { id: 01a100fd-de9b-7577-b065-2eb7c5ef2c1a, kind: text, label: Subject, binding: { column: subject }, validation: { required: true }, placement: { column: 1, row: 1, columnSpan: 8 } }
+        - id: 01a100fd-de9c-73ac-9e86-785080c47ed0
+          kind: select
+          label: Kind
+          binding: { column: kind }
+          validation: { required: true }
+          defaultValue: "'call'"
+          options:
+            - { value: call, label: Call }
+            - { value: email, label: Email }
+            - { value: meeting, label: Meeting }
+            - { value: note, label: Note }
+          placement: { column: 9, row: 1, columnSpan: 4 }
+        - id: 01a100fd-de9d-7779-b781-d684890706d2
+          kind: relationship
+          label: Company
+          binding: { column: company_id }
+          validation: { required: true }
+          relationship: { table: companies, valueColumn: id, displayColumn: name }
+          placement: { column: 1, row: 2, columnSpan: 6 }
+        - id: 01a100fd-de9e-797c-84f0-0fd27700b5bd
+          kind: relationship
+          label: Deal
+          binding: { column: deal_id }
+          relationship: { table: deals, valueColumn: id, displayColumn: title }
+          placement: { column: 7, row: 2, columnSpan: 6 }
+        - { id: 01a100fd-de9f-7935-9fee-5a6b9e4dab89, kind: date, label: Due date, binding: { column: due_date }, placement: { column: 1, row: 3, columnSpan: 4 } }
+        - { id: 01a100fd-dea0-7957-ae00-41b7d9f74960, kind: boolean, label: Done, binding: { column: done }, defaultValue: "0", placement: { column: 5, row: 3, columnSpan: 2 } }
+        - { id: 01a100fd-dea1-76a5-bc4b-a8512344b660, kind: multiline, label: Notes, binding: { column: notes }, placement: { column: 1, row: 4, columnSpan: 12 } }
+reports:
+  - id: 01a100fd-dec2-729c-b560-f6a9abbde37b  # crm-report-activities
+    name: Activity report
+    datasetQueryId: 01a100fd-ded4-7fb1-a6fe-bcb430b1d314
+    page:
+      size: A4
+      orientation: portrait
+      margins: { top: 36, right: 36, bottom: 36, left: 36 }
+    bands:
+      reportHeader:
+        height: 30
+        components:
+          - { id: 01a100fd-dea2-786c-a0a1-a79bd38d6b95, kind: staticText, x: 0, y: 0, w: 523, h: 24, text: Activities by company, style: { fontSize: 16, bold: true } }
+      pageHeader:
+        height: 18
+        components:
+          - { id: 01a100fd-dea3-7f20-8a9c-bd1a9ddfe8d8, kind: staticText, x: 0, y: 0, w: 70, h: 14, text: Kind, style: { bold: true } }
+          - { id: 01a100fd-dea4-7e24-b222-d3534ebe5b45, kind: staticText, x: 70, y: 0, w: 200, h: 14, text: Subject, style: { bold: true } }
+          - { id: 01a100fd-dea5-7287-a199-d75c4fff8065, kind: staticText, x: 270, y: 0, w: 140, h: 14, text: Deal, style: { bold: true } }
+          - { id: 01a100fd-dea6-7d2f-a21c-87a5700a95bd, kind: staticText, x: 410, y: 0, w: 70, h: 14, text: Due, style: { bold: true } }
+          - { id: 01a100fd-dea7-7919-8cc7-9895d5db6b0d, kind: staticText, x: 480, y: 0, w: 43, h: 14, text: State, style: { bold: true } }
+      groups:
+        - id: 01a100fd-dea8-704f-95b3-cb8267ad34bb
+          groupBy: record.company
+          header:
+            height: 22
+            keepTogether: true
+            components:
+              - { id: 01a100fd-dea9-7516-b134-ca9f8b3a2815, kind: field, x: 0, y: 4, w: 523, h: 16, expression: record.company, style: { fontSize: 12, bold: true } }
+          footer:
+            height: 20
+            components:
+              - { id: 01a100fd-deaa-7ed6-8649-21c5c6717631, kind: calculated, x: 0, y: 2, w: 523, h: 14, expression: "count(rows.subject) & ' activities, ' & countof(rows, state = 'Open') & ' open'", style: { align: right } }
+      detail:
+        height: 16
+        components:
+          - { id: 01a100fd-deab-7dab-b935-6fd1cc0f6993, kind: field, x: 0, y: 0, w: 70, h: 14, expression: record.kind }
+          - { id: 01a100fd-deac-7703-8235-c6d17cf4122a, kind: field, x: 70, y: 0, w: 200, h: 14, expression: record.subject }
+          - { id: 01a100fd-dead-76f7-84b0-a31faa30c9de, kind: field, x: 270, y: 0, w: 140, h: 14, expression: record.deal }
+          - { id: 01a100fd-deae-7330-b1fe-4e003ba3fc79, kind: field, x: 410, y: 0, w: 70, h: 14, expression: record.due_date }
+          - { id: 01a100fd-deaf-7429-bdab-19a2f9ff7e47, kind: field, x: 480, y: 0, w: 43, h: 14, expression: record.state }
+      pageFooter:
+        height: 18
+        components:
+          - { id: 01a100fd-deb0-7e1d-9605-401326b2fe08, kind: calculated, x: 0, y: 2, w: 523, h: 14, expression: "'Page ' & page & ' of ' & pages", style: { align: center } }
+      reportFooter:
+        height: 24
+        components:
+          - { id: 01a100fd-deb1-7145-a3bc-ee775439ce6c, kind: calculated, x: 0, y: 4, w: 523, h: 16, expression: "'Total activities: ' & count(rows.subject)", style: { bold: true } }
+dashboards:
+  - id: 01a100fd-dece-7ec7-a993-1e618e8684b8  # crm-dash-pipeline
+    name: Pipeline
+    filters:
+      - { id: 01a100fd-ded6-72f7-885c-6752a3c3ca06, name: Stage, param: stage, logicalType: text, control: select, optionsQueryId: 01a100fd-ded0-719e-a76c-eb7f2875fe0a }  # crm-filter-stage
+    components:
+      - { id: 01a100fd-deb2-7949-84b8-0d8fd5c8bb23, kind: filter, title: Stage, filterId: 01a100fd-ded6-72f7-885c-6752a3c3ca06, placement: { column: 1, row: 1, columnSpan: 4 } }
+      - id: 01a100fd-deb3-70aa-9b5a-c04912a98aec
+        kind: kpi
+        title: Open pipeline
+        queryId: 01a100fd-dec7-7431-b61f-9847762f365f
+        expression: sum(rows.total)
+        format: "$#,##0"
+        comparison: { expression: sum(rows.weighted), label: Weighted }
+        placement: { column: 1, row: 2, columnSpan: 4 }
+      - id: 01a100fd-deb4-7b51-ae5a-f5fe3872360e
+        kind: kpi
+        title: Open deals
+        queryId: 01a100fd-dec7-7431-b61f-9847762f365f
+        expression: sum(rows.deals)
+        format: "#,##0"
+        placement: { column: 5, row: 2, columnSpan: 4 }
+      - id: 01a100fd-deb5-7208-b8d3-254a502405b2
+        kind: chart
+        title: Pipeline by stage
+        queryId: 01a100fd-dec5-7021-bf07-58f8d6eefb7f
+        chartType: bar
+        x: stage
+        y: [total]
+        format: "$#,##0"
+        placement: { column: 1, row: 3, columnSpan: 8, rowSpan: 2 }
+      - id: 01a100fd-deb6-7d9e-a7b6-d9054f9f629e
+        kind: table
+        title: Open deal list
+        queryId: 01a100fd-ded9-704a-8479-c35c56a14fde
+        columns: [title, company, stage, amount]
+        pageSize: 10
+        placement: { column: 9, row: 2, columnSpan: 4, rowSpan: 3 }
+actions:
+  - id: 01a100fd-dec8-7447-bac5-36865210bf78  # crm-action-mark-won
+    name: Mark deal won
+    description: Moves an open deal to the Won stage and logs an activity, in one transaction.
+    onError: rollback
+    steps:
+      - id: 01a100fd-deb7-7b2a-b313-7c91447e670f
+        kind: runQuery
+        queryId: 01a100fd-dedc-7843-b7b6-8e10fb4812d0
+        params: {}
+        storeAs: won
+      - id: 01a100fd-deb8-7450-a812-0074979bc696
+        kind: condition
+        when: "record.status = 'open'"
+        then:
+          - id: 01a100fd-deb9-7d1c-bbc7-19c9fd4f6c32
+            kind: updateRecord
+            table: deals
+            match: current
+            values:
+              status: "'won'"
+              stage_id: max(results.won.id)
+              close_date: coalesce(record.close_date, today())
+          - id: 01a100fd-deba-7be5-b87b-085cffaad2d8
+            kind: createRecord
+            table: activities
+            values:
+              company_id: record.company_id
+              deal_id: record.id
+              contact_id: record.contact_id
+              kind: "'note'"
+              subject: "'Deal won: ' & record.title"
+              due_date: today()
+              done: "1"
+          - id: 01a100fd-debb-7b53-a4aa-022f2da6f98e
+            kind: message
+            text: "'Deal marked as won.'"
+        else:
+          - id: 01a100fd-debc-75f8-b104-54be02ecf027
+            kind: message
+            text: "'Only open deals can be marked won.'"
+            tone: error
+  - id: 01a100fd-debe-7dfd-8498-03b3edb6f7cf  # crm-action-log-new-deal
+    name: Log new deal
+    description: Records a note activity when a deal is created.
+    onError: stop
+    steps:
+      - id: 01a100fd-debd-7ee4-93c0-8eb64ebd80b5
+        kind: createRecord
+        table: activities
+        values:
+          company_id: record.company_id
+          deal_id: record.id
+          contact_id: record.contact_id
+          kind: "'note'"
+          subject: "'Deal created: ' & record.title"
+          due_date: today()
+          done: "1"
+triggers:
+  - id: 01a100fd-dec3-7f42-8322-ac40894a07a4  # crm-trigger-new-deal
+    name: Log activity when a deal is created
+    table: deals
+    event: created
+    actionId: 01a100fd-debe-7dfd-8498-03b3edb6f7cf
+    mode: sync
+    enabled: true
+roles:
+  - id: 01a100fd-deca-7a05-8f33-87d2d2ba675b  # crm-role-sales-rep
+    name: Sales rep
+    permissions:
+      navigation: [01a100fd-ded3-764b-97e4-c46a9e999500, 01a100fd-ded2-778f-953e-fbcc4871657e, 01a100fd-deda-784b-8095-d38a29060e3c, 01a100fd-dee2-78ba-80f1-c20f98fb9755, 01a100fd-decb-75a5-a55c-16bf565e6366, 01a100fd-dedb-7766-a131-0a379d03e51c, 01a100fd-debf-7ecb-b083-7b298b6014c1]
+      actions: [01a100fd-dec8-7447-bac5-36865210bf78, 01a100fd-debe-7dfd-8498-03b3edb6f7cf]
+      objects:
+        - { kind: dashboard, id: 01a100fd-dece-7ec7-a993-1e618e8684b8, read: true }  # crm-dash-pipeline
+        - { kind: report, id: 01a100fd-dec2-729c-b560-f6a9abbde37b, read: true }  # crm-report-activities
+        - { kind: form, id: 01a100fd-decd-7fa8-ae27-1bb43f0171af, read: true }  # crm-form-companies
+        - { kind: form, id: 01a100fd-ded8-7edf-9282-be48911524cb, read: true, create: true, update: true, delete: false }  # crm-form-company
+        - { kind: form, id: 01a100fd-ded1-7daa-8f27-c1eb7dea313a, read: true }  # crm-form-contacts
+        - { kind: form, id: 01a100fd-ded7-7b45-956a-5253f9d931a3, read: true, create: true, update: true, delete: true }  # crm-form-contact
+        - { kind: form, id: 01a100fd-dedd-7ddb-98e1-141bd197f27f, read: true }  # crm-form-deals
+        - { kind: form, id: 01a100fd-dee0-73b4-978e-dc64352cd567, read: true, create: true, update: true, delete: true }  # crm-form-deal
+        - { kind: form, id: 01a100fd-dec6-7c64-9f90-16a158f3a460, read: true }  # crm-form-activities
+        - { kind: form, id: 01a100fd-decf-7db0-80c0-f982bf87375c, read: true, create: true, update: true, delete: true }  # crm-form-activity
+        - { kind: table, id: deals, read: true, update: true }
+        - { kind: table, id: activities, read: true, create: true }
+        - { kind: table, id: deal_stages, read: true }
+        - { kind: query, id: 01a100fd-dedc-7843-b7b6-8e10fb4812d0, read: true }  # crm-q-won-stage
+        - { kind: query, id: 01a100fd-dec7-7431-b61f-9847762f365f, read: true }  # crm-q-open-pipeline
+        - { kind: query, id: 01a100fd-dec5-7021-bf07-58f8d6eefb7f, read: true }  # crm-q-deals-by-stage
+        - { kind: query, id: 01a100fd-ded9-704a-8479-c35c56a14fde, read: true }  # crm-q-open-deals
+        - { kind: query, id: 01a100fd-ded0-719e-a76c-eb7f2875fe0a, read: true }  # crm-q-stage-names
+        - { kind: query, id: 01a100fd-ded4-7fb1-a6fe-bcb430b1d314, read: true }  # crm-q-activities

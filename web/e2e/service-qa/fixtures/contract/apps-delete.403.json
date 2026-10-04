@@ -1,0 +1,18 @@
+{
+  "function": "apps-delete",
+  "status": 403,
+  "request": {
+    "appId": "d5c5216b-2a16-48b4-86c4-488a9074a42d",
+    "confirm": "Contract CRM"
+  },
+  "response": {
+    "error": {
+      "code": "FORBIDDEN",
+      "message": "This app has an active subscription. Cancel it first, or confirm cancelSubscription.",
+      "details": {
+        "reason": "active_subscription",
+        "subscriptionStatus": "active"
+      }
+    }
+  }
+}

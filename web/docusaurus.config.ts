@@ -37,9 +37,12 @@ const config: Config = {
   customFields: {
     supabaseUrl: SUPABASE_URL,
     supabaseAnonKey: SUPABASE_ANON_KEY,
-    // Flip to true once real OAuth provider credentials are configured in
-    // supabase/config.toml (see the [auth.external.*] sections).
+    // OAuth buttons stay visible but disabled until the provider is configured
+    // in Supabase (supabase/config.toml [auth.external.*] locally, the hosted
+    // project in production). OAUTH_ENABLED turns on every provider at once.
     oauthEnabled: process.env.OAUTH_ENABLED === "true",
+    googleAuthEnabled: process.env.OAUTH_GOOGLE_ENABLED === "true",
+    microsoftAuthEnabled: process.env.OAUTH_MICROSOFT_ENABLED === "true",
   },
 
   presets: [
@@ -58,23 +61,28 @@ const config: Config = {
   ],
 
   themeConfig: {
-    image: "img/social-card.svg",
+    image: "img/social-card.png",
     colorMode: {
       respectPrefersColorScheme: true,
     },
     navbar: {
       title: "ixtable",
       logo: {
-        alt: "ixtable logo",
-        src: "img/favicon.svg",
+        alt: "ixtable",
+        src: "img/logo.svg",
+        srcDark: "img/logo-dark.svg",
+        width: 28,
+        height: 28,
       },
       items: [
         {
           type: "docSidebar",
-          sidebarId: "tutorialSidebar",
+          sidebarId: "docsSidebar",
           position: "left",
           label: "Docs",
         },
+        { to: "/pricing", label: "Pricing", position: "left" },
+        { to: "/cloud", label: "Cloud", position: "left" },
         {
           href: "https://github.com/ixtable/ixtable",
           label: "GitHub",
@@ -96,11 +104,27 @@ const config: Config = {
               label: "Overview",
               to: "/docs/",
             },
+            {
+              label: "Getting started with Cloud",
+              to: "/docs/cloud/getting-started",
+            },
+            {
+              label: "Security",
+              to: "/docs/cloud/security",
+            },
+          ],
+        },
+        {
+          title: "Legal",
+          items: [
+            { label: "Privacy policy", to: "/docs/legal/privacy" },
+            { label: "Terms of service", to: "/docs/legal/terms" },
           ],
         },
         {
           title: "More",
           items: [
+            { label: "Pricing", to: "/pricing" },
             {
               label: "GitHub",
               href: "https://github.com/ixtable/ixtable",

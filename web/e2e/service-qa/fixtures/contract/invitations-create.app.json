@@ -1,0 +1,28 @@
+{
+  "function": "invitations-create",
+  "status": 200,
+  "request": {
+    "kind": "app",
+    "appId": "d5c5216b-2a16-48b4-86c4-488a9074a42d",
+    "email": "service-qa-da397814cc81@example.com",
+    "roleId": "bec9f701-f53f-431c-8ad5-4d4caf520c6b"
+  },
+  "response": {
+    "invitation": {
+      "id": "10d702c2-d14e-4316-98cf-34b18f8834a3",
+      "kind": "app",
+      "org_id": null,
+      "app_id": "d5c5216b-2a16-48b4-86c4-488a9074a42d",
+      "email": "service-qa-da397814cc81@example.com",
+      "org_role": null,
+      "role_id": "bec9f701-f53f-431c-8ad5-4d4caf520c6b",
+      "invited_by": "b55a0145-e352-4790-a67c-b55fec436618",
+      "created_at": "2026-10-03T23:14:31.124402+00:00",
+      "expires_at": "2026-10-10T23:14:31.124402+00:00",
+      "accepted_at": null,
+      "revoked_at": null
+    },
+    "acceptUrl": "http://127.0.0.1:3001/invite?token=redacted",
+    "delivery": "sent"
+  }
+}

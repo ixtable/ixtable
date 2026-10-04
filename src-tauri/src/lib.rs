@@ -1,8 +1,33 @@
 pub mod archive;
+pub mod archive_io;
+pub mod asset_data;
+pub mod assets;
+pub mod automation;
+pub mod bundle;
+pub mod bundle_export;
+pub mod checkpoints;
+pub mod cloud;
+pub mod dashboards;
 pub mod data;
 pub mod design;
+pub mod installation;
+pub mod installation_checks;
+pub mod installation_commands;
+pub mod jobs;
+pub mod logging;
 pub mod manager;
+pub mod migrations;
+pub mod paths;
+pub mod postgres;
+pub mod queries;
+pub mod recordstore;
+pub mod recovery;
+pub mod reports;
+pub mod roles;
 pub mod storage;
+pub mod templates;
+pub mod updater;
+pub mod validation;
 
 use archive::{Attachment, DocumentConfig};
 use manager::{AppError, DocumentManager, SessionState};
@@ -14,9 +39,7 @@ fn manager() -> Result<&'static DocumentManager, AppError> {
     if let Some(m) = MANAGER.get() {
         return Ok(m);
     }
-    let base = std::env::var_os("IXTABLE_STATE_DIR")
-        .map(PathBuf::from)
-        .unwrap_or_else(|| std::env::temp_dir().join("ixtable"));
+    let base = paths::state_dir();
     let _ = MANAGER.set(DocumentManager::new(base.join("data"), base.join("cache"))?);
     Ok(MANAGER.get().unwrap())
 }
@@ -56,7 +79,10 @@ fn read_document_config_yaml(window_label: String) -> Result<String, AppError> {
     manager()?.config_yaml(&window_label)
 }
 #[tauri::command]
-fn apply_document_config_yaml(window_label: String, yaml: String) -> Result<SessionState, AppError> {
+fn apply_document_config_yaml(
+    window_label: String,
+    yaml: String,
+) -> Result<SessionState, AppError> {
     manager()?.apply_config_yaml(&window_label, &yaml)
 }
 #[tauri::command]
@@ -85,7 +111,7 @@ fn import_attachment(
 }
 #[tauri::command]
 fn list_attachments(window_label: String) -> Result<Vec<Attachment>, AppError> {
-    manager()?.attachments(&window_label)
+    manager()?.asset_list(&window_label)
 }
 #[tauri::command]
 fn export_attachment(window_label: String, id: String, path: String) -> Result<(), AppError> {
@@ -118,51 +144,11 @@ fn list_recent_files() -> Result<Vec<storage::RecentFile>, AppError> {
 }
 #[tauri::command]
 fn list_recovery_sessions() -> Result<Vec<storage::RecoveryRecord>, AppError> {
-    manager()?
-        .global
-        .recoveries()
-        .map_err(|e| AppError::new("IO_ERROR", e))
+    manager()?.recoverable_sessions()
 }
 #[tauri::command]
 fn discard_recovery(session_id: String) -> Result<(), AppError> {
-    let m = manager()?;
-    if let Some(r) = m
-        .global
-        .recoveries()
-        .map_err(|e| AppError::new("IO_ERROR", e))?
-        .into_iter()
-        .find(|r| r.session_id == session_id)
-    {
-        let _ = std::fs::remove_dir_all(r.workspace);
-    }
-    m.global
-        .remove_recovery(&session_id)
-        .map_err(|e| AppError::new("IO_ERROR", e))
-}
-fn db(window: &str) -> Result<PathBuf, AppError> {
-    manager()?.database_path(window)
-}
-fn data_err(e: String) -> AppError {
-    let lower = e.to_ascii_lowercase();
-    let code = if lower.contains("does not exist") || lower.contains("not found") {
-        "NOT_FOUND"
-    } else if lower.contains("expected one row") || lower.contains("identity") {
-        "STALE_ROW"
-    } else if lower.contains("constraint") || lower.contains("foreign key") {
-        "CONSTRAINT_VIOLATION"
-    } else if lower.contains("read-only") || lower.contains("readonly") {
-        "READ_ONLY"
-    } else if lower.contains("unknown column")
-        || lower.contains("required")
-        || lower.contains("allowed")
-    {
-        "VALIDATION_ERROR"
-    } else if lower.contains("extension") {
-        "EXTENSION_STARTUP"
-    } else {
-        "DATABASE_ERROR"
-    };
-    AppError::new(code, e)
+    manager()?.discard_recovery(&session_id)
 }
 #[tauri::command]
 fn list_database_objects(window_label: String) -> Result<Vec<data::DbObject>, AppError> {
@@ -193,38 +179,36 @@ fn insert_row(
     table: String,
     values: Vec<data::NamedValue>,
 ) -> Result<Vec<data::DataValue>, AppError> {
-    let r = data::insert(&db(&window_label)?, &table, &values).map_err(data_err)?;
-    manager()?.mark_data_dirty(&window_label)?;
-    Ok(r)
+    recordstore::insert_row(&window_label, &table, &values)
 }
+/// `expected` carries the values the user started from; entities with the
+/// optimistic policy reject the update with CONFLICT when they changed.
 #[tauri::command]
 fn update_row(
     window_label: String,
     table: String,
     values: Vec<data::NamedValue>,
     identity: Vec<data::DataValue>,
+    expected: Option<Vec<data::NamedValue>>,
 ) -> Result<u64, AppError> {
-    let r = data::update(&db(&window_label)?, &table, &values, &identity).map_err(data_err)?;
-    manager()?.mark_data_dirty(&window_label)?;
-    Ok(r)
+    recordstore::update_row(&window_label, &table, &values, &identity, expected)
 }
 #[tauri::command]
 fn delete_row(
     window_label: String,
     table: String,
     identity: Vec<data::DataValue>,
+    expected: Option<Vec<data::NamedValue>>,
 ) -> Result<u64, AppError> {
-    let r = data::delete(&db(&window_label)?, &table, &identity).map_err(data_err)?;
-    manager()?.mark_data_dirty(&window_label)?;
-    Ok(r)
+    recordstore::delete_row(&window_label, &table, &identity, expected)
 }
 #[tauri::command]
 fn create_database_table(
     window_label: String,
     spec: data::CreateTable,
 ) -> Result<SessionState, AppError> {
-    data::create_table(&db(&window_label)?, &spec).map_err(data_err)?;
-    manager()?.mark_data_dirty(&window_label)
+    installation::ensure_studio(&window_label)?;
+    recordstore::create_table(&window_label, &spec)
 }
 #[tauri::command]
 fn alter_database_table(
@@ -232,8 +216,8 @@ fn alter_database_table(
     table: String,
     operation: data::AlterTable,
 ) -> Result<SessionState, AppError> {
-    data::alter_table(&db(&window_label)?, &table, &operation).map_err(data_err)?;
-    manager()?.mark_data_dirty(&window_label)
+    installation::ensure_studio(&window_label)?;
+    recordstore::alter_table(&window_label, &table, &[operation])
 }
 #[tauri::command]
 fn save_query(
@@ -257,10 +241,100 @@ fn delete_saved_query(window_label: String, id: String) -> Result<DocumentConfig
     Ok(c)
 }
 
+/// Event the main window receives with the `.ixt`/`.ixtr` paths a later launch (or the OS) asked to open.
+pub const OPEN_FILES_EVENT: &str = "ixtable://open-files";
+
+/// Whether a path names a file ixtable opens: an `.ixt` document or an `.ixtr` runtime bundle.
+pub fn is_openable_file(path: &str) -> bool {
+    std::path::Path::new(path)
+        .extension()
+        .is_some_and(|e| e.eq_ignore_ascii_case("ixt") || e.eq_ignore_ascii_case("ixtr"))
+}
+
+/// Paths among a launch's arguments that name `.ixt` documents or `.ixtr` bundles, resolved against its cwd.
+pub fn open_file_args(args: &[String], cwd: &str) -> Vec<String> {
+    args.iter()
+        .skip(1)
+        .filter(|a| !a.starts_with('-'))
+        .filter(|a| is_openable_file(a))
+        .map(|a| {
+            std::path::Path::new(cwd)
+                .join(a)
+                .to_string_lossy()
+                .into_owned()
+        })
+        .collect()
+}
+
+/// Files this process was asked to open before the UI could listen: the first
+/// launch's arguments (an OS file association) and, on macOS, `Opened` events.
+fn launch_files() -> &'static std::sync::Mutex<Option<Vec<String>>> {
+    static FILES: OnceLock<std::sync::Mutex<Option<Vec<String>>>> = OnceLock::new();
+    FILES.get_or_init(|| {
+        let args: Vec<String> = std::env::args().collect();
+        let cwd = std::env::current_dir()
+            .map(|d| d.to_string_lossy().into_owned())
+            .unwrap_or_default();
+        std::sync::Mutex::new(Some(open_file_args(&args, &cwd)))
+    })
+}
+
+/// Returns the files the app was launched with, once; later calls return none
+/// (later requests arrive as `ixtable://open-files` events).
+#[tauri::command]
+fn take_launch_files(window_label: String) -> Result<Vec<String>, AppError> {
+    let _ = window_label;
+    let mut files = launch_files().lock().unwrap_or_else(|e| e.into_inner());
+    Ok(files.replace(vec![]).unwrap_or_default())
+}
+
+/// Delivers files the OS asked to open: queued for `take_launch_files` and sent to the main window.
+#[cfg_attr(not(any(target_os = "macos", target_os = "ios")), allow(dead_code))]
+fn deliver_open_files(app: &tauri::AppHandle, files: Vec<String>) {
+    use tauri::{Emitter, Manager};
+    if files.is_empty() {
+        return;
+    }
+    if let Some(queued) = launch_files()
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .as_mut()
+    {
+        queued.extend(files.iter().cloned());
+    }
+    if let Some(window) = app.get_webview_window("main") {
+        let _ = window.emit(OPEN_FILES_EVENT, files);
+    }
+}
+
+fn forward_open_args(app: &tauri::AppHandle, args: Vec<String>, cwd: String) {
+    use tauri::{Emitter, Manager};
+    if let Some(window) = app.get_webview_window("main") {
+        let _ = window.unminimize();
+        let _ = window.set_focus();
+        let files = open_file_args(&args, &cwd);
+        if !files.is_empty() {
+            let _ = window.emit(OPEN_FILES_EVENT, files);
+        }
+    }
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
+        // Registered first: a second launch hands its file arguments to this process and exits, so two processes never share the state dir.
+        .plugin(tauri_plugin_single_instance::init(forward_open_args))
         .plugin(tauri_plugin_dialog::init())
+        // Signed updates (updater.rs); config and pubkey in tauri.conf.json `plugins.updater`.
+        .plugin(tauri_plugin_updater::Builder::new().build())
+        .setup(|app| {
+            use tauri::Manager;
+            // Durable state lives in the app's local data dir, resolved before any command runs.
+            paths::init_app_dir(app.path().app_local_data_dir()?);
+            // Read the first launch's file arguments before anything changes the cwd.
+            let _ = launch_files();
+            Ok(())
+        })
         .invoke_handler(tauri::generate_handler![
             app_info,
             new_document,
@@ -293,8 +367,166 @@ pub fn run() {
             create_database_table,
             alter_database_table,
             save_query,
-            delete_saved_query
+            delete_saved_query,
+            // launch commands
+            take_launch_files,
+            // archive commands
+            manager::autosave_document,
+            recovery::recover_session,
+            checkpoints::create_checkpoint,
+            checkpoints::list_checkpoints,
+            checkpoints::restore_checkpoint_as_copy,
+            assets::import_asset,
+            assets::list_orphan_assets,
+            assets::cleanup_orphan_assets,
+            assets::archive_size_report,
+            // logging commands
+            logging::read_logs,
+            logging::write_log,
+            validation::validate_document,
+            // reports commands
+            reports::write_report_pdf,
+            reports::read_report_assets,
+            // asset_data commands
+            asset_data::read_asset_data_url,
+            // dashboards commands
+            // automation commands
+            automation::validate_automation,
+            jobs::enqueue_job,
+            jobs::claim_next_job,
+            jobs::complete_job,
+            jobs::fail_job,
+            jobs::cancel_job,
+            jobs::retry_job,
+            jobs::list_jobs,
+            jobs::job_attempts,
+            // migrations commands
+            migrations::commands::migration_status,
+            migrations::commands::migration_history,
+            migrations::commands::preview_migration,
+            migrations::commands::dry_run_migrations,
+            migrations::commands::apply_migrations,
+            migrations::commands::rollback_migration,
+            // recordstore commands
+            recordstore::commands::store_capabilities,
+            recordstore::commands::table_drop_impact,
+            recordstore::commands::drop_database_table,
+            recordstore::commands::preview_table_changes,
+            recordstore::commands::apply_table_changes,
+            recordstore::commands::create_index,
+            recordstore::commands::drop_index,
+            recordstore::commands::list_indexes,
+            recordstore::commands::execute_write_batch,
+            recordstore::commands::test_datasource_connection,
+            recordstore::commands::set_datasource_password,
+            recordstore::commands::clear_datasource_password,
+            recordstore::commands::connect_datasource,
+            // roles commands
+            // design commands
+            design::validate_design,
+            // queries commands
+            queries::execute_parameterized_query,
+            queries::run_saved_query,
+            queries::cancel_query,
+            queries::check_query_sql,
+            // templates commands
+            templates::list_templates,
+            templates::read_template_config,
+            templates::create_from_template,
+            // bundle commands
+            bundle_export::export_runtime_bundle,
+            bundle_export::bundle_signer_fingerprint,
+            installation_commands::inspect_runtime_bundle,
+            installation_commands::open_runtime_bundle,
+            installation_commands::update_runtime_installation,
+            installation_commands::runtime_installation_info,
+            installation_commands::preview_installation_reset,
+            installation_commands::reset_runtime_installation_data,
+            // cloud commands
+            cloud::commands::cloud_config,
+            cloud::commands::cloud_auth_storage_get,
+            cloud::commands::cloud_auth_storage_set,
+            cloud::commands::cloud_auth_storage_remove,
+            cloud::commands::cloud_desktop_auth_start,
+            cloud::commands::cloud_desktop_auth_poll,
+            cloud::commands::cloud_sign_out_local,
+            cloud::commands::cloud_publish_preflight,
+            cloud::commands::cloud_upload_archive,
+            cloud::commands::cloud_upload_credential,
+            cloud::commands::cloud_restore_copy,
+            cloud::commands::cloud_transfer_progress,
+            cloud::runtime_commands::cloud_installed_apps,
+            cloud::runtime_commands::cloud_install_app,
+            cloud::runtime_commands::cloud_open_installed,
+            cloud::runtime_commands::cloud_runtime_info,
+            cloud::runtime_commands::cloud_key_grant,
+            cloud::runtime_commands::cloud_release_credentials,
+            // updater commands
+            updater::update_settings,
+            updater::set_update_settings,
+            updater::check_for_update,
+            updater::install_update,
+            updater::update_progress,
+            updater::relaunch_app,
         ])
-        .run(tauri::generate_context!())
-        .expect("error while running ixtable")
+        .build(tauri::generate_context!())
+        .expect("error while building ixtable")
+        .run(|_app, _event| {
+            // macOS hands file-association opens to the running app as events, not arguments.
+            #[cfg(any(target_os = "macos", target_os = "ios"))]
+            if let tauri::RunEvent::Opened { urls, .. } = _event {
+                let files = urls
+                    .iter()
+                    .filter_map(|u| u.to_file_path().ok())
+                    .map(|p| p.to_string_lossy().into_owned())
+                    .filter(|p| is_openable_file(p))
+                    .collect();
+                deliver_open_files(_app, files);
+            }
+        })
+}
+
+#[cfg(test)]
+mod launch_args_tests {
+    #[test]
+    fn a_second_launch_forwards_only_ixt_paths_resolved_against_its_cwd() {
+        let args = [
+            "ixtable",
+            "--flag",
+            "notes.IXT",
+            "/abs/b.ixt",
+            "readme.txt",
+            "app.ixtr",
+        ]
+        .map(String::from);
+        let files = super::open_file_args(&args, "/home/u");
+        assert_eq!(files.len(), 3);
+        assert_eq!(
+            std::path::Path::new(&files[2]),
+            std::path::Path::new("/home/u/app.ixtr")
+        );
+        assert_eq!(
+            std::path::Path::new(&files[0]),
+            std::path::Path::new("/home/u/notes.IXT")
+        );
+        assert_eq!(
+            std::path::Path::new(&files[1]),
+            std::path::Path::new("/abs/b.ixt")
+        );
+    }
+
+    #[test]
+    fn launch_files_are_taken_once() {
+        // The test binary's own arguments name no documents.
+        assert!(super::take_launch_files("main".into()).unwrap().is_empty());
+        super::launch_files()
+            .lock()
+            .unwrap()
+            .replace(vec!["/docs/a.ixt".into()]);
+        assert_eq!(
+            super::take_launch_files("main".into()).unwrap(),
+            vec!["/docs/a.ixt".to_string()]
+        );
+        assert!(super::take_launch_files("main".into()).unwrap().is_empty());
+    }
 }

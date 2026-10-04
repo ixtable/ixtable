@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" width="32" height="32" role="img" aria-labelledby="ixtable-logo-title">
+  <title id="ixtable-logo-title">ixtable</title>
+  <rect width="32" height="32" rx="8" fill="#202126"/>
+  <g fill="none" stroke="#ffffff" stroke-width="3" stroke-linecap="round">
+    <path d="M10.25 14.5v8.25M14.75 14.5l7 8.25M21.75 14.5l-7 8.25"/>
+  </g>
+  <circle cx="10.25" cy="9.5" r="1.9" fill="#ffffff"/>
+</svg>

@@ -1,0 +1,518 @@
+# Inventory management golden application (PRD §26.3).
+# Pure definition data: the same DocumentConfig YAML the Settings › YAML tab edits.
+# {{asset:<file>}} placeholders are replaced with the ids of the template's assets
+# when a document is created from the template.
+# Object ids are fixed UUIDv7 literals. A trailing comment names each top-level object.
+version: 3
+name: Inventory
+activeMode: run
+settings:
+  template: inventory
+  description: Products, locations, suppliers, stock movements with transactional transfers, low-stock alerts, and a valuation report.
+release:
+  version: 1.0.0
+  notes: Golden inventory template.
+datasource:
+  kind: sqlite
+  id: 01a10134-cef4-7f05-8cec-f83aa99cdf93  # inv-datasource
+entities:
+  - { id: 01a10134-cd4c-70d2-89ce-e69f0fc06bbe, table: suppliers, concurrency: optimistic }  # inv-entity-suppliers
+  - { id: 01a10134-cd49-7695-b45d-6028964b8000, table: locations, concurrency: optimistic }  # inv-entity-locations
+  - { id: 01a10134-cd4f-769f-a071-8e9100d500de, table: products, concurrency: optimistic }  # inv-entity-products
+  - { id: 01a10134-cd4a-7530-84aa-b03c79842bea, table: stock_movements, concurrency: lastWriteWins }  # inv-entity-movements
+  - { id: 01a10134-cd47-74ee-bee7-13a7d2d484fc, table: reorder_thresholds, concurrency: optimistic }  # inv-entity-thresholds
+  - { id: 01a10134-cd48-775e-bb09-4de1b4e6e248, table: transfers, concurrency: optimistic }  # inv-entity-transfers
+migrations:
+  - id: 01a10134-cd6a-7b26-8145-42ab80b1cbee  # inv-001-schema
+    name: 001 Create inventory schema
+    order: 1
+    targetStore: sqlite
+    up: |
+      CREATE TABLE suppliers (
+        id INTEGER PRIMARY KEY,
+        name TEXT NOT NULL UNIQUE,
+        email TEXT,
+        phone TEXT,
+        lead_time_days INTEGER NOT NULL DEFAULT 7 CHECK (lead_time_days >= 0)
+      );
+      CREATE TABLE locations (
+        id INTEGER PRIMARY KEY,
+        code TEXT NOT NULL UNIQUE,
+        name TEXT NOT NULL,
+        kind TEXT NOT NULL DEFAULT 'warehouse' CHECK (kind IN ('warehouse', 'store', 'transit'))
+      );
+      CREATE TABLE products (
+        id INTEGER PRIMARY KEY,
+        sku TEXT NOT NULL UNIQUE CHECK (length(sku) >= 3),
+        name TEXT NOT NULL,
+        supplier_id INTEGER REFERENCES suppliers(id) ON DELETE SET NULL,
+        unit_cost REAL NOT NULL DEFAULT 0 CHECK (unit_cost >= 0),
+        unit TEXT NOT NULL DEFAULT 'each',
+        active INTEGER NOT NULL DEFAULT 1 CHECK (active IN (0, 1))
+      );
+      CREATE TABLE stock_movements (
+        id INTEGER PRIMARY KEY,
+        product_id INTEGER NOT NULL REFERENCES products(id) ON DELETE CASCADE,
+        location_id INTEGER NOT NULL REFERENCES locations(id) ON DELETE RESTRICT,
+        quantity INTEGER NOT NULL CHECK (quantity <> 0),
+        kind TEXT NOT NULL CHECK (kind IN ('receipt', 'issue', 'transfer_in', 'transfer_out', 'adjustment')),
+        reference TEXT,
+        moved_on DATE NOT NULL DEFAULT (date('now')),
+        note TEXT
+      );
+      CREATE TABLE reorder_thresholds (
+        product_id INTEGER NOT NULL REFERENCES products(id) ON DELETE CASCADE,
+        location_id INTEGER NOT NULL REFERENCES locations(id) ON DELETE CASCADE,
+        min_quantity INTEGER NOT NULL CHECK (min_quantity >= 0),
+        reorder_quantity INTEGER NOT NULL DEFAULT 0 CHECK (reorder_quantity >= 0),
+        PRIMARY KEY (product_id, location_id)
+      );
+      CREATE TABLE transfers (
+        id INTEGER PRIMARY KEY,
+        product_id INTEGER NOT NULL REFERENCES products(id) ON DELETE CASCADE,
+        from_location_id INTEGER NOT NULL REFERENCES locations(id),
+        to_location_id INTEGER NOT NULL REFERENCES locations(id),
+        quantity INTEGER NOT NULL CHECK (quantity > 0),
+        status TEXT NOT NULL DEFAULT 'draft' CHECK (status IN ('draft', 'posted')),
+        requested_on DATE NOT NULL DEFAULT (date('now')),
+        posted_on DATE,
+        CHECK (status <> 'posted' OR from_location_id <> to_location_id)
+      );
+      CREATE INDEX movements_product_location ON stock_movements(product_id, location_id);
+      CREATE INDEX products_supplier ON products(supplier_id);
+savedQueries:
+  - id: 01a10134-cd6d-70c0-858d-e120a781be0b  # inv-q-on-hand
+    name: Stock on hand
+    sql: |
+      SELECT p.sku, p.name AS product, l.code AS location, sum(m.quantity) AS on_hand
+      FROM stock_movements m
+      JOIN products p ON p.id = m.product_id
+      JOIN locations l ON l.id = m.location_id
+      WHERE ($location IS NULL OR l.code = $location)
+      GROUP BY p.sku, p.name, l.code
+      ORDER BY p.sku, l.code
+    parameters:
+      - { name: location, logicalType: text }
+  - id: 01a10134-cd64-7bf0-85e8-473235e45958  # inv-q-by-product
+    name: Stock by product
+    sql: |
+      SELECT p.sku, p.name AS product, coalesce(sum(m.quantity), 0) AS on_hand
+      FROM products p LEFT JOIN stock_movements m ON m.product_id = p.id
+      GROUP BY p.sku, p.name
+      ORDER BY p.sku
+  - id: 01a10134-cd60-77c7-bbdf-1f10ecd8ba9f  # inv-q-by-location
+    name: Stock by location
+    sql: |
+      SELECT l.code AS location, sum(m.quantity) AS units, sum(m.quantity * p.unit_cost) AS value
+      FROM stock_movements m
+      JOIN locations l ON l.id = m.location_id
+      JOIN products p ON p.id = m.product_id
+      WHERE ($location IS NULL OR l.code = $location)
+      GROUP BY l.code
+      ORDER BY l.code
+    parameters:
+      - { name: location, logicalType: text }
+  - id: 01a10134-cd67-77f9-8459-c11337e9e44e  # inv-q-valuation
+    name: Inventory valuation
+    sql: |
+      SELECT coalesce(s.name, 'No supplier') AS supplier, p.sku, p.name AS product,
+        coalesce(sum(m.quantity), 0) AS on_hand, p.unit_cost,
+        coalesce(sum(m.quantity), 0) * p.unit_cost AS value
+      FROM products p
+      LEFT JOIN suppliers s ON s.id = p.supplier_id
+      LEFT JOIN stock_movements m ON m.product_id = p.id
+      GROUP BY s.name, p.sku, p.name, p.unit_cost
+      ORDER BY supplier, p.sku
+  - id: 01a10134-cd68-7ccb-9efa-9ddbf5057e7c  # inv-q-low-stock
+    name: Low stock
+    sql: |
+      SELECT p.sku, p.name AS product, l.code AS location,
+        coalesce(s.on_hand, 0) AS on_hand, t.min_quantity, t.reorder_quantity
+      FROM reorder_thresholds t
+      JOIN products p ON p.id = t.product_id
+      JOIN locations l ON l.id = t.location_id
+      LEFT JOIN (
+        SELECT product_id, location_id, sum(quantity) AS on_hand
+        FROM stock_movements GROUP BY product_id, location_id
+      ) s ON s.product_id = t.product_id AND s.location_id = t.location_id
+      WHERE coalesce(s.on_hand, 0) < t.min_quantity
+        AND ($location IS NULL OR l.code = $location)
+      ORDER BY p.sku, l.code
+    parameters:
+      - { name: location, logicalType: text }
+  - id: 01a10134-cd63-79e8-8db2-dcf6a19b2442  # inv-q-on-hand-at
+    name: On hand at location
+    sql: |
+      SELECT coalesce(sum(quantity), 0) AS on_hand
+      FROM stock_movements
+      WHERE product_id = $product_id AND location_id = $location_id
+    parameters:
+      - { name: product_id, logicalType: integer, required: true }
+      - { name: location_id, logicalType: integer, required: true }
+  - id: 01a10134-cd4b-774a-a96e-6e92dd8f44fd  # inv-q-location-codes
+    name: Location codes
+    sql: SELECT code FROM locations ORDER BY code
+design:
+  version: 3
+  startPage: 01a10134-cd57-7ac0-b9d2-27340552fb5a
+  navigation:
+    - { id: 01a10134-cd57-7ac0-b9d2-27340552fb5a, label: Stock overview, kind: dashboard, targetId: 01a10134-cd6b-7bb0-9b65-5a09846f2e98 }  # inv-nav-dashboard
+    - { id: 01a10134-cd66-7eb0-b3ca-78934a7f4190, label: Products, kind: form, targetId: 01a10134-cd59-7af4-ac2e-249930a93769 }  # inv-nav-products
+    - { id: 01a10134-cd58-7538-b5e9-11125e560577, label: Stock movements, kind: form, targetId: 01a10134-cd53-705e-83c3-f4ae19ca9749 }  # inv-nav-movements
+    - { id: 01a10134-cd62-7c2a-b153-728ca23aa9a2, label: Transfers, kind: form, targetId: 01a10134-cd54-7816-b5b2-ac5a9b300c24 }  # inv-nav-transfers
+    - { id: 01a10134-cd51-788f-816b-863b04356b95, label: Reorder thresholds, kind: form, targetId: 01a10134-cd50-7ebb-8ee5-3a6839224611 }  # inv-nav-thresholds
+    - id: 01a10134-cd6c-77d1-b857-adca9626b141  # inv-nav-setup
+      label: Setup
+      kind: group
+      children:
+        - { id: 01a10134-cd5e-7789-88b2-b536c34b373a, label: Locations, kind: form, targetId: 01a10134-cd56-752d-a0c5-eea633fe29ea }  # inv-nav-locations
+        - { id: 01a10134-cd61-7754-96bb-23e3e97a80dd, label: Suppliers, kind: form, targetId: 01a10134-cd55-7f92-be12-75b98b32c03b }  # inv-nav-suppliers
+    - id: 01a10134-cd69-7bb2-8edb-582cc9408967  # inv-nav-reports
+      label: Reports
+      kind: group
+      children:
+        - { id: 01a10134-cd5c-7244-b3a6-a502acc80abc, label: Inventory valuation, kind: report, targetId: 01a10134-cd4d-70fe-b4a0-8707ca1475df }  # inv-nav-valuation
+  forms:
+    - id: 01a10134-cd59-7af4-ac2e-249930a93769  # inv-form-products
+      name: Products
+      source: { kind: table, table: products }
+      modes: [list]
+      listColumns: [sku, name, unit_cost, active]
+      detailFormId: 01a10134-cd65-7bd6-8b83-2862cc7ac79c
+      controls:
+        - { id: 01a10134-cd00-7de3-a28e-11e93ec66426, kind: text, label: SKU, binding: { column: sku }, placement: { column: 1, row: 1, columnSpan: 3 } }
+        - { id: 01a10134-cd01-713e-bc9e-b2a149011bd7, kind: text, label: Name, binding: { column: name }, placement: { column: 4, row: 1, columnSpan: 5 } }
+        - { id: 01a10134-cd02-7585-ab9b-70ebd3c66d3b, kind: decimal, label: Unit cost, binding: { column: unit_cost }, format: "$#,##0.00", placement: { column: 9, row: 1, columnSpan: 2 } }
+        - { id: 01a10134-cd03-7f20-8189-27f9ae954e06, kind: boolean, label: Active, binding: { column: active }, placement: { column: 11, row: 1, columnSpan: 2 } }
+    - id: 01a10134-cd65-7bd6-8b83-2862cc7ac79c  # inv-form-product
+      name: Product
+      source: { kind: table, table: products }
+      modes: [detail, create, edit]
+      controls:
+        - id: 01a10134-cd04-7b8e-aa3b-35839bc39d7e
+          kind: text
+          label: SKU
+          binding: { column: sku }
+          validation: { required: true, pattern: "[A-Z0-9-]{3,}", message: "Use at least three capital letters, digits, or dashes." }
+          placement: { column: 1, row: 1, columnSpan: 3 }
+        - { id: 01a10134-cd05-7ed5-a5e4-de23c60c4def, kind: text, label: Name, binding: { column: name }, validation: { required: true }, placement: { column: 4, row: 1, columnSpan: 6 } }
+        - id: 01a10134-cd06-72ef-a351-b8e31028d24e
+          kind: image
+          label: Product photo
+          assetId: "{{asset:product-placeholder.png}}"
+          placement: { column: 10, row: 1, columnSpan: 3, rowSpan: 2 }
+        - id: 01a10134-cd07-79a2-be07-141aee71eabc
+          kind: relationship
+          label: Supplier
+          binding: { column: supplier_id }
+          relationship: { table: suppliers, valueColumn: id, displayColumn: name }
+          placement: { column: 1, row: 2, columnSpan: 5 }
+        - id: 01a10134-cd08-73df-92fa-28d07f588074
+          kind: decimal
+          label: Unit cost
+          binding: { column: unit_cost }
+          format: "$#,##0.00"
+          validation: { required: true, min: 0, message: Unit cost cannot be negative. }
+          placement: { column: 6, row: 2, columnSpan: 2 }
+        - { id: 01a10134-cd09-77a0-ad2c-2f870af53566, kind: text, label: Unit, binding: { column: unit }, defaultValue: "'each'", placement: { column: 8, row: 2, columnSpan: 2 } }
+        - { id: 01a10134-cd0a-7650-bbf1-96332c8694f3, kind: boolean, label: Active, binding: { column: active }, defaultValue: "1", placement: { column: 1, row: 3, columnSpan: 2 } }
+        - id: 01a10134-cd0b-7a44-9a72-30c5e8b74025
+          kind: relatedList
+          label: Movements
+          related: { table: stock_movements, foreignKey: product_id, parentColumn: id, columns: [moved_on, kind, quantity, reference], formId: 01a10134-cd5f-7b1e-a53f-df537ddc7e97 }
+          placement: { column: 1, row: 4, columnSpan: 12 }
+        - id: 01a10134-cd0c-72e6-8cd5-f24053ef24e8
+          kind: relatedList
+          label: Reorder thresholds
+          related: { table: reorder_thresholds, foreignKey: product_id, parentColumn: id, columns: [location_id, min_quantity, reorder_quantity], formId: 01a10134-cd52-7da9-b6ab-6e37495703d1 }
+          placement: { column: 1, row: 5, columnSpan: 12 }
+    - id: 01a10134-cd53-705e-83c3-f4ae19ca9749  # inv-form-movements
+      name: Stock movements
+      source: { kind: table, table: stock_movements }
+      modes: [list]
+      listColumns: [moved_on, kind, quantity, reference]
+      detailFormId: 01a10134-cd5f-7b1e-a53f-df537ddc7e97
+    - id: 01a10134-cd5f-7b1e-a53f-df537ddc7e97  # inv-form-movement
+      name: Movement
+      source: { kind: table, table: stock_movements }
+      modes: [detail, create, edit]
+      controls:
+        - id: 01a10134-cd0d-7007-8e53-d9ddb50dc505
+          kind: relationship
+          label: Product
+          binding: { column: product_id }
+          validation: { required: true }
+          relationship: { table: products, valueColumn: id, displayColumn: name }
+          placement: { column: 1, row: 1, columnSpan: 6 }
+        - id: 01a10134-cd0e-7a8e-bc8f-ce617a6debe6
+          kind: relationship
+          label: Location
+          binding: { column: location_id }
+          validation: { required: true }
+          relationship: { table: locations, valueColumn: id, displayColumn: name }
+          placement: { column: 7, row: 1, columnSpan: 6 }
+        - id: 01a10134-cd0f-7707-a6ab-c018680073f3
+          kind: select
+          label: Kind
+          binding: { column: kind }
+          validation: { required: true }
+          defaultValue: "'receipt'"
+          options:
+            - { value: receipt, label: Receipt }
+            - { value: issue, label: Issue }
+            - { value: adjustment, label: Adjustment }
+            - { value: transfer_in, label: Transfer in }
+            - { value: transfer_out, label: Transfer out }
+          placement: { column: 1, row: 2, columnSpan: 4 }
+        - id: 01a10134-cd10-7b89-b41f-6c31642aa8d3
+          kind: number
+          label: Quantity
+          binding: { column: quantity }
+          validation: { required: true, expression: "value <> 0 and (record.kind <> 'issue' or value < 0)", message: Use a non-zero quantity; issues are negative. }
+          placement: { column: 5, row: 2, columnSpan: 4 }
+        - { id: 01a10134-cd11-7427-b3d9-17b3e067ccc1, kind: date, label: Date, binding: { column: moved_on }, defaultValue: today(), placement: { column: 9, row: 2, columnSpan: 4 } }
+        - { id: 01a10134-cd12-70bb-aa3b-99a9c05a5700, kind: text, label: Reference, binding: { column: reference }, placement: { column: 1, row: 3, columnSpan: 4 } }
+        - { id: 01a10134-cd13-7c31-98e4-6cd797da9a97, kind: text, label: Note, binding: { column: note }, placement: { column: 5, row: 3, columnSpan: 8 } }
+    - id: 01a10134-cd54-7816-b5b2-ac5a9b300c24  # inv-form-transfers
+      name: Transfers
+      source: { kind: table, table: transfers }
+      modes: [list]
+      listColumns: [id, quantity, status, requested_on]
+      detailFormId: 01a10134-cd5a-7210-a35b-3e6a0f759a3f
+    - id: 01a10134-cd5a-7210-a35b-3e6a0f759a3f  # inv-form-transfer
+      name: Transfer
+      source: { kind: table, table: transfers }
+      modes: [detail, create, edit]
+      controls:
+        - id: 01a10134-cd14-7562-b96e-2c56dd73e571
+          kind: relationship
+          label: Product
+          binding: { column: product_id }
+          validation: { required: true }
+          relationship: { table: products, valueColumn: id, displayColumn: name }
+          placement: { column: 1, row: 1, columnSpan: 6 }
+        - id: 01a10134-cd15-75eb-a534-b942e4002cc3
+          kind: number
+          label: Quantity
+          binding: { column: quantity }
+          validation: { required: true, min: 1 }
+          placement: { column: 7, row: 1, columnSpan: 3 }
+        - { id: 01a10134-cd16-7fe1-b372-05f6052dc3c5, kind: text, label: Status, binding: { column: status }, readOnly: true, defaultValue: "'draft'", placement: { column: 10, row: 1, columnSpan: 3 } }
+        - id: 01a10134-cd17-7d29-8b25-3453cf9c92c4
+          kind: relationship
+          label: From location
+          binding: { column: from_location_id }
+          validation: { required: true }
+          relationship: { table: locations, valueColumn: id, displayColumn: name }
+          placement: { column: 1, row: 2, columnSpan: 6 }
+        - id: 01a10134-cd18-7cd7-96e1-ab7a0249ad6b
+          kind: relationship
+          label: To location
+          binding: { column: to_location_id }
+          validation: { required: true }
+          relationship: { table: locations, valueColumn: id, displayColumn: name }
+          placement: { column: 7, row: 2, columnSpan: 6 }
+        - { id: 01a10134-cd19-7616-885f-601702137589, kind: date, label: Requested on, binding: { column: requested_on }, defaultValue: today(), placement: { column: 1, row: 3, columnSpan: 4 } }
+        - { id: 01a10134-cd1a-700f-9a95-4e148a9650ff, kind: date, label: Posted on, binding: { column: posted_on }, readOnly: true, placement: { column: 5, row: 3, columnSpan: 4 } }
+        - id: 01a10134-cd1b-7ce8-822e-412f8db603f4
+          kind: button
+          label: Post transfer
+          actionId: 01a10134-cd46-7b77-a46c-600c139722f8
+          enabledWhen: "record.status = 'draft'"
+          placement: { column: 9, row: 3, columnSpan: 4 }
+    - id: 01a10134-cd50-7ebb-8ee5-3a6839224611  # inv-form-thresholds
+      name: Reorder thresholds
+      source: { kind: table, table: reorder_thresholds }
+      modes: [list]
+      listColumns: [product_id, location_id, min_quantity, reorder_quantity]
+      detailFormId: 01a10134-cd52-7da9-b6ab-6e37495703d1
+    - id: 01a10134-cd52-7da9-b6ab-6e37495703d1  # inv-form-threshold
+      name: Reorder threshold
+      source: { kind: table, table: reorder_thresholds }
+      modes: [detail, create, edit]
+      controls:
+        - id: 01a10134-cd1c-7be2-8fd0-7ff303f7f3a2
+          kind: relationship
+          label: Product
+          binding: { column: product_id }
+          validation: { required: true }
+          relationship: { table: products, valueColumn: id, displayColumn: name }
+          placement: { column: 1, row: 1, columnSpan: 6 }
+        - id: 01a10134-cd1d-7543-a039-c3ea1e94cd1f
+          kind: relationship
+          label: Location
+          binding: { column: location_id }
+          validation: { required: true }
+          relationship: { table: locations, valueColumn: id, displayColumn: name }
+          placement: { column: 7, row: 1, columnSpan: 6 }
+        - { id: 01a10134-cd1e-792e-849b-71c07cbcece1, kind: number, label: Minimum quantity, binding: { column: min_quantity }, validation: { required: true, min: 0 }, placement: { column: 1, row: 2, columnSpan: 6 } }
+        - { id: 01a10134-cd1f-77a7-a721-66483865b3db, kind: number, label: Reorder quantity, binding: { column: reorder_quantity }, defaultValue: "0", validation: { required: true, min: 0 }, placement: { column: 7, row: 2, columnSpan: 6 } }
+    - id: 01a10134-cd56-752d-a0c5-eea633fe29ea  # inv-form-locations
+      name: Locations
+      source: { kind: table, table: locations }
+      modes: [list]
+      listColumns: [code, name, kind]
+      detailFormId: 01a10134-cd5b-7460-9c78-4d065babb77e
+    - id: 01a10134-cd5b-7460-9c78-4d065babb77e  # inv-form-location
+      name: Location
+      source: { kind: table, table: locations }
+      modes: [detail, create, edit]
+      controls:
+        - { id: 01a10134-cd20-717a-bcbf-af7385534160, kind: text, label: Code, binding: { column: code }, validation: { required: true }, placement: { column: 1, row: 1, columnSpan: 3 } }
+        - { id: 01a10134-cd21-701c-9362-97fac69747c3, kind: text, label: Name, binding: { column: name }, validation: { required: true }, placement: { column: 4, row: 1, columnSpan: 6 } }
+        - id: 01a10134-cd22-7b06-ba00-71e5830ed2d1
+          kind: select
+          label: Kind
+          binding: { column: kind }
+          defaultValue: "'warehouse'"
+          options:
+            - { value: warehouse, label: Warehouse }
+            - { value: store, label: Store }
+            - { value: transit, label: Transit }
+          placement: { column: 10, row: 1, columnSpan: 3 }
+    - id: 01a10134-cd55-7f92-be12-75b98b32c03b  # inv-form-suppliers
+      name: Suppliers
+      source: { kind: table, table: suppliers }
+      modes: [list]
+      listColumns: [name, email, lead_time_days]
+      detailFormId: 01a10134-cd5d-7a4f-a4ac-c563baef8657
+    - id: 01a10134-cd5d-7a4f-a4ac-c563baef8657  # inv-form-supplier
+      name: Supplier
+      source: { kind: table, table: suppliers }
+      modes: [detail, create, edit]
+      controls:
+        - { id: 01a10134-cd23-7582-a80e-840343651909, kind: text, label: Name, binding: { column: name }, validation: { required: true }, placement: { column: 1, row: 1, columnSpan: 6 } }
+        - id: 01a10134-cd24-7f09-98b3-88975545927f
+          kind: text
+          label: Email
+          binding: { column: email }
+          validation: { required: false, pattern: "[^@\\s]+@[^@\\s]+\\.[^@\\s]+", message: Enter an email address like orders@example.com. }
+          placement: { column: 7, row: 1, columnSpan: 6 }
+        - { id: 01a10134-cd25-708b-a1c9-05ee4cef9b36, kind: text, label: Phone, binding: { column: phone }, placement: { column: 1, row: 2, columnSpan: 6 } }
+        - { id: 01a10134-cd26-7777-8348-e594adc98333, kind: number, label: Lead time (days), binding: { column: lead_time_days }, defaultValue: "7", validation: { required: true, min: 0 }, placement: { column: 7, row: 2, columnSpan: 6 } }
+        - id: 01a10134-cd27-70bf-ae93-0b8cdb551be7
+          kind: relatedList
+          label: Products
+          related: { table: products, foreignKey: supplier_id, parentColumn: id, columns: [sku, name, unit_cost] }
+          placement: { column: 1, row: 3, columnSpan: 12 }
+reports:
+  - id: 01a10134-cd4d-70fe-b4a0-8707ca1475df  # inv-report-valuation
+    name: Inventory valuation
+    datasetQueryId: 01a10134-cd67-77f9-8459-c11337e9e44e
+    page:
+      size: A4
+      orientation: portrait
+      margins: { top: 36, right: 36, bottom: 36, left: 36 }
+    bands:
+      reportHeader:
+        height: 40
+        components:
+          - { id: 01a10134-cd28-76e9-8ccb-619a6c8316d1, kind: image, x: 0, y: 0, w: 32, h: 32, assetId: "{{asset:product-placeholder.png}}" }
+          - { id: 01a10134-cd29-77d2-9530-015590b1e0a1, kind: staticText, x: 40, y: 4, w: 483, h: 24, text: Inventory valuation, style: { fontSize: 16, bold: true } }
+      pageHeader:
+        height: 18
+        components:
+          - { id: 01a10134-cd2a-7ba9-bf5e-a1767fad161a, kind: staticText, x: 0, y: 0, w: 80, h: 14, text: SKU, style: { bold: true } }
+          - { id: 01a10134-cd2b-7f89-a76e-05d8f754bd86, kind: staticText, x: 80, y: 0, w: 200, h: 14, text: Product, style: { bold: true } }
+          - { id: 01a10134-cd2c-78e6-a811-11976dc797d6, kind: staticText, x: 280, y: 0, w: 70, h: 14, text: On hand, style: { bold: true, align: right } }
+          - { id: 01a10134-cd2d-76c1-b543-b5fda7565cbd, kind: staticText, x: 350, y: 0, w: 80, h: 14, text: Unit cost, style: { bold: true, align: right } }
+          - { id: 01a10134-cd2e-7737-987d-c99d7f89c720, kind: staticText, x: 430, y: 0, w: 93, h: 14, text: Value, style: { bold: true, align: right } }
+      groups:
+        - id: 01a10134-cd2f-710c-80cf-04dd14745efd
+          groupBy: record.supplier
+          header:
+            height: 22
+            keepTogether: true
+            components:
+              - { id: 01a10134-cd30-7147-85de-c38d1e6d8dc9, kind: field, x: 0, y: 4, w: 523, h: 16, expression: record.supplier, style: { fontSize: 12, bold: true } }
+          footer:
+            height: 20
+            components:
+              - { id: 01a10134-cd31-71e5-aa05-f0c1cd7c36f1, kind: calculated, x: 280, y: 2, w: 243, h: 14, expression: "'Subtotal ' & format(sum(rows.value), '#,##0.00')", style: { align: right } }
+      detail:
+        height: 16
+        components:
+          - { id: 01a10134-cd32-785a-ab18-a29bf729f388, kind: field, x: 0, y: 0, w: 80, h: 14, expression: record.sku }
+          - { id: 01a10134-cd33-7af7-879c-edfee7c93b6a, kind: field, x: 80, y: 0, w: 200, h: 14, expression: record.product }
+          - { id: 01a10134-cd34-7118-962b-115f8479c833, kind: field, x: 280, y: 0, w: 70, h: 14, expression: record.on_hand, format: "#,##0", style: { align: right } }
+          - { id: 01a10134-cd35-7243-b385-8cf1bc7a8800, kind: field, x: 350, y: 0, w: 80, h: 14, expression: record.unit_cost, format: "#,##0.00", style: { align: right } }
+          - { id: 01a10134-cd36-71e3-ac0e-6d9aed8a8821, kind: field, x: 430, y: 0, w: 93, h: 14, expression: record.value, format: "#,##0.00", style: { align: right } }
+      pageFooter:
+        height: 18
+        components:
+          - { id: 01a10134-cd37-762b-856a-7dbf000eb4ab, kind: calculated, x: 0, y: 2, w: 523, h: 14, expression: "'Page ' & page & ' of ' & pages", style: { align: center } }
+      reportFooter:
+        height: 24
+        components:
+          - { id: 01a10134-cd38-71ce-b808-ed4ae34c9a86, kind: calculated, x: 0, y: 4, w: 523, h: 16, expression: "'Total inventory value: ' & format(sum(rows.value), '#,##0.00')", style: { bold: true, align: right } }
+dashboards:
+  - id: 01a10134-cd6b-7bb0-9b65-5a09846f2e98  # inv-dash-stock
+    name: Stock overview
+    filters:
+      - { id: 01a10134-cd4e-7fe6-957f-0fa091463f52, name: Location, param: location, logicalType: text, control: select, optionsQueryId: 01a10134-cd4b-774a-a96e-6e92dd8f44fd }  # inv-filter-location
+    components:
+      - { id: 01a10134-cd39-78e3-a497-ff78d2f7c846, kind: filter, title: Location, filterId: 01a10134-cd4e-7fe6-957f-0fa091463f52, placement: { column: 1, row: 1, columnSpan: 4 } }
+      - { id: 01a10134-cd3a-7d50-9bb9-eb0961e5e8d7, kind: kpi, title: Low-stock items, queryId: 01a10134-cd68-7ccb-9efa-9ddbf5057e7c, expression: count(rows.sku), format: "#,##0", placement: { column: 1, row: 2, columnSpan: 4 } }
+      - { id: 01a10134-cd3b-7d66-bd36-4a1dff84e200, kind: kpi, title: Inventory value, queryId: 01a10134-cd60-77c7-bbdf-1f10ecd8ba9f, expression: sum(rows.value), format: "$#,##0.00", placement: { column: 5, row: 2, columnSpan: 4 } }
+      - { id: 01a10134-cd3c-7ba2-b938-5e5e0bfca85e, kind: kpi, title: Units on hand, queryId: 01a10134-cd60-77c7-bbdf-1f10ecd8ba9f, expression: sum(rows.units), format: "#,##0", placement: { column: 9, row: 2, columnSpan: 4 } }
+      - id: 01a10134-cd3d-72df-b355-c7fcb03492c6
+        kind: table
+        title: Below reorder threshold
+        queryId: 01a10134-cd68-7ccb-9efa-9ddbf5057e7c
+        columns: [sku, product, location, on_hand, min_quantity, reorder_quantity]
+        pageSize: 10
+        placement: { column: 1, row: 3, columnSpan: 7, rowSpan: 2 }
+      - { id: 01a10134-cd3e-759e-96f5-601122b938a9, kind: chart, title: Units by location, queryId: 01a10134-cd60-77c7-bbdf-1f10ecd8ba9f, chartType: bar, x: location, y: [units], placement: { column: 8, row: 3, columnSpan: 5, rowSpan: 2 } }
+actions:
+  - id: 01a10134-cd46-7b77-a46c-600c139722f8  # inv-action-post-transfer
+    name: Post transfer
+    description: Moves stock between locations as one transaction (transfer in, transfer out, posted status).
+    onError: rollback
+    steps:
+      - id: 01a10134-cd3f-7a6b-a54d-17d8c8653365
+        kind: runQuery
+        queryId: 01a10134-cd63-79e8-8db2-dcf6a19b2442
+        params:
+          product_id: record.product_id
+          location_id: record.from_location_id
+        storeAs: source
+      - id: 01a10134-cd40-7aa6-b5d2-242adb54a91b
+        kind: condition
+        when: "record.status = 'draft' and coalesce(sum(results.source.on_hand), 0) >= record.quantity"
+        then:
+          - id: 01a10134-cd41-7ac4-bbb6-8dd0fc72c175
+            kind: createRecord
+            table: stock_movements
+            values:
+              product_id: record.product_id
+              location_id: record.to_location_id
+              quantity: record.quantity
+              kind: "'transfer_in'"
+              reference: "'TR-' & record.id"
+              moved_on: today()
+          - id: 01a10134-cd42-7e8b-8071-4a7f64619b24
+            kind: createRecord
+            table: stock_movements
+            values:
+              product_id: record.product_id
+              location_id: record.from_location_id
+              quantity: -record.quantity
+              kind: "'transfer_out'"
+              reference: "'TR-' & record.id"
+              moved_on: today()
+          - id: 01a10134-cd43-7022-96c8-ee193bba15e2
+            kind: updateRecord
+            table: transfers
+            match:
+              id: record.id
+              status: "'draft'"
+            values:
+              status: "'posted'"
+              posted_on: today()
+          - id: 01a10134-cd44-73c8-9202-c84be7392a44
+            kind: message
+            text: "'Transfer posted.'"
+        else:
+          - id: 01a10134-cd45-7602-ba2a-62947024fec6
+            kind: fail
+            message: "if(record.status <> 'draft', 'This transfer is already posted.', 'Not enough stock at the source location: ' & coalesce(sum(results.source.on_hand), 0) & ' on hand.')"

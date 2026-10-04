@@ -1,6 +1,11 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 630" width="1200" height="630">
-  <rect width="1200" height="630" fill="#0b1220"/>
-  <rect width="1200" height="630" fill="none"/>
-  <text x="600" y="300" font-family="sans-serif" font-size="72" font-weight="700" text-anchor="middle" fill="#ffffff">Web Template</text>
-  <text x="600" y="370" font-family="sans-serif" font-size="32" text-anchor="middle" fill="#9dcaff">Docusaurus + Supabase auth</text>
+  <title>ixtable: build the business app you need</title>
+  <rect width="1200" height="630" fill="#202126"/>
+  <g transform="translate(540 150) scale(3.75)">
+    <rect width="32" height="32" rx="8" fill="#e8eee6"/>
+    <path d="M10.25 14.5v8.25M14.75 14.5l7 8.25M21.75 14.5l-7 8.25" fill="none" stroke="#253126" stroke-width="3" stroke-linecap="round"/>
+    <circle cx="10.25" cy="9.5" r="1.9" fill="#253126"/>
+  </g>
+  <text x="600" y="380" font-family="sans-serif" font-size="72" font-weight="700" text-anchor="middle" fill="#ffffff">ixtable</text>
+  <text x="600" y="445" font-family="sans-serif" font-size="32" text-anchor="middle" fill="#c8d2c4">Build the business app you need</text>
 </svg>

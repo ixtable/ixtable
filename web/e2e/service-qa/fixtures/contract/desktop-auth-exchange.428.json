@@ -1,0 +1,14 @@
+{
+  "function": "desktop-auth-exchange",
+  "status": 428,
+  "request": {
+    "state": "[redacted]",
+    "codeVerifier": "[redacted]"
+  },
+  "response": {
+    "error": {
+      "code": "PENDING",
+      "message": "Waiting for approval in the browser"
+    }
+  }
+}

@@ -1,0 +1,65 @@
+{
+  "function": "publish-checkpoint",
+  "status": 200,
+  "request": {
+    "appId": "d5c5216b-2a16-48b4-86c4-488a9074a42d",
+    "uploadId": "0d70d41f-620c-4258-bf96-389cf330d8fc",
+    "version": "1.0.0",
+    "releaseNotes": "First release",
+    "minRuntimeVersion": "0.1.0",
+    "migrations": [
+      {
+        "id": "m-0001",
+        "name": "Create customers"
+      }
+    ],
+    "security": {
+      "store": "sqlite",
+      "tls": true,
+      "concurrencyPoliciesResolved": true,
+      "credentialMode": null,
+      "sslmode": null,
+      "insecureOverrideConfirmed": false,
+      "sharedCredentialWarning": false,
+      "entityPoliciesResolved": true,
+      "unresolvedEntities": []
+    },
+    "expectedHeadVersionId": null
+  },
+  "response": {
+    "version": {
+      "id": "0d70d41f-620c-4258-bf96-389cf330d8fc",
+      "app_id": "d5c5216b-2a16-48b4-86c4-488a9074a42d",
+      "version": "1.0.0",
+      "developer_id": "b55a0145-e352-4790-a67c-b55fec436618",
+      "created_at": "2026-10-03T23:14:30.898729+00:00",
+      "archive_sha256": "096a77d5cadbcb25219a62f0d165a3f8909ed988f71ccfdc0f5aace8c3f54a01",
+      "archive_size": 4096,
+      "storage_path": "apps/d5c5216b-2a16-48b4-86c4-488a9074a42d/versions/0d70d41f-620c-4258-bf96-389cf330d8fc.ixt",
+      "migrations": [
+        {
+          "id": "m-0001",
+          "name": "Create customers"
+        }
+      ],
+      "min_runtime_version": "0.1.0",
+      "security": {
+        "tls": true,
+        "store": "sqlite",
+        "sslmode": null,
+        "credentialMode": null,
+        "unresolvedEntities": [],
+        "insecureTransportConfirmed": false,
+        "concurrencyPoliciesResolved": true,
+        "insecureTransportConfirmedAt": null,
+        "sharedCredentialAcknowledged": false
+      },
+      "release_notes": "First release",
+      "status": "published",
+      "parent_version_id": null,
+      "resolution": null,
+      "published_at": "2026-10-03T23:14:30.898729+00:00",
+      "withdrawn_at": null
+    }
+  }
+}

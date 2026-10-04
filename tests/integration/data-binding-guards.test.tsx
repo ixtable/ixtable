@@ -288,3 +288,61 @@ it("offers Record id only for table-sourced embedded forms", async () => {
     expect(dashboard.components[0].recordId ?? null).toBeNull();
   }, LONG);
 }, 120_000);
+
+it("keeps dashboard-embedded forms inside the form's row filter", async () => {
+  const user = await renderNewDocument();
+  await seedParts();
+  const formId = id();
+  await define(user, (config) => {
+    config.design.forms.push({
+      id: formId,
+      name: "Part",
+      source: { kind: "table", table: "parts" },
+      filter: "record.bin = 'B'",
+      modes: ["detail", "edit"],
+      controls: [field("Part name", "name"), field("Bin", "bin")],
+    });
+    config.dashboards.push({
+      id: id(),
+      name: "Bin B",
+      filters: [{ id: id(), name: "Part id", param: "part", control: "number", default: 3 }],
+      components: [
+        {
+          id: id(),
+          kind: "form",
+          title: "Pinned",
+          formId,
+          mode: "edit",
+          recordId: "params.part",
+          placement: at(1, 1),
+        },
+        { id: id(), kind: "form", title: "First", formId, mode: "detail", placement: at(7, 1) },
+      ],
+    });
+  });
+  await user.click(screen.getByRole("button", { name: "Dashboards" }));
+  await user.click(await screen.findByRole("tab", { name: "View" }, LONG));
+  const pinned = await screen.findByRole("region", { name: "Pinned" }, LONG);
+  await within(pinned).findByText("This record is outside the form's filter.", {}, LONG);
+  expect(within(pinned).queryByRole("form")).toBeNull();
+  const first = await screen.findByRole("region", { name: "First" }, LONG);
+  await waitFor(
+    () => expect(within(first).getByRole("textbox", { name: "Part name" })).toHaveValue("Part 41"),
+    LONG,
+  );
+
+  const part = screen.getByRole("spinbutton", { name: "Part id" });
+  await user.clear(part);
+  await user.type(part, "45");
+  const edit = await within(pinned).findByRole("form", { name: "Edit Part" }, LONG);
+  await waitFor(
+    () => expect(within(edit).getByRole("textbox", { name: "Part name" })).toHaveValue("Part 45"),
+    LONG,
+  );
+  const bin = within(edit).getByRole("textbox", { name: "Bin" });
+  await user.clear(bin);
+  await user.type(bin, "A");
+  await user.click(within(edit).getByRole("button", { name: "Save" }));
+  await within(pinned).findByText("This record is outside the form's filter.", {}, LONG);
+  expect(within(first).getByRole("textbox", { name: "Part name" })).toHaveValue("Part 41");
+}, 120_000);

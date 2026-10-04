@@ -4,7 +4,7 @@ import { DATABASE_CHANGED_EVENT } from "../automation/context";
 import { evaluate } from "../expr";
 import { useDocumentConfig } from "../lib/config-store";
 import { RECORDS_CHANGED_EVENT } from "../lib/records";
-import { firstRecordId, loadRecord, sourceParams } from "../runtime/data";
+import { firstRecordId, loadRecord, passesFilter, sourceParams } from "../runtime/data";
 import { FormRenderer } from "../runtime/FormRenderer";
 import { useRuntimeNavigation } from "../runtime/navigation";
 import { resolveForm } from "../runtime/registry";
@@ -12,12 +12,14 @@ import { embeddableModes } from "./model";
 import type { DashboardComponent } from "./types";
 
 const GONE = Symbol("gone");
+const OUTSIDE = Symbol("outside");
 
 type Binding =
   | { status: "loading" }
   | { status: "ready"; recordId?: unknown }
   | { status: "empty" }
   | { status: "gone" }
+  | { status: "outside" }
   | { status: "error"; message: string };
 
 /**
@@ -26,6 +28,8 @@ type Binding =
  * and `app`), or the first row of the form's source when it is blank; that row
  * is looked up again after record writes, but only while the form has no unsaved
  * edits; a shown table record that was deleted gets a message instead of a switch.
+ * The form's row filter holds here too: a blank `recordId` opens the first row that
+ * passes it, and a record named by `recordId` that does not pass it is not shown.
  */
 export function EmbeddedForm({
   component,
@@ -42,6 +46,7 @@ export function EmbeddedForm({
   const supported = !form || embeddableModes(form).includes(mode);
   // Query-sourced forms take a whole row, so a stored key expression is ignored.
   const expression = form?.source?.kind === "table" ? (component.recordId?.trim() ?? "") : "";
+  const filtered = !!form?.filter?.trim();
   const [binding, setBinding] = useState<Binding>({ status: needsRecord ? "loading" : "ready" });
   const [version, setVersion] = useState(0);
   const dirty = useRef(false);
@@ -59,7 +64,8 @@ export function EmbeddedForm({
   const stableParams = useMemo(() => JSON.parse(paramsKey) as Record<string, unknown>, [paramsKey]);
 
   useEffect(() => {
-    if (!needsRecord || expression) return;
+    // A named record only needs a recheck when a write can move it out of the row filter.
+    if (!needsRecord || (expression && !filtered)) return;
     const bump = () => {
       // Pin the record while it has unsaved edits; re-resolve once it is clean.
       if (dirty.current) stale.current = true;
@@ -71,7 +77,7 @@ export function EmbeddedForm({
       window.removeEventListener(RECORDS_CHANGED_EVENT, bump);
       window.removeEventListener(DATABASE_CHANGED_EVENT, bump);
     };
-  }, [needsRecord, expression]);
+  }, [needsRecord, expression, filtered]);
 
   // New filter values pick a new first row; a deleted record only matters for the same values.
   const shownFor = useRef(stableParams);
@@ -84,6 +90,7 @@ export function EmbeddedForm({
       shown.current = undefined;
     }
     const table = form.source?.kind === "table" ? form.source.table : null;
+    const scope = { app, params: stableParams };
     const previous = expression ? undefined : shown.current;
     Promise.resolve()
       .then(async () => {
@@ -93,13 +100,20 @@ export function EmbeddedForm({
       .then((exists) => {
         if (!exists) return GONE;
         return expression
-          ? evaluate(expression, { params: stableParams, app })
-          : firstRecordId(form, sourceParams(form, { app, params: stableParams }));
+          ? evaluate(expression, scope)
+          : firstRecordId(form, sourceParams(form, scope), scope);
+      })
+      .then(async (recordId) => {
+        // A record id expression can name any row: keep the form's row filter.
+        if (!expression || !table || !filtered || recordId == null || recordId === "")
+          return recordId;
+        const hit = await loadRecord(table, recordId);
+        return hit && !passesFilter(form, hit.record, scope) ? OUTSIDE : recordId;
       })
       .then((recordId) => {
         if (!live) return;
-        if (recordId === GONE) {
-          setBinding({ status: "gone" });
+        if (recordId === GONE || recordId === OUTSIDE) {
+          setBinding({ status: recordId === GONE ? "gone" : "outside" });
           return;
         }
         if (!expression) shown.current = recordId ?? undefined;
@@ -117,7 +131,7 @@ export function EmbeddedForm({
     return () => {
       live = false;
     };
-  }, [form, needsRecord, supported, expression, stableParams, app, version]);
+  }, [form, needsRecord, supported, expression, filtered, stableParams, app, version]);
 
   if (!form)
     return (
@@ -150,6 +164,12 @@ export function EmbeddedForm({
           >
             Show first record
           </button>
+        </p>
+      );
+    case "outside":
+      return (
+        <p className="dash-error" role="alert">
+          This record is outside the form's filter.
         </p>
       );
     case "error":

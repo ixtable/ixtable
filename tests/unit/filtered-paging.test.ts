@@ -18,7 +18,11 @@ vi.mock("../../src/lib/api", () => ({
       limit: args.limit,
     };
   },
-  inspectTable: vi.fn(),
+  inspectTable: async (name: string) => ({
+    name,
+    columns: [{ name: "n", declaredType: "INTEGER", primaryKeyPosition: 1 }],
+    foreignKeys: [],
+  }),
   readTablePage: async (_table: string, options: { offset: number; limit: number }) => {
     reads.push({ offset: options.offset, limit: options.limit });
     const count = Math.max(0, Math.min(options.limit, size - options.offset));
@@ -37,7 +41,9 @@ vi.mock("../../src/lib/api", () => ({
   },
 }));
 
-const { invalidateRuntimeCache, loadPage } = await import("../../src/runtime/data");
+const { firstRecordId, invalidateRuntimeCache, loadPage, passesFilter } = await import(
+  "../../src/runtime/data"
+);
 
 const form = (filter: string) =>
   ({
@@ -125,5 +131,43 @@ describe("filtered query paging", () => {
     expect(page.rows).toHaveLength(10);
     expect(queryCalls).toHaveLength(1);
     expect(queryCalls[0]).toMatchObject({ offset: 40, limit: 10 });
+  });
+});
+
+describe("first record and row filter checks", () => {
+  it("opens the first row that passes the filter and stops scanning there", async () => {
+    size = 30_000;
+    await expect(firstRecordId(form(""))).resolves.toBe(0);
+    expect(reads).toEqual([{ offset: 0, limit: 1 }]);
+    reads.length = 0;
+    const later = form("record.n > app.min");
+    await expect(firstRecordId(later, {}, { app: { min: 1234 } })).resolves.toBe(1235);
+    expect(reads.map((r) => r.offset)).toEqual([0, 500, 1000]);
+    await expect(firstRecordId(later, {}, { app: { min: 29_990 } })).resolves.toBe(29_991);
+    await expect(firstRecordId(later, {}, { app: { min: 99_999 } })).resolves.toBeNull();
+  });
+
+  it("returns the whole first passing row of a query source", async () => {
+    size = 10;
+    const query = {
+      id: "q",
+      name: "Numbers",
+      source: { kind: "query", queryId: "q1", params: {} },
+      filter: "record.n = params.pick",
+      controls: [],
+    } as unknown as DesignForm;
+    await expect(firstRecordId(query, { min: 1 }, { params: { pick: 7 } })).resolves.toEqual({
+      n: 7,
+    });
+    expect(queryCalls[0]).toMatchObject({ offset: 0, limit: 500 });
+  });
+
+  it("checks one record against the filter with the list scope", () => {
+    const capped = form("record.n < app.max and params.on");
+    expect(passesFilter(capped, { n: 3 }, { app: { max: 5 }, params: { on: true } })).toBe(true);
+    expect(passesFilter(capped, { n: 7 }, { app: { max: 5 }, params: { on: true } })).toBe(false);
+    expect(passesFilter(capped, { n: 3 }, { app: { max: 5 } })).toBe(false);
+    expect(passesFilter(form(""), { n: 7 })).toBe(true);
+    expect(() => passesFilter(form("record.n <"), { n: 1 })).toThrow();
   });
 });

@@ -9,6 +9,7 @@ import {
   pagedScan,
   type RowPredicate,
   rowFilter,
+  SCAN_CHUNK,
   type ScanResult,
   scanFiltered,
 } from "./conditions";
@@ -160,6 +161,24 @@ async function filteredPage(
   };
 }
 
+/** The scope a form's row filter sees; each row is added as `record` (see `rowFilter`). */
+const filterScope = (scope: Record<string, unknown>) => ({
+  form: {},
+  params: {},
+  parent: null,
+  ...scope,
+});
+
+/** Reads pages of a form's source (table page or saved query page), or null without one. */
+function sourceReader(form: DesignForm, bound: Record<string, unknown>) {
+  const source = form.source;
+  const queryId = source?.kind === "query" ? source.queryId : null;
+  const table = source?.kind === "table" ? source.table : null;
+  if (queryId) return (request: PageRequest) => queryPage(queryId, request, bound);
+  if (table) return (request: PageRequest) => tablePage(table, request);
+  return null;
+}
+
 /**
  * Reads one page of a form's source through DuckDB (table page or saved query). `bound`
  * are the query source's bound parameter values (see `sourceParams`). A form `filter`
@@ -171,15 +190,8 @@ export async function loadPage(
   scope: Record<string, unknown> = {},
   bound: Record<string, unknown> = {},
 ): Promise<RecordPage> {
-  const source = form.source;
-  const keep = rowFilter(form.filter, { form: {}, params: {}, parent: null, ...scope });
-  const queryId = source?.kind === "query" ? source.queryId : null;
-  const table = source?.kind === "table" ? source.table : null;
-  const read = queryId
-    ? (r: PageRequest) => queryPage(queryId, r, bound)
-    : table
-      ? (r: PageRequest) => tablePage(table, r)
-      : null;
+  const keep = rowFilter(form.filter, filterScope(scope));
+  const read = sourceReader(form, bound);
   let page: RecordPage;
   if (!read) page = { columns: [], rows: [], identities: null, total: 0 };
   else if (keep) {
@@ -188,6 +200,19 @@ export async function loadPage(
   } else page = await read(request);
   pages.set(pageKey(form, request, scope, bound), page);
   return page;
+}
+
+/**
+ * Whether `record` passes the form's row filter, evaluated with `scope` as in `loadPage`
+ * (true without a filter). A filter that does not parse throws.
+ */
+export function passesFilter(
+  form: DesignForm,
+  record: RecordValues,
+  scope: Record<string, unknown> = {},
+): boolean {
+  const keep = rowFilter(form.filter, filterScope(scope));
+  return !keep || keep(record);
 }
 
 /** Expression scope for a query source's parameter bindings. */
@@ -215,19 +240,32 @@ export function sourceParams(form: DesignForm, scope: SourceScope): Record<strin
 }
 
 /**
- * The record id of the first row of a form's source (the row itself for query
- * sources), or null when the source is empty. Used to open detail/edit views
- * that have no record of their own (design preview, dashboard-embedded forms).
+ * The record id of the first row of a form's source that passes its row filter (the row
+ * itself for query sources), or null when there is none. `bound` and `scope` are as for
+ * `loadPage`; the scan stops at the first match. Used to open detail/edit views that have
+ * no record of their own (design preview, dashboard-embedded forms).
  */
 export async function firstRecordId(
   form: DesignForm,
   bound: Record<string, unknown> = {},
+  scope: Record<string, unknown> = {},
 ): Promise<unknown> {
-  const page = await loadPage(form, { offset: 0, limit: 1, sorts: [], filters: [] }, {}, bound);
-  const record = page.rows[0];
-  if (!record) return null;
-  if (form.source?.kind !== "table" || !form.source.table || !page.identities) return record;
-  return recordIdFor(await tableSchema(form.source.table), record, page.identities[0]);
+  const read = sourceReader(form, bound);
+  if (!read) return null;
+  const keep = rowFilter(form.filter, filterScope(scope));
+  const scan = await scanFiltered(
+    async (offset, limit) => {
+      const chunk = await read({ offset, limit, sorts: [], filters: [] });
+      return chunk.rows.map((record, i) => ({ record, identity: chunk.identities?.[i] ?? null }));
+    },
+    (row) => !keep || keep(row.record),
+    1,
+    keep ? SCAN_CHUNK : 1,
+  );
+  const first = scan.matches[0];
+  if (!first) return null;
+  if (form.source?.kind !== "table" || !form.source.table || !first.identity) return first.record;
+  return recordIdFor(await tableSchema(form.source.table), first.record, first.identity);
 }
 
 /** Primary key columns in key order. */

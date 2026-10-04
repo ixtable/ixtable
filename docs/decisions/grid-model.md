@@ -87,7 +87,11 @@ same `Issue` shape, plus rendering warnings such as overlapping regions.
 - Dashboards place the real `FormRenderer`. A form component in detail or
   edit mode opens the record its `recordId` expression names (over the
   dashboard `params` and `app`), or the first row of the form's source when it
-  is blank. The editor offers only modes the form supports, and query sources
+  is blank. The form's row `filter` holds there too, with the same `app` and
+  `params` scope as its list: a blank `recordId` opens the first row that
+  passes it, and a named record that does not pass it (or no longer does after
+  a write) shows "This record is outside the form's filter." instead of the
+  form. The editor offers only modes the form supports, and query sources
   never offer create or edit. Filter values reach the form as `params`.
 
 ## Evidence

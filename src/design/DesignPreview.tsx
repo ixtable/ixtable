@@ -21,7 +21,10 @@ export function DesignPreview({ form, mode }: { form: DesignForm; mode: FormMode
     }
     setState("loading");
     Promise.resolve()
-      .then(() => firstRecordId(form, sourceParams(form, { app, params: {} })))
+      .then(() => {
+        const scope = { app, params: {} };
+        return firstRecordId(form, sourceParams(form, scope), scope);
+      })
       .then((id) => {
         if (!live) return;
         setRecordId(id);

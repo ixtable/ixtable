@@ -75,7 +75,8 @@ use `$name` placeholders. `queries::params` rewrites them to DuckDB
 parameters and binds the values, so values are never spliced into SQL text.
 
 Forms whose source is a saved query page through `run_saved_query_page`
-(`queries::page`). The saved SQL runs as a subquery
+(`queries::page`). Like `run_saved_query`, it first checks that a runtime role
+may read the query (`authz::check`). The saved SQL runs as a subquery
 (`SELECT * FROM (<sql>) AS ixt_page`), and the filters, sort, `LIMIT`/`OFFSET`
 wrap it in DuckDB, and a `count(*) OVER ()` column returns the exact total with
 the page, so the saved query runs once per page (a separate count runs only

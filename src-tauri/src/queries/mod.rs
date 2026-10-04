@@ -290,6 +290,7 @@ pub async fn run_saved_query_page(
     run_id: Option<String>,
 ) -> Result<QueryPage, AppError> {
     blocking(move || {
+        crate::authz::check(&window_label, "query", &id, crate::authz::Op::Read)?;
         let manager = crate::manager()?;
         let config = manager.config(&window_label)?;
         let query = find_saved(&config, &id)?;

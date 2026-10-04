@@ -19,7 +19,19 @@ function LogEntry({ log }: { log: MigrationLog }) {
   return (
     <li>
       <b>{log.name}</b> · {log.direction} · <span className="mode-badge">{log.status}</span>
-      {log.health.length > 0 && <span> · {log.health.join(", ")}</span>}
+      {log.startedAt && log.finishedAt && (
+        <span>
+          {" "}
+          · {log.startedAt} to {log.finishedAt}
+        </span>
+      )}
+      {log.health.length > 0 && (
+        <span>
+          {" "}
+          · Health {log.health.some((h) => h.startsWith("failed")) ? "failed" : "passed"}:{" "}
+          {log.health.join(", ")}
+        </span>
+      )}
       {log.error && <p className="schema-note severe">{log.error}</p>}
       {log.recovery && <p className="schema-note">Recovery: {log.recovery}</p>}
     </li>
@@ -40,6 +52,7 @@ export function MigrationsTab() {
   const [editing, setEditing] = useState<{ migration: Migration; isNew: boolean } | null>(null);
   const [run, setRun] = useState<MigrationRun | null>(null);
   const [dryRun, setDryRun] = useState<MigrationLog | null>(null);
+  const [afterIssues, setAfterIssues] = useState<Issue[] | null>(null);
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
   // Migrations run on the embedded SQLite store only; PostgreSQL schema is managed externally.
@@ -99,6 +112,9 @@ export function MigrationsTab() {
     setRun(result);
     markDirty();
     await reloadMetadata();
+    // Forms and queries bound to dropped or renamed columns show up right away.
+    const all = await validateDocument();
+    setAfterIssues(all.filter((i) => i.objectKind !== "migration"));
   };
   const statusOf = (id: string) => status.find((s) => s.id === id);
   const pendingCount = status.filter((s) => !s.applied && s.appliesToStore).length;
@@ -245,6 +261,19 @@ export function MigrationsTab() {
           <ul>
             {run.logs.map((log, i) => (
               <LogEntry key={i} log={log} />
+            ))}
+          </ul>
+        </section>
+      )}
+      {afterIssues && afterIssues.length > 0 && (
+        <section aria-label="Problems after migration">
+          <h3>Problems after migration</h3>
+          <p>The schema changed. These definitions need attention (also listed in Problems).</p>
+          <ul>
+            {afterIssues.map((i, n) => (
+              <li key={n} className={i.severity === "error" ? "schema-note severe" : "schema-note"}>
+                {i.message}
+              </li>
             ))}
           </ul>
         </section>

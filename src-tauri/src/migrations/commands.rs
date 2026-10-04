@@ -3,8 +3,8 @@
 //! They act on the embedded SQLite store only; a document whose datasource is
 //! PostgreSQL gets a `VALIDATION_ERROR` from dry run, apply, and rollback.
 use super::{
-    applied, history, pending_in, run_one, validate, Migration, MigrationLog, POSTGRES_DOCUMENT,
-    POSTGRES_UNSUPPORTED,
+    applied, history, pending_in, preflight, run_one, validate, Migration, MigrationLog,
+    POSTGRES_DOCUMENT, POSTGRES_UNSUPPORTED,
 };
 use crate::archive::DocumentConfig;
 use crate::checkpoints::CheckpointInfo;
@@ -126,12 +126,7 @@ pub fn preview_migration(
     } else {
         m.up.clone()
     };
-    let statements: Vec<String> = sql
-        .split(';')
-        .map(str::trim)
-        .filter(|s| !s.is_empty())
-        .map(|s| format!("{s};"))
-        .collect();
+    let statements = super::split::statements(&sql);
     let upper = sql.to_ascii_uppercase();
     let mut warnings = vec![];
     for (word, why) in [
@@ -264,12 +259,8 @@ pub fn apply_migrations(window_label: String) -> Result<MigrationRun, AppError> 
     let (done, pending) = with_store(&window_label, |s| {
         Ok((applied(s)?, pending_in(s, &config.migrations)?))
     })?;
-    if let Some(m) = config.migrations.iter().find(|m| {
-        done.iter()
-            .any(|d| d.0 == m.id && d.1.as_ref().is_some_and(|c| c != &m.checksum()))
-    }) {
-        return Err(AppError::new("VALIDATION_ERROR", format!("{} changed after it was applied; migrations are immutable, so add a new migration instead", m.name)));
-    }
+    preflight(&done, &config.migrations, &pending)
+        .map_err(|e| AppError::new("VALIDATION_ERROR", e))?;
     if pending.is_empty() {
         return Ok(MigrationRun {
             ok: true,

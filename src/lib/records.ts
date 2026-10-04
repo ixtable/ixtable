@@ -25,6 +25,40 @@ export interface RecordWriteMeta {
    * retrying the same write passes the same id, so async triggers dedupe it.
    */
   writeId?: string;
+  /**
+   * Write straight to the store even when the entity's policy is `customAction`.
+   * Set by the steps of a running custom action, so they do not re-route to it.
+   */
+  direct?: boolean;
+}
+
+/**
+ * Thrown when the write committed but an after hook (a sync trigger) failed.
+ * The record changes are saved; `results` holds the write results.
+ */
+export class CommittedWriteError extends Error {
+  readonly committed = true;
+  constructor(
+    message: string,
+    readonly results: unknown[],
+  ) {
+    super(message);
+  }
+}
+
+/**
+ * Takes over an update or delete instead of writing it (custom-action entities).
+ * Returns undefined to let the write go to the store.
+ */
+export type RecordRouter = (write: RecordWrite) => Promise<number> | undefined;
+let router: RecordRouter | null = null;
+
+/** Installs the update/delete router (one at a time); returns its uninstall function. */
+export function setRecordRouter(next: RecordRouter): () => void {
+  router = next;
+  return () => {
+    if (router === next) router = null;
+  };
 }
 
 export interface RecordHook {
@@ -49,12 +83,30 @@ function withWriteId(record: RecordWrite): RecordWrite {
   return record.meta?.writeId ? record : { ...record, meta: { ...record.meta, writeId: newId() } };
 }
 
+/** Runs after hooks for committed writes; a failure becomes a CommittedWriteError. */
+async function afterCommit(writes: RecordWrite[], results: unknown[], active: RecordHook[]) {
+  const failures: string[] = [];
+  for (const [i, record] of writes.entries())
+    for (const hook of active) {
+      try {
+        await hook.after?.(record, results[i]);
+      } catch (e) {
+        failures.push(e instanceof Error ? e.message : String(e));
+      }
+    }
+  if (failures.length) throw new CommittedWriteError(failures.join("; "), results);
+}
+
 async function write<T>(input: RecordWrite, run: () => Promise<T>): Promise<T> {
   const record = withWriteId(input);
+  if (record.operation !== "insert" && !record.meta?.direct) {
+    const routed = router?.(record);
+    if (routed) return (await routed) as T;
+  }
   const active = [...hooks];
   for (const hook of active) await hook.before?.(record);
   const result = await run();
-  for (const hook of active) await hook.after?.(record, result);
+  await afterCommit([record], [result], active);
   return result;
 }
 
@@ -64,7 +116,10 @@ export const insertRecord = (table: string, values: NamedValue[], meta?: RecordW
     call<DataValue[]>("insert_row", { table, values }),
   );
 
-/** Updates one row by identity and resolves with the affected row count. */
+/**
+ * Updates one row by identity and resolves with the affected row count. On a
+ * `customAction` entity the entity's action runs instead (see src/automation/custom.ts).
+ */
 export const updateRecord = (
   table: string,
   values: NamedValue[],
@@ -75,7 +130,7 @@ export const updateRecord = (
     call<number>("update_row", { table, values, identity, expected: meta?.expected ?? null }),
   );
 
-/** Deletes one row by identity and resolves with the affected row count. */
+/** Deletes one row by identity and resolves with the affected row count (custom actions as above). */
 export const deleteRecord = (table: string, identity: DataValue[], meta?: RecordWriteMeta) =>
   write({ operation: "delete", table, values: [], identity, ...(meta && { meta }) }, () =>
     call<number>("delete_row", { table, identity, expected: meta?.expected ?? null }),
@@ -90,7 +145,9 @@ interface BatchOutcome {
  * Applies several writes as one RecordStore transaction (`execute_write_batch`):
  * all succeed or none do. Before hooks run for every write first (any throw aborts
  * the batch); after hooks run once it commits, each with its own result (identity
- * for inserts, affected count otherwise).
+ * for inserts, affected count otherwise). A failing after hook rejects with a
+ * CommittedWriteError: the batch is saved. Writes are never routed to custom
+ * actions here; the action runner routes them before batching.
  */
 export async function writeRecordBatch(input: RecordWrite[]): Promise<unknown[]> {
   const writes = input.map(withWriteId);
@@ -107,7 +164,6 @@ export async function writeRecordBatch(input: RecordWrite[]): Promise<unknown[]>
   const results = writes.map((record, i) =>
     record.operation === "insert" ? (outcomes[i]?.identity ?? []) : (outcomes[i]?.changed ?? 0),
   );
-  for (const [i, record] of writes.entries())
-    for (const hook of active) await hook.after?.(record, results[i]);
+  await afterCommit(writes, results, active);
   return results;
 }

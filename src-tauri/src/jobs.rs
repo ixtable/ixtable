@@ -10,6 +10,9 @@
 //! Every claim issues a fresh lease token; completing or failing a job needs the
 //! token of its current lease, so a stale worker (whose lease expired, or whose
 //! job was cancelled and requeued) cannot finish someone else's attempt.
+//! Lease tokens name the store instance (one per app process) that claimed the
+//! job, so opening the store requeues jobs a previous process left running
+//! without waiting for their lease to expire.
 use crate::manager::AppError;
 use chrono::{DateTime, Duration, SecondsFormat, Utc};
 use rusqlite::{params, Connection, OptionalExtension, Row, TransactionBehavior};
@@ -133,6 +136,8 @@ fn err(e: impl ToString) -> AppError {
 
 pub struct JobStore {
     path: PathBuf,
+    /// This store instance (app process); part of every lease token it issues.
+    instance: String,
 }
 
 impl JobStore {
@@ -141,7 +146,10 @@ impl JobStore {
         if let Some(dir) = path.parent() {
             std::fs::create_dir_all(dir).map_err(err)?;
         }
-        let store = Self { path: path.into() };
+        let store = Self {
+            path: path.into(),
+            instance: uuid::Uuid::new_v4().simple().to_string(),
+        };
         let mut c = store.connection()?;
         c.execute_batch(&format!(
             "PRAGMA journal_mode=WAL; {};",
@@ -157,6 +165,7 @@ impl JobStore {
                PRIMARY KEY(job_id, attempt));",
         )
         .map_err(err)?;
+        store.recover_previous_instances(Utc::now())?;
         store.recover_expired(Utc::now())?;
         Ok(store)
     }
@@ -294,11 +303,12 @@ impl JobStore {
         };
         tx.execute(
             "UPDATE jobs SET status='running', attempts=attempts+1, lease_until=?2, updated_at=?3,
-               lease_token=(attempts+1)||':'||?4 WHERE id=?1",
+               lease_token=(attempts+1)||':'||?4||':'||?5 WHERE id=?1",
             params![
                 id,
                 after(now, lease_ms),
                 ts(now),
+                self.instance,
                 uuid::Uuid::new_v4().to_string()
             ],
         )
@@ -407,9 +417,14 @@ impl JobStore {
     }
 
     /// Cancels a queued or running job. A running attempt's later result is refused.
+    /// Runs in one `IMMEDIATE` transaction with a status guard, so it cannot
+    /// overwrite a result that a worker reports at the same moment.
     pub fn cancel(&self, document_id: &str, id: &str, now: DateTime<Utc>) -> Result<Job, AppError> {
-        let c = self.connection()?;
-        let j = Self::get(&c, document_id, id)?;
+        let mut c = self.connection()?;
+        let tx = c
+            .transaction_with_behavior(TransactionBehavior::Immediate)
+            .map_err(err)?;
+        let j = Self::get(&tx, document_id, id)?;
         if !matches!(j.status.as_str(), "queued" | "running") {
             return Err(AppError::new(
                 "INVALID_STATE",
@@ -417,20 +432,26 @@ impl JobStore {
             ));
         }
         if j.status == "running" {
-            Self::finish_attempt(&c, &j, now, false, Some("Cancelled"), &Value::Null)?;
+            Self::finish_attempt(&tx, &j, now, false, Some("Cancelled"), &Value::Null)?;
         }
-        c.execute(
-            "UPDATE jobs SET status='cancelled', lease_until=NULL, lease_token=NULL, updated_at=?2 WHERE id=?1",
+        tx.execute(
+            "UPDATE jobs SET status='cancelled', lease_until=NULL, lease_token=NULL, updated_at=?2
+             WHERE id=?1 AND status IN ('queued','running')",
             params![id, ts(now)],
         )
         .map_err(err)?;
-        Self::get(&c, document_id, id)
+        let done = Self::get(&tx, document_id, id)?;
+        tx.commit().map_err(err)?;
+        Ok(done)
     }
 
     /// Requeues a failed or cancelled job to run now, allowing at least one more attempt.
     pub fn retry(&self, document_id: &str, id: &str, now: DateTime<Utc>) -> Result<Job, AppError> {
-        let c = self.connection()?;
-        let j = Self::get(&c, document_id, id)?;
+        let mut c = self.connection()?;
+        let tx = c
+            .transaction_with_behavior(TransactionBehavior::Immediate)
+            .map_err(err)?;
+        let j = Self::get(&tx, document_id, id)?;
         if !matches!(j.status.as_str(), "failed" | "cancelled") {
             return Err(AppError::new(
                 "INVALID_STATE",
@@ -440,12 +461,15 @@ impl JobStore {
                 ),
             ));
         }
-        c.execute(
-            "UPDATE jobs SET status='queued', next_run_at=?2, updated_at=?2, max_attempts=MAX(max_attempts, attempts+1) WHERE id=?1",
+        tx.execute(
+            "UPDATE jobs SET status='queued', next_run_at=?2, updated_at=?2, max_attempts=MAX(max_attempts, attempts+1)
+             WHERE id=?1 AND status IN ('failed','cancelled')",
             params![id, ts(now)],
         )
         .map_err(err)?;
-        Self::get(&c, document_id, id)
+        let done = Self::get(&tx, document_id, id)?;
+        tx.commit().map_err(err)?;
+        Ok(done)
     }
 
     pub fn list(&self, document_id: &str, filter: &JobFilter) -> Result<Vec<Job>, AppError> {
@@ -497,24 +521,55 @@ impl JobStore {
     /// Crash recovery: running jobs whose lease expired go back to queued (or to
     /// failed when they have no attempts left). Returns how many were recovered.
     pub fn recover_expired(&self, now: DateTime<Utc>) -> Result<usize, AppError> {
+        self.requeue_running(
+            now,
+            "j.lease_until<?1",
+            "Lease expired: the app stopped while the job was running",
+        )
+    }
+
+    /// Startup recovery: running jobs leased by another store instance (an earlier
+    /// app process; the app runs as a single instance) go back to queued at once
+    /// instead of waiting for their lease to expire. Their old lease tokens stay
+    /// refused (`STALE_LEASE`).
+    fn recover_previous_instances(&self, now: DateTime<Utc>) -> Result<usize, AppError> {
+        let mine = format!("%:{}:%", self.instance);
+        self.requeue_running(
+            now,
+            &format!("coalesce(j.lease_token,'') NOT LIKE '{mine}'"),
+            "The app restarted while the job was running",
+        )
+    }
+
+    /// Requeues (or fails, when out of attempts) running jobs `j` matching `cond`
+    /// (SQL; `?1` is now), closing their open attempt with `reason`.
+    fn requeue_running(
+        &self,
+        now: DateTime<Utc>,
+        cond: &str,
+        reason: &str,
+    ) -> Result<usize, AppError> {
         let mut c = self.connection()?;
         let tx = c
             .transaction_with_behavior(TransactionBehavior::Immediate)
             .map_err(err)?;
         let at = ts(now);
-        let reason = "Lease expired: the app stopped while the job was running";
         tx.execute(
-            "UPDATE job_attempts SET finished_at=?1, ok=0, error=?2
-             WHERE finished_at IS NULL AND EXISTS(SELECT 1 FROM jobs j WHERE j.id=job_id AND j.attempts=attempt
-               AND j.status='running' AND j.lease_until<?1)",
+            &format!(
+                "UPDATE job_attempts SET finished_at=?1, ok=0, error=?2
+                 WHERE finished_at IS NULL AND EXISTS(SELECT 1 FROM jobs j WHERE j.id=job_id AND j.attempts=attempt
+                   AND j.status='running' AND {cond})"
+            ),
             params![at, reason],
         )
         .map_err(err)?;
         let n = tx
             .execute(
-                "UPDATE jobs SET status=CASE WHEN attempts>=max_attempts THEN 'failed' ELSE 'queued' END,
-                   lease_until=NULL, lease_token=NULL, last_error=?2, next_run_at=?1, updated_at=?1
-                 WHERE status='running' AND lease_until<?1",
+                &format!(
+                    "UPDATE jobs AS j SET status=CASE WHEN attempts>=max_attempts THEN 'failed' ELSE 'queued' END,
+                       lease_until=NULL, lease_token=NULL, last_error=?2, next_run_at=?1, updated_at=?1
+                     WHERE status='running' AND {cond}"
+                ),
                 params![at, reason],
             )
             .map_err(err)?;
@@ -638,6 +693,11 @@ mod tests {
             backoff_ms: Some(1000),
         }
     }
+    impl JobStore {
+        fn get_job(&self, document_id: &str, id: &str) -> Job {
+            Self::get(&self.connection().unwrap(), document_id, id).unwrap()
+        }
+    }
     fn t0() -> DateTime<Utc> {
         DateTime::parse_from_rfc3339("2026-01-01T00:00:00Z")
             .unwrap()
@@ -667,7 +727,10 @@ mod tests {
             .map(|_| {
                 let path = path.clone();
                 std::thread::spawn(move || {
-                    let s = JobStore { path };
+                    let s = JobStore {
+                        path,
+                        instance: "worker".into(),
+                    };
                     let mut mine = vec![];
                     while let Some(j) = s.claim_next("doc", t0(), 60_000).unwrap() {
                         mine.push(j.id);
@@ -838,7 +901,7 @@ mod tests {
             .last_error
             .as_deref()
             .unwrap()
-            .contains("Lease expired"));
+            .contains("restarted"));
         let history = s.attempts("doc", &by_key("k").id).unwrap();
         assert_eq!(history[0].ok, Some(false));
         // A lease that has not expired is left alone.
@@ -903,6 +966,99 @@ mod tests {
             .code,
             "STALE_LEASE"
         );
+    }
+
+    #[test]
+    fn restart_reclaims_unexpired_leases_of_the_previous_process() {
+        let path = temp();
+        let (job, old_token) = {
+            let s = JobStore::open(&path).unwrap();
+            s.enqueue("doc", &req("k"), Utc::now()).unwrap();
+            let j = s
+                .claim_next("doc", Utc::now(), DEFAULT_LEASE_MS)
+                .unwrap()
+                .unwrap();
+            assert!(j.lease_token.as_deref().unwrap().contains(&s.instance));
+            // A lease of this instance survives a recovery pass while it is valid.
+            assert_eq!(s.recover_expired(Utc::now()).unwrap(), 0);
+            let token = j.lease_token.clone().unwrap();
+            (j, token)
+        };
+        // A new process opens the store: the 5-minute lease is reclaimed at once.
+        let s = JobStore::open(&path).unwrap();
+        let requeued = s.get_job("doc", &job.id);
+        assert_eq!(requeued.status, "queued");
+        assert!(requeued.last_error.unwrap().contains("restarted"));
+        let again = s.claim_next("doc", Utc::now(), 60_000).unwrap().unwrap();
+        assert_eq!((again.id.as_str(), again.attempts), (job.id.as_str(), 2));
+        // The previous process's late result stays refused.
+        let late = s
+            .complete("doc", &job.id, &old_token, &Value::Null, Utc::now())
+            .unwrap_err();
+        assert_eq!(late.code, "STALE_LEASE");
+        // Jobs this instance holds are left alone by its own reopen check.
+        assert_eq!(s.recover_previous_instances(Utc::now()).unwrap(), 0);
+    }
+
+    #[test]
+    fn cancel_and_results_are_guarded_transitions() {
+        let s = JobStore::open(&temp()).unwrap();
+        // A finished job cannot be cancelled afterwards.
+        let a = s.enqueue("doc", &req("a"), t0()).unwrap();
+        let ta = s
+            .claim_next("doc", t0(), 60_000)
+            .unwrap()
+            .unwrap()
+            .lease_token
+            .unwrap();
+        s.complete("doc", &a.id, &ta, &Value::Null, t0()).unwrap();
+        assert_eq!(
+            s.cancel("doc", &a.id, t0()).unwrap_err().code,
+            "INVALID_STATE"
+        );
+        assert_eq!(s.get_job("doc", &a.id).status, "succeeded");
+        // A cancelled job refuses its late result.
+        let b = s.enqueue("doc", &req("b"), t0()).unwrap();
+        let tb = s
+            .claim_next("doc", t0(), 60_000)
+            .unwrap()
+            .unwrap()
+            .lease_token
+            .unwrap();
+        s.cancel("doc", &b.id, t0()).unwrap();
+        let late = s
+            .fail("doc", &b.id, &tb, "x", &Value::Null, t0())
+            .unwrap_err();
+        assert_eq!(late.code, "STALE_LEASE");
+        assert_eq!(s.get_job("doc", &b.id).status, "cancelled");
+        // Racing cancel and complete: exactly one wins, and the loser changes nothing.
+        let path = s.path.clone();
+        for i in 0..10 {
+            let j = s.enqueue("doc", &req(&format!("race{i}")), t0()).unwrap();
+            let token = s
+                .claim_next("doc", t0(), 60_000)
+                .unwrap()
+                .unwrap()
+                .lease_token
+                .unwrap();
+            let (p1, p2, id1, id2) = (path.clone(), path.clone(), j.id.clone(), j.id.clone());
+            let other = |p: PathBuf| JobStore {
+                path: p,
+                instance: "other".into(),
+            };
+            let done = std::thread::spawn(move || {
+                other(p1)
+                    .complete("doc", &id1, &token, &Value::Null, t0())
+                    .is_ok()
+            });
+            let cancelled = std::thread::spawn(move || other(p2).cancel("doc", &id2, t0()).is_ok());
+            let (done, cancelled) = (done.join().unwrap(), cancelled.join().unwrap());
+            assert!(done ^ cancelled, "exactly one transition wins");
+            let status = s.get_job("doc", &j.id).status;
+            assert_eq!(status, if done { "succeeded" } else { "cancelled" });
+            let attempt = &s.attempts("doc", &j.id).unwrap()[0];
+            assert_eq!(attempt.ok, Some(done));
+        }
     }
 
     #[test]

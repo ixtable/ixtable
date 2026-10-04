@@ -1,0 +1,121 @@
+/**
+ * Row lookups for record steps: which rows an update or delete step matches,
+ * with the identity and original values (`expected`) each write sends.
+ */
+import { inspectTable, readTablePage } from "../lib/api";
+import type { DataValue, DbColumn, Filter, NamedValue } from "../lib/types";
+import { logicalOf } from "../schema/logical";
+import { fromDataValue, rowToObject, toDataValue } from "./values";
+
+/** Rows read per page while collecting a step's matches. */
+export const MATCH_PAGE_SIZE = 1000;
+/**
+ * Most rows one update or delete step may match. Above it the step fails before
+ * writing anything, instead of silently handling only part of the matches.
+ */
+export const MAX_MATCHED_ROWS = 100_000;
+
+export interface FoundRow {
+  identity: DataValue[];
+  object: Record<string, unknown>;
+  /** Original values for the optimistic check (stored, non-generated, non-blob columns). */
+  expected: NamedValue[];
+}
+
+export const keyColumns = (columns: DbColumn[]) =>
+  columns
+    .filter((c) => c.primaryKeyPosition > 0)
+    .sort((a, b) => a.primaryKeyPosition - b.primaryKeyPosition)
+    .map((c) => c.name);
+
+/** Columns whose original values can be compared at write time. */
+const comparable = (columns: DbColumn[]) =>
+  new Set(columns.filter((c) => !c.generated && logicalOf(c) !== "blob").map((c) => c.name));
+
+/**
+ * Every row of `table` matching `criteria` (column → value; null matches NULL),
+ * read page by page in identity order. Throws when none match or when more than
+ * MAX_MATCHED_ROWS do.
+ */
+export async function matchRows(
+  table: string,
+  criteria: Record<string, unknown>,
+): Promise<FoundRow[]> {
+  const schema = await inspectTable(table);
+  const keep = comparable(schema.columns);
+  const filters: Filter[] = Object.entries(criteria).map(([column, value]) =>
+    value === null || value === undefined
+      ? { column, operator: "is_null" }
+      : { column, operator: "eq", value: toDataValue(value) },
+  );
+  const found: FoundRow[] = [];
+  for (let offset = 0; ; offset += MATCH_PAGE_SIZE) {
+    const page = await readTablePage(table, { filters, offset, limit: MATCH_PAGE_SIZE });
+    if (page.total > MAX_MATCHED_ROWS)
+      throw new Error(
+        `${page.total} ${table} rows match; one step can change at most ${MAX_MATCHED_ROWS}. Narrow the match.`,
+      );
+    for (const [i, row] of page.rows.entries())
+      found.push({
+        identity: page.identities[i],
+        object: rowToObject(page.columns, row),
+        expected: page.columns
+          .map((c, j) => ({ column: c.name, value: row[j] }))
+          .filter((v) => keep.has(v.column)),
+      });
+    if (page.rows.length < MATCH_PAGE_SIZE) break;
+  }
+  if (!found.length) throw new Error(`No ${table} rows match`);
+  return found;
+}
+
+/** The current record as a row to write: by its key columns, else by its rowid. */
+export async function currentRow(
+  table: string,
+  record: Record<string, unknown> | null,
+): Promise<FoundRow[]> {
+  if (!record) throw new Error("There is no current record");
+  const schema = await inspectTable(table);
+  const keys = keyColumns(schema.columns);
+  if (keys.length)
+    return matchRows(
+      table,
+      Object.fromEntries(
+        keys.map((k) => {
+          if (record[k] === undefined || record[k] === null)
+            throw new Error(`The current record has no value for key column ${k}`);
+          return [k, record[k]];
+        }),
+      ),
+    );
+  if (record.rowid === undefined || record.rowid === null)
+    throw new Error(`Table ${table} has no primary key and the record has no rowid`);
+  const keep = comparable(schema.columns);
+  return [
+    {
+      identity: [toDataValue(record.rowid)],
+      object: record,
+      expected: Object.entries(record)
+        .filter(([column]) => keep.has(column))
+        .map(([column, value]) => ({ column, value: toDataValue(value) })),
+    },
+  ];
+}
+
+/** `values` plus the generated key of a created row (rowid when there is no key). */
+export async function withKeys(
+  table: string,
+  values: Record<string, unknown>,
+  identity: DataValue[],
+) {
+  try {
+    const keys = keyColumns((await inspectTable(table)).columns);
+    const names = keys.length ? keys : ["rowid"];
+    return {
+      ...values,
+      ...Object.fromEntries(names.map((k, i) => [k, fromDataValue(identity[i])])),
+    };
+  } catch {
+    return { ...values };
+  }
+}

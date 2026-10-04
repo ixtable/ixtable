@@ -1,6 +1,7 @@
 import { screen, waitFor, within } from "@testing-library/react";
 import { invoke } from "@tauri-apps/api/core";
 import { expect, it } from "vitest";
+import { asTauriError } from "../../src/lib/api";
 import { createTable, insertRow, readPage, renderNewDocument, value } from "./helpers";
 
 it("renders a typed table and persists sorted CRUD mutations", async () => {
@@ -25,17 +26,26 @@ it("renders a typed table and persists sorted CRUD mutations", async () => {
     value("text", "Alpha"),
     value("text", "Beta"),
   ]);
+  const blind = await invoke("update_row", {
+    windowLabel: "main",
+    table: "people",
+    values: [{ column: "name", value: value("text", "Blind") }],
+    identity: [value("integer", 1)],
+  }).catch((reason: unknown) => asTauriError(reason).code);
+  expect(blind).toBe("EXPECTED_REQUIRED");
   await invoke("update_row", {
     windowLabel: "main",
     table: "people",
     values: [{ column: "name", value: value("text", "Alpha updated") }],
     identity: [value("integer", 1)],
+    expected: [{ column: "name", value: value("text", "Alpha") }],
   });
   expect((await readPage("people")).rows[0][1]).toEqual(value("text", "Alpha updated"));
   await invoke("delete_row", {
     windowLabel: "main",
     table: "people",
     identity: [value("integer", 2)],
+    expected: [{ column: "name", value: value("text", "Beta") }],
   });
   expect((await readPage("people")).total).toBe(1);
   expect(screen.getAllByText("people").length).toBeGreaterThan(0);

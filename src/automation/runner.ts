@@ -16,10 +16,17 @@
  * A `fail` step always ends the action with its message as the error, even under
  * onError=continue (saving nothing in rollback mode).
  * Nested runAction steps join the caller's transaction when there is one.
+ * Updates and deletes send the matched rows' original values (`expected`), so
+ * optimistic entities reject them if the row changed since it was read. On a
+ * `customAction` entity they run the entity's action instead (src/automation/custom.ts),
+ * joining the caller's transaction like a nested runAction.
+ * If the writes commit but a sync trigger on them fails, the action reports that
+ * failure with the changes saved; held-back effects and the refresh still run.
  */
 import { evaluate, evaluateBoolean } from "../expr";
-import { call, executeReadQuery, inspectTable, readTablePage } from "../lib/api";
+import { call, executeReadQuery } from "../lib/api";
 import {
+  CommittedWriteError,
   deleteRecord,
   insertRecord,
   type RecordWrite,
@@ -27,10 +34,12 @@ import {
   updateRecord,
   writeRecordBatch,
 } from "../lib/records";
-import type { DataValue, DocumentConfig, Filter, QueryResult } from "../lib/types";
+import type { DataValue, DocumentConfig, QueryResult } from "../lib/types";
 import * as queryApi from "../query/api";
+import { customActionFor, customScope } from "./custom";
+import { currentRow, type FoundRow, matchRows, withKeys } from "./rows";
 import type { ActionDef, MatchSpec, OnError, Step, StepLog, ValueMap } from "./types";
-import { fromDataValue, rowToObject, toDataValue, toNamedValues } from "./values";
+import { rowToObject, toNamedValues } from "./values";
 
 export { ActionPicker } from "./ActionPicker";
 
@@ -60,6 +69,8 @@ export interface ActionContext {
   triggerDepth?: number;
   /** Clock for today()/now(); defaults to the current time. */
   now?: Date;
+  /** Set while a custom concurrency action runs: its record steps write to the store directly. */
+  directWrites?: boolean;
 }
 
 export interface ActionResult {
@@ -160,15 +171,19 @@ async function execute(
     };
   }
   if (!own) return { ok: true };
+  let triggerError: string | null = null;
   if (own.writes.length) {
     try {
       await writeRecordBatch(own.writes);
       frame.wrote.value = true;
     } catch (e) {
-      return {
-        ok: false,
-        error: `Transaction failed: ${message(e)}; no record changes were saved`,
-      };
+      if (!(e instanceof CommittedWriteError))
+        return {
+          ok: false,
+          error: `Transaction failed: ${message(e)}; no record changes were saved`,
+        };
+      frame.wrote.value = true;
+      triggerError = `The record changes were saved, but ${lowerFirst(e.message)}`;
     }
   }
   try {
@@ -176,7 +191,7 @@ async function execute(
   } catch (e) {
     return { ok: false, error: `${message(e)} (after the record changes were saved)` };
   }
-  return { ok: true };
+  return triggerError ? { ok: false, error: triggerError } : { ok: true };
 }
 
 async function runSteps(steps: Step[], frame: Frame, prefix: string): Promise<void> {
@@ -224,8 +239,45 @@ function authorize(frame: Frame, kind: string, id: string, op: string) {
 }
 const writeMeta = (frame: Frame, extra: RecordWriteMeta = {}): RecordWriteMeta => ({
   triggerDepth: frame.ctx.triggerDepth ?? 0,
+  ...(frame.ctx.directWrites && { direct: true }),
   ...extra,
 });
+const lowerFirst = (text: string) => text.charAt(0).toLowerCase() + text.slice(1);
+/** Runs a direct (non-transactional) write; a committed write counts even if a trigger failed. */
+async function direct(frame: Frame, run: () => Promise<unknown>) {
+  try {
+    await run();
+    frame.wrote.value = true;
+  } catch (e) {
+    if (!(e instanceof CommittedWriteError)) throw e;
+    frame.wrote.value = true;
+    throw new Error(`The record was saved, but ${lowerFirst(e.message)}`, { cause: e });
+  }
+}
+/** Runs a custom-action entity's action for one row, joining the caller's transaction. */
+async function runCustom(
+  action: ActionDef,
+  frame: Frame,
+  path: string,
+  request: Parameters<typeof customScope>[0],
+) {
+  if (frame.stack.length >= MAX_ACTION_DEPTH)
+    throw new Error(`Actions nested deeper than ${MAX_ACTION_DEPTH}`);
+  const scope = customScope(request);
+  const child: Frame = {
+    ...frame,
+    ctx: { ...frame.ctx, directWrites: true },
+    scope: { ...frame.scope, ...scope, form: {}, results: {} },
+  };
+  child.scope.steps = child.scope.results;
+  const outcome = await execute(action, child, `${path}.custom`);
+  if (outcome.cancelled) throw new Cancelled();
+  if (outcome.aborted) throw new Aborted(outcome.error ?? `Action ${action.name} failed`);
+  if (!outcome.ok) throw new Error(outcome.error ?? `Action ${action.name} failed`);
+}
+/** The custom action an update or delete step routes to (none inside a custom action). */
+const routedTo = (frame: Frame, table: string) =>
+  frame.ctx.directWrites ? null : customActionFor(frame.ctx.config, table);
 /** Runs a UI effect now, or after the commit inside a transaction. */
 function effect(frame: Frame, run: () => void) {
   if (frame.tx) frame.tx.effects.push(run);
@@ -244,8 +296,10 @@ async function runStep(step: Step, frame: Frame, path: string): Promise<void> {
         if (step.storeAs) scope.results[step.storeAs] = values;
         return;
       }
-      const identity = await insertRecord(step.table, named, writeMeta(frame));
-      frame.wrote.value = true;
+      let identity: DataValue[] = [];
+      await direct(frame, async () => {
+        identity = await insertRecord(step.table, named, writeMeta(frame));
+      });
       if (step.storeAs) scope.results[step.storeAs] = await withKeys(step.table, values, identity);
       return;
     }
@@ -254,13 +308,20 @@ async function runStep(step: Step, frame: Frame, path: string): Promise<void> {
       const rows = await findRows(step.table, step.match, frame);
       const values = evalMap(step.values, frame);
       const named = toNamedValues(values);
+      const custom = routedTo(frame, step.table);
       for (const row of rows) {
-        const meta = writeMeta(frame, { old: row.object });
-        if (frame.tx) frame.tx.writes.push(write("update", step.table, named, row.identity, meta));
-        else {
-          await updateRecord(step.table, named, row.identity, meta);
-          frame.wrote.value = true;
-        }
+        const meta = writeMeta(frame, { old: row.object, expected: row.expected });
+        if (custom)
+          await runCustom(custom, frame, path, {
+            operation: "update",
+            table: step.table,
+            values: named,
+            old: row.object,
+            expected: row.expected,
+          });
+        else if (frame.tx)
+          frame.tx.writes.push(write("update", step.table, named, row.identity, meta));
+        else await direct(frame, () => updateRecord(step.table, named, row.identity, meta));
       }
       if (step.match === "current" && scope.record && typeof scope.record === "object")
         scope.record = { ...(scope.record as Record<string, unknown>), ...values };
@@ -269,13 +330,20 @@ async function runStep(step: Step, frame: Frame, path: string): Promise<void> {
     case "deleteRecord": {
       authorize(frame, "table", step.table, "delete");
       const rows = await findRows(step.table, step.match, frame);
+      const custom = routedTo(frame, step.table);
       for (const row of rows) {
-        const meta = writeMeta(frame, { old: row.object });
-        if (frame.tx) frame.tx.writes.push(write("delete", step.table, [], row.identity, meta));
-        else {
-          await deleteRecord(step.table, row.identity, meta);
-          frame.wrote.value = true;
-        }
+        const meta = writeMeta(frame, { old: row.object, expected: row.expected });
+        if (custom)
+          await runCustom(custom, frame, path, {
+            operation: "delete",
+            table: step.table,
+            values: [],
+            old: row.object,
+            expected: row.expected,
+          });
+        else if (frame.tx)
+          frame.tx.writes.push(write("delete", step.table, [], row.identity, meta));
+        else await direct(frame, () => deleteRecord(step.table, row.identity, meta));
       }
       return;
     }
@@ -386,6 +454,14 @@ function exists(config: DocumentConfig, kind: string, id: string) {
     throw new Error(`The ${kind} ${id} does not exist`);
 }
 
+async function findRows(table: string, match: MatchSpec, frame: Frame): Promise<FoundRow[]> {
+  if (match === "current")
+    return currentRow(table, frame.scope.record as Record<string, unknown> | null);
+  const criteria = evalMap(match, frame);
+  if (!Object.keys(criteria).length) throw new Error("Match has no columns");
+  return matchRows(table, criteria);
+}
+
 const write = (
   operation: RecordWrite["operation"],
   table: string,
@@ -393,66 +469,6 @@ const write = (
   identity: DataValue[] | null,
   meta: RecordWriteMeta,
 ): RecordWrite => ({ operation, table, values, identity, meta });
-
-interface FoundRow {
-  identity: DataValue[];
-  object: Record<string, unknown>;
-}
-
-async function findRows(table: string, match: MatchSpec, frame: Frame): Promise<FoundRow[]> {
-  const schema = await inspectTable(table);
-  const keys = schema.columns
-    .filter((c) => c.primaryKeyPosition > 0)
-    .sort((a, b) => a.primaryKeyPosition - b.primaryKeyPosition)
-    .map((c) => c.name);
-  let criteria: Record<string, unknown>;
-  if (match === "current") {
-    const record = frame.scope.record as Record<string, unknown> | null;
-    if (!record) throw new Error("There is no current record");
-    if (!keys.length) {
-      if (record.rowid === undefined || record.rowid === null)
-        throw new Error(`Table ${table} has no primary key and the record has no rowid`);
-      return [{ identity: [toDataValue(record.rowid)], object: record }];
-    }
-    criteria = Object.fromEntries(
-      keys.map((k) => {
-        if (record[k] === undefined || record[k] === null)
-          throw new Error(`The current record has no value for key column ${k}`);
-        return [k, record[k]];
-      }),
-    );
-  } else {
-    criteria = evalMap(match, frame);
-    if (!Object.keys(criteria).length) throw new Error("Match has no columns");
-  }
-  const filters: Filter[] = Object.entries(criteria).map(([column, value]) =>
-    value === null || value === undefined
-      ? { column, operator: "is_null" }
-      : { column, operator: "eq", value: toDataValue(value) },
-  );
-  const page = await readTablePage(table, { filters, limit: 1000 });
-  if (!page.rows.length) throw new Error(`No ${table} rows match`);
-  return page.rows.map((row, i) => ({
-    identity: page.identities[i],
-    object: rowToObject(page.columns, row),
-  }));
-}
-
-async function withKeys(table: string, values: Record<string, unknown>, identity: DataValue[]) {
-  try {
-    const keys = (await inspectTable(table)).columns
-      .filter((c) => c.primaryKeyPosition > 0)
-      .sort((a, b) => a.primaryKeyPosition - b.primaryKeyPosition)
-      .map((c) => c.name);
-    const names = keys.length ? keys : ["rowid"];
-    return {
-      ...values,
-      ...Object.fromEntries(names.map((k, i) => [k, fromDataValue(identity[i])])),
-    };
-  } catch {
-    return { ...values };
-  }
-}
 
 type QueryModule = {
   runSavedQuery?: (id: string, params?: Record<string, unknown>) => Promise<QueryResult>;

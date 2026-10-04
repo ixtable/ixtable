@@ -28,19 +28,43 @@ pub fn after_write(window: &str) -> Result<SessionState, AppError> {
 fn guard_definition(window: &str) -> Result<(), AppError> {
     crate::manager()?.with_session(window, |s| crate::manager::read_only_guard(s))
 }
-/// Optimistic and custom-action entities check original values; last-write-wins ignores them.
+/// Optimistic, custom-action, and unresolved entities check original values;
+/// last-write-wins ignores them.
 fn effective_expected(
     window: &str,
     table: &str,
     expected: Option<Vec<NamedValue>>,
 ) -> Result<Option<Vec<NamedValue>>, AppError> {
     let config = crate::manager()?.config(window)?;
-    Ok(
-        match entity_policy(&config, table).map(|e| e.concurrency.as_str()) {
-            Some("lastWriteWins") => None,
-            _ => expected.filter(|e| !e.is_empty()),
-        },
+    resolve_expected(
+        entity_policy(&config, table).map(|e| e.concurrency.as_str()),
+        table,
+        expected,
     )
+}
+
+/// Applies the concurrency policy (PRD §19) to a write's original values. Every
+/// policy except `lastWriteWins` (an unresolved one included) needs them: an
+/// update or delete without `expected` fails with `EXPECTED_REQUIRED` instead
+/// of overwriting blindly.
+pub(crate) fn resolve_expected(
+    policy: Option<&str>,
+    table: &str,
+    expected: Option<Vec<NamedValue>>,
+) -> Result<Option<Vec<NamedValue>>, AppError> {
+    if policy == Some("lastWriteWins") {
+        return Ok(None);
+    }
+    match expected.filter(|e| !e.is_empty()) {
+        Some(e) => Ok(Some(e)),
+        None => Err(AppError::new(
+            "EXPECTED_REQUIRED",
+            format!(
+                "{table} uses the {} concurrency policy: updates and deletes must send the original values they started from",
+                policy.unwrap_or("optimistic")
+            ),
+        )),
+    }
 }
 
 pub fn insert_row(

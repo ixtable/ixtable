@@ -35,3 +35,6 @@ export const JOBS_CHANGED_EVENT = "ixtable:jobs-changed";
 export const notifyJobsChanged = () => {
   if (typeof window !== "undefined") window.dispatchEvent(new Event(JOBS_CHANGED_EVENT));
 };
+/** True when the open document's queue has a queued job (due now or waiting for a retry). */
+export const hasQueuedJobs = async () =>
+  (await listJobs({ status: "queued", limit: 1 })).length > 0;

@@ -8,7 +8,9 @@ import {
   contentWidth,
   findComponent,
   getBand,
+  isPageBand,
   newComponent,
+  reportProblems,
   withBand,
 } from "../model";
 import type { ComponentKind, Report, ReportComponent } from "../types";
@@ -49,6 +51,7 @@ export function ReportDesigner({
   const activeKey = getBand(report, bandKey) ? bandKey : "detail";
   const active = bands.find((b) => b.key === activeKey) ?? bands[0];
   const selected = selectedId ? findComponent(report, selectedId) : undefined;
+  const problems = reportProblems(report);
 
   useEffect(() => {
     listAssets()
@@ -107,7 +110,17 @@ export function ReportDesigner({
       <div className="report-canvas-area">
         <div className="report-palette" role="toolbar" aria-label="Report components">
           {PALETTE.map(([kind, label, Icon]) => (
-            <button key={kind} type="button" onClick={() => add(kind)}>
+            <button
+              key={kind}
+              type="button"
+              disabled={kind === "table" && isPageBand(active.key)}
+              title={
+                kind === "table" && isPageBand(active.key)
+                  ? "Tables are not supported in page headers or footers"
+                  : undefined
+              }
+              onClick={() => add(kind)}
+            >
               <Icon /> {label}
             </button>
           ))}
@@ -117,6 +130,13 @@ export function ReportDesigner({
           them and the corner handle to resize. With a component focused, arrow keys move it 1 pt
           (Shift: 10 pt), Alt+arrow keys resize it, and Delete removes it.
         </p>
+        {problems.length > 0 && (
+          <ul className="report-diagnostic" role="alert" aria-label="Report problems">
+            {problems.map((p) => (
+              <li key={p}>{p}</li>
+            ))}
+          </ul>
+        )}
         <BandCanvas
           bands={bands}
           width={width}
@@ -165,6 +185,7 @@ export function ReportDesigner({
               label={active.label}
               band={active.band}
               minHeight={bandMinHeight(active)}
+              pageBand={isPageBand(active.key)}
               onChange={(patch) =>
                 change((r) => withBand(r, active.key, (b) => ({ ...b, ...patch })), "Edit band")
               }

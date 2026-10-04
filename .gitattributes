@@ -1,0 +1,2 @@
+# Golden report PDFs are compared byte for byte.
+tests/fixtures/report-goldens/** -text

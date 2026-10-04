@@ -170,3 +170,52 @@ it("renames, duplicates and deletes reports through the config store", async () 
     expect(config.reports.map((r) => r.name)).toEqual(["Invoices"]);
   });
 });
+
+it("sets pagination controls in the designer and keeps tables out of page bands", async () => {
+  const user = await renderNewDocument();
+  await seedOrders();
+  const archive = join(process.env.IXTABLE_STATE_DIR!, "paging.ixt");
+  dialogMock.save.mockResolvedValueOnce(archive);
+  await user.click(screen.getByRole("button", { name: "Save project" }));
+  await screen.findByText("Saved archive", {}, LONG);
+  await user.click(screen.getByRole("button", { name: "Close project" }));
+  dialogMock.open.mockResolvedValueOnce(archive);
+  await user.click(await screen.findByRole("button", { name: /Open document/i }, LONG));
+  await screen.findByText("Saved archive", {}, LONG);
+  await openNewReport(user);
+  await screen.findByRole("textbox", { name: "Report name" }, LONG);
+  await user.selectOptions(screen.getByRole("combobox", { name: "Dataset" }), "Query: Orders");
+  await user.click(screen.getByRole("button", { name: "Add group" }));
+  await user.selectOptions(
+    await screen.findByRole("combobox", { name: "Group 1 field" }, LONG),
+    "region",
+  );
+  await user.click(screen.getByRole("checkbox", { name: "Group 1 starts a new page" }));
+  await user.click(screen.getByRole("checkbox", { name: "Group 1 restarts group page numbers" }));
+  await selectBand(user, "Report header");
+  await user.click(screen.getByRole("checkbox", { name: "Page break after" }));
+
+  await selectBand(user, "Page footer");
+  expect(screen.getByRole("button", { name: "Add table" })).toBeDisabled();
+  expect(screen.queryByRole("checkbox", { name: "Page break before" })).not.toBeInTheDocument();
+  await user.click(screen.getByRole("button", { name: "Add calculated" }));
+  await setExpression(user, "'Part ' & groupPage & ' of ' & groupPages & ' / ' & page");
+
+  await user.click(screen.getByRole("tab", { name: "Preview" }));
+  const first = await screen.findByRole("img", { name: "Page 1 of 4" }, LONG);
+  expect(within(first).getByText("Part 1 of 1 / 1")).toBeInTheDocument();
+  await user.click(screen.getByRole("button", { name: "Next page" }));
+  const second = await screen.findByRole("img", { name: "Page 2 of 4" });
+  expect(within(second).getByText("Part 1 of 1 / 2")).toBeInTheDocument();
+
+  const config = await invoke<{
+    reports: Array<{ bands: { reportHeader: { pageBreakAfter?: boolean }; groups: unknown[] } }>;
+  }>("read_document_config", { windowLabel: "main" });
+  const bands = config.reports[0].bands;
+  expect(bands.reportHeader.pageBreakAfter).toBe(true);
+  expect(bands.groups[0]).toMatchObject({ newPage: true, resetPageNumber: true });
+  const issues = await invoke<Array<{ objectKind: string }>>("validate_document", {
+    windowLabel: "main",
+  });
+  expect(issues.filter((issue) => issue.objectKind === "report")).toEqual([]);
+});

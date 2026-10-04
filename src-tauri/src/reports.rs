@@ -126,6 +126,19 @@ pub struct ReportGroup {
     pub header: Band,
     #[serde(default)]
     pub footer: Band,
+    /// Start a new page for every group instance.
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub new_page: bool,
+    /// Repeat the group header at the top of continuation pages.
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub repeat_header: bool,
+    /// Restart `groupPage`/`groupPages` numbering for every group instance.
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub reset_page_number: bool,
+}
+
+fn is_false(v: &bool) -> bool {
+    !*v
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
@@ -135,6 +148,12 @@ pub struct Band {
     pub height: f64,
     #[serde(default)]
     pub keep_together: bool,
+    /// Start a new page before this band.
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub page_break_before: bool,
+    /// Start a new page after this band.
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub page_break_after: bool,
     #[serde(default)]
     pub components: Vec<Component>,
 }
@@ -154,6 +173,9 @@ pub struct Component {
     pub extra: serde_json::Map<String, serde_json::Value>,
 }
 
+const PAGE_HEADER: &str = "Page header";
+const PAGE_FOOTER: &str = "Page footer";
+
 fn band_issues(
     report: &Report,
     label: &str,
@@ -163,6 +185,7 @@ fn band_issues(
     ids: &mut HashSet<String>,
     issues: &mut Vec<Issue>,
 ) {
+    let page_band = label == PAGE_HEADER || label == PAGE_FOOTER;
     let id = report.id.as_str();
     let err = |m: String| Issue::error("report", id, format!("{}: {m}", report.name));
     if !band.height.is_finite() || band.height < 0.0 {
@@ -188,6 +211,11 @@ fn band_issues(
             || c.y + c.h > band.height + 0.01
         {
             issues.push(err(format!("{what} lies outside the band")));
+        }
+        if c.kind == "table" && page_band {
+            issues.push(err(format!(
+                "{what}: tables are not supported in page headers or footers"
+            )));
         }
         if c.kind == "table" {
             tables += 1;
@@ -246,7 +274,7 @@ pub fn validate(config: &DocumentConfig) -> Vec<Issue> {
         let mut ids = HashSet::new();
         let mut bands: Vec<(String, &Band)> = vec![
             ("Report header".into(), &b.report_header),
-            ("Page header".into(), &b.page_header),
+            (PAGE_HEADER.into(), &b.page_header),
         ];
         let mut group_ids = HashSet::new();
         for (i, g) in b.groups.iter().enumerate() {
@@ -260,7 +288,7 @@ pub fn validate(config: &DocumentConfig) -> Vec<Issue> {
             bands.push((format!("Group {} footer", i + 1), &g.footer));
         }
         bands.push(("Detail".into(), &b.detail));
-        bands.push(("Page footer".into(), &b.page_footer));
+        bands.push((PAGE_FOOTER.into(), &b.page_footer));
         bands.push(("Report footer".into(), &b.report_footer));
         for (label, band) in bands {
             band_issues(report, &label, band, width, config, &mut ids, &mut issues);
@@ -399,6 +427,7 @@ mod tests {
             height: 20.0,
             keep_together: false,
             components: vec![component("c1", "field", 0.0, 0.0, 100.0, 20.0)],
+            ..Default::default()
         };
         r
     }
@@ -478,6 +507,7 @@ mod tests {
             height: 40.0,
             keep_together: false,
             components: vec![t, component("t2", "table", 0.0, 20.0, 100.0, 20.0)],
+            ..Default::default()
         };
         let issues = validate(&config_with(r));
         let text: Vec<String> = issues.iter().map(|i| i.message.clone()).collect();
@@ -486,6 +516,57 @@ mod tests {
         assert!(has("group 1 has no group-by expression"), "{text:?}");
         assert!(has("t1 uses a saved query that does not exist"), "{text:?}");
         assert!(has("Report footer has more than one table"), "{text:?}");
+    }
+
+    #[test]
+    fn reports_validate_rejects_tables_in_page_bands() {
+        let mut r = valid_report();
+        r.bands.page_header = Band {
+            height: 20.0,
+            components: vec![component("ph", "table", 0.0, 0.0, 100.0, 20.0)],
+            ..Default::default()
+        };
+        r.bands.page_footer = Band {
+            height: 20.0,
+            components: vec![component("pf", "table", 0.0, 0.0, 100.0, 20.0)],
+            ..Default::default()
+        };
+        let text: Vec<String> = validate(&config_with(r))
+            .iter()
+            .map(|i| i.message.clone())
+            .collect();
+        assert!(
+            text.iter()
+                .any(|m| m.contains("Page header component ph: tables are not supported")),
+            "{text:?}"
+        );
+        assert!(
+            text.iter()
+                .any(|m| m.contains("Page footer component pf: tables are not supported")),
+            "{text:?}"
+        );
+    }
+
+    #[test]
+    fn reports_pagination_flags_round_trip_and_default_off() {
+        let raw = json!({"id": "r", "name": "n", "bands": {
+            "detail": {"height": 10, "keepTogether": false, "pageBreakBefore": true, "components": []},
+            "groups": [{"id": "g", "groupBy": "record.a", "newPage": true,
+                        "repeatHeader": true, "resetPageNumber": true}]
+        }});
+        let report: Report = serde_json::from_value(raw).unwrap();
+        assert!(report.bands.detail.page_break_before);
+        assert!(!report.bands.detail.page_break_after);
+        let back = serde_json::to_value(&report).unwrap();
+        assert_eq!(back["bands"]["detail"]["pageBreakBefore"], json!(true));
+        assert!(back["bands"]["detail"].get("pageBreakAfter").is_none());
+        let g = &back["bands"]["groups"][0];
+        assert_eq!(g["newPage"], json!(true));
+        assert_eq!(g["repeatHeader"], json!(true));
+        assert_eq!(g["resetPageNumber"], json!(true));
+        assert!(back["bands"]["reportHeader"]
+            .get("pageBreakBefore")
+            .is_none());
     }
 
     #[test]

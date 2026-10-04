@@ -19,7 +19,11 @@ import {
 
 const EPS = 1e-6;
 
-type PageContext = { page: number; pages: number };
+/** Tables in page headers and footers are not laid out (validation rejects them). */
+export const PAGE_BAND_TABLE = "Tables are not supported in page headers or footers";
+
+/** `groupPage`/`groupPages` count pages since the last group with `resetPageNumber`. */
+type PageContext = { page: number; pages: number; groupPage: number; groupPages: number };
 type Thunk = (ctx: PageContext) => PositionedItem[];
 
 interface Block {
@@ -27,6 +31,13 @@ interface Block {
   scope: Record<string, unknown>;
   /** Group header with keepTogether: keep it on the page of the next block. */
   keepWithNext: boolean;
+  /** Start a new page before (band option, group `newPage` or `resetPageNumber`). */
+  breakBefore: boolean;
+  breakAfter: boolean;
+  /** Starts a page-number section (header of a group with `resetPageNumber`). */
+  section: boolean;
+  /** Open group headers (outer first) to repeat at the top of continuation pages. */
+  repeat: Block[];
 }
 
 interface Prepared extends Block {
@@ -92,6 +103,8 @@ export function layoutReport(
     rowNumber: null,
     page: null,
     pages: null,
+    groupPage: null,
+    groupPages: null,
   };
   const context = (scope: Record<string, unknown>): RenderContext => ({
     scope,
@@ -119,16 +132,34 @@ export function layoutReport(
 
   // 2. Flatten into band instances.
   const blocks: Block[] = [];
-  const push = (band: Band, scope: Record<string, unknown>, keepWithNext = false) => {
-    if (!isEmptyBand(band)) blocks.push({ band, scope: { ...base, ...scope }, keepWithNext });
+  const open: Block[] = [];
+  const block = (
+    band: Band,
+    scope: Record<string, unknown>,
+    extra: Partial<Block> = {},
+  ): Block => ({
+    band,
+    scope: { ...base, ...scope },
+    keepWithNext: false,
+    breakBefore: !!band.pageBreakBefore,
+    breakAfter: !!band.pageBreakAfter,
+    section: false,
+    repeat: [...open],
+    ...extra,
+  });
+  const push = (b: Block) => {
+    // Empty bands are skipped unless they carry a page break or section start.
+    if (!isEmptyBand(b.band) || b.breakBefore || b.breakAfter || b.section) blocks.push(b);
   };
-  push(bands.reportHeader, { rows, record: rows[0] ?? null });
+  const reportBand = (band: Band, scope: Record<string, unknown>) =>
+    push(block(band, scope, { repeat: [] }));
+  reportBand(bands.reportHeader, { rows, record: rows[0] ?? null });
   let rowNumber = 0;
   const emit = (level: number, slice: typeof keyed) => {
     if (level === groups.length) {
       const sliceRows = slice.map((k) => k.row);
       for (const k of slice)
-        push(bands.detail, { record: k.row, rows: sliceRows, rowNumber: ++rowNumber });
+        push(block(bands.detail, { record: k.row, rows: sliceRows, rowNumber: ++rowNumber }));
       return;
     }
     const g = groups[level];
@@ -143,20 +174,32 @@ export function layoutReport(
       const run = slice.slice(start, end);
       const runRows = run.map((k) => k.row);
       const group = { key: run[0].keys[level], level: level + 1, count: run.length };
-      push(g.header, { rows: runRows, record: runRows[0], group }, g.header.keepTogether);
+      const header = block(
+        g.header,
+        { rows: runRows, record: runRows[0], group },
+        {
+          keepWithNext: g.header.keepTogether,
+          breakBefore: !!(g.header.pageBreakBefore || g.newPage || g.resetPageNumber),
+          section: !!g.resetPageNumber,
+        },
+      );
+      push(header);
+      const repeats = !!g.repeatHeader && !isEmptyBand(g.header);
+      if (repeats) open.push(header);
       emit(level + 1, run);
-      push(g.footer, { rows: runRows, record: runRows[runRows.length - 1], group });
+      push(block(g.footer, { rows: runRows, record: runRows[runRows.length - 1], group }));
+      if (repeats) open.pop();
       start = end;
     }
   };
   emit(0, keyed);
-  push(bands.reportFooter, { rows, record: rows[rows.length - 1] ?? null });
+  reportBand(bands.reportFooter, { rows, record: rows[rows.length - 1] ?? null });
 
   // 3. Measure.
   const bodyTop = m.top + bands.pageHeader.height;
   const bodyBottom = height - m.bottom - bands.pageFooter.height;
   const bodyHeight = bodyBottom - bodyTop;
-  const prepared: Prepared[] = blocks.map((block) => {
+  const prepare = (block: Block): Prepared => {
     const comp = block.band.components.find((c): c is TableComponent => c.kind === "table");
     if (!comp)
       return {
@@ -170,19 +213,40 @@ export function layoutReport(
     const splittable = !block.band.keepTogether || h > bodyHeight + EPS;
     const minFirst = splittable ? comp.y + geo.headerHeight + (geo.rowHeights[0] ?? 0) : h;
     return { ...block, table: { comp, geo }, height: h, splittable, minFirst };
-  });
+  };
+  const preparedOf = new Map<Block, Prepared>();
+  const prepareOnce = (b: Block) => {
+    let p = preparedOf.get(b);
+    if (!p) preparedOf.set(b, (p = prepare(b)));
+    return p;
+  };
+  const prepared = blocks.map(prepareOnce);
 
   // 4. Paginate.
   const left = m.left;
   const pages: Thunk[][] = [];
+  /** Page-number section of each page (see `groupPage`). */
+  const pageSection: number[] = [];
+  let sections = 0;
   let cursor = bodyTop;
-  const newPage = () => {
-    pages.push([]);
-    cursor = bodyTop;
-  };
+  /** Cursor after the repeated group headers of the current page. */
+  let pageTop = bodyTop;
   const add = (thunk: Thunk) => pages[pages.length - 1].push(thunk);
-  const atTop = () => cursor <= bodyTop + EPS;
+  const newPage = (repeat: Block[] = []) => {
+    pages.push([]);
+    pageSection.push(sections);
+    cursor = bodyTop;
+    for (const h of repeat) {
+      const r = prepareOnce(h);
+      const oy = cursor;
+      add((ctx) => bandItems(r, left, oy, ctx, context, "all"));
+      cursor += r.height;
+    }
+    pageTop = cursor;
+  };
+  const atTop = () => cursor <= pageTop + EPS;
   newPage();
+  let pendingBreak = false;
 
   const firstNeed = (p: Prepared) => (p.splittable ? p.minFirst : p.height);
   for (let i = 0; i < prepared.length; i++) {
@@ -194,7 +258,10 @@ export function layoutReport(
       while (j < prepared.length && prepared[j].keepWithNext) need += prepared[j++].height;
       if (j < prepared.length) need += firstNeed(prepared[j]);
     }
-    if (cursor + need > bodyBottom + EPS && !atTop()) newPage();
+    if ((pendingBreak || p.breakBefore) && !atTop()) newPage(p.repeat);
+    pendingBreak = p.breakAfter;
+    if (p.section) pageSection[pages.length - 1] = ++sections;
+    if (cursor + need > bodyBottom + EPS && !atTop()) newPage(p.repeat);
     if (!p.table || cursor + p.height <= bodyBottom + EPS || !p.splittable) {
       const oy = cursor;
       add((ctx) => bandItems(p, left, oy, ctx, context, "all"));
@@ -207,7 +274,7 @@ export function layoutReport(
     add((ctx) => bandItems(p, left, origin, ctx, context, "above"));
     let y = origin + comp.y;
     let row = 0;
-    let chunkAtTop = origin + comp.y <= bodyTop + EPS;
+    let chunkAtTop = origin + comp.y <= pageTop + EPS;
     let broke = false;
     for (;;) {
       const top = y;
@@ -224,18 +291,18 @@ export function layoutReport(
         ...rowsBetween(comp, geo, first, last, left + comp.x, top + geo.headerHeight),
       ]);
       if (row >= geo.rowHeights.length) break;
-      newPage();
+      newPage(p.repeat);
       broke = true;
       chunkAtTop = true;
-      y = bodyTop;
+      y = cursor;
     }
     const belowStart = comp.y + comp.h;
     if (!broke) y = Math.max(y, origin + belowStart);
     const rest = p.band.height - belowStart;
     const hasBelow = p.band.components.some((c) => c !== comp && c.y >= belowStart - EPS);
-    if (hasBelow && y + rest > bodyBottom + EPS && y > bodyTop + EPS) {
-      newPage();
-      y = bodyTop;
+    if (hasBelow && y + rest > bodyBottom + EPS && y > pageTop + EPS) {
+      newPage(p.repeat);
+      y = cursor;
     }
     const oy = y - belowStart;
     if (hasBelow) add((ctx) => bandItems(p, left, oy, ctx, context, "below"));
@@ -245,11 +312,20 @@ export function layoutReport(
   // 5. Render with page numbers known.
   const total = pages.length;
   const pageBand = (band: Band, oy: number, ctx: PageContext) =>
-    band.components.flatMap((c) =>
-      c.kind === "table" ? [] : componentItems(c, left, oy, context({ ...base, ...ctx })),
-    );
+    band.components.flatMap((c) => {
+      if (c.kind !== "table") return componentItems(c, left, oy, context({ ...base, ...ctx }));
+      diagnose(c.id, PAGE_BAND_TABLE);
+      return [];
+    });
   const out: Page[] = pages.map((thunks, index) => {
-    const ctx = { page: index + 1, pages: total };
+    const section = pageSection[index];
+    const first = pageSection.indexOf(section);
+    const ctx = {
+      page: index + 1,
+      pages: total,
+      groupPage: index - first + 1,
+      groupPages: pageSection.lastIndexOf(section) - first + 1,
+    };
     return {
       number: index + 1,
       items: [

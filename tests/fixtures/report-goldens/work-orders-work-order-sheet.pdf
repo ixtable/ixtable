@@ -1,0 +1,461 @@
+%PDF-1.4
+%‚„œ”
+1 0 obj
+<< /Type /Catalog /Pages 2 0 R >>
+endobj
+2 0 obj
+<< /Type /Pages /Kids [6 0 R] /Count 1 >>
+endobj
+3 0 obj
+<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica /Encoding /WinAnsiEncoding >>
+endobj
+4 0 obj
+<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica-Bold /Encoding /WinAnsiEncoding >>
+endobj
+5 0 obj
+<< /Title (Work order sheet) /Producer (ixtable report engine) /CreationDate (D:20260115093000Z) >>
+endobj
+6 0 obj
+<< /Type /Page /Parent 2 0 R /MediaBox [0 0 595 842] /Resources << /Font << /F1 3 0 R /F2 4 0 R >> >> /Contents 7 0 R >>
+endobj
+7 0 obj
+<< /Length 6173 >>
+stream
+BT
+/F2 14 Tf 0 g
+1 0 0 1 38 794.02 Tm (Work order sheet) Tj
+ET
+q 0 G 1 w 36 781.5 m 559 781.5 l S Q
+q
+0 G 0.5 w
+36 724 523 52 re S
+Q
+BT
+/F2 12 Tf 0 g
+1 0 0 1 44 761.73 Tm (WO-1001 \267 Replace pump seal) Tj
+ET
+BT
+/F1 10 Tf 0 g
+1 0 0 1 44 745.44 Tm (Asset: PUMP-001 Coolant pump) Tj
+ET
+BT
+/F1 10 Tf 0 g
+1 0 0 1 298 745.44 Tm (Assignee: Maria Lopez) Tj
+ET
+BT
+/F1 10 Tf 0 g
+1 0 0 1 44 731.44 Tm (Status: In progress \267 Priority: High) Tj
+ET
+BT
+/F1 10 Tf 0 g
+1 0 0 1 298 731.44 Tm (Opened: 2026-09-01) Tj
+ET
+BT
+/F2 10 Tf 0 g
+1 0 0 1 38 709.44 Tm (Step) Tj
+ET
+BT
+/F2 10 Tf 0 g
+1 0 0 1 78 709.44 Tm (Task) Tj
+ET
+BT
+/F2 10 Tf 0 g
+1 0 0 1 411 709.44 Tm (State) Tj
+ET
+BT
+/F2 10 Tf 0 g
+1 0 0 1 528.11 709.44 Tm (Hours) Tj
+ET
+BT
+/F1 10 Tf 0 g
+1 0 0 1 38 693.44 Tm (1) Tj
+ET
+BT
+/F1 10 Tf 0 g
+1 0 0 1 78 693.44 Tm (Drain coolant) Tj
+ET
+BT
+/F1 10 Tf 0 g
+1 0 0 1 411 693.44 Tm (Done) Tj
+ET
+BT
+/F1 10 Tf 0 g
+1 0 0 1 543.1 693.44 Tm (1.5) Tj
+ET
+BT
+/F1 10 Tf 0 g
+1 0 0 1 38 677.44 Tm (2) Tj
+ET
+BT
+/F1 10 Tf 0 g
+1 0 0 1 78 677.44 Tm (Remove old seal) Tj
+ET
+BT
+/F1 10 Tf 0 g
+1 0 0 1 411 677.44 Tm (Done) Tj
+ET
+BT
+/F1 10 Tf 0 g
+1 0 0 1 543.1 677.44 Tm (2.0) Tj
+ET
+BT
+/F1 10 Tf 0 g
+1 0 0 1 38 661.44 Tm (3) Tj
+ET
+BT
+/F1 10 Tf 0 g
+1 0 0 1 78 661.44 Tm (Fit new seal) Tj
+ET
+BT
+/F1 10 Tf 0 g
+1 0 0 1 411 661.44 Tm (Open) Tj
+ET
+BT
+/F1 10 Tf 0 g
+1 0 0 1 543.1 661.44 Tm (0.0) Tj
+ET
+BT
+/F1 10 Tf 0 g
+1 0 0 1 38 645.44 Tm (4) Tj
+ET
+BT
+/F1 10 Tf 0 g
+1 0 0 1 78 645.44 Tm (Test run) Tj
+ET
+BT
+/F1 10 Tf 0 g
+1 0 0 1 411 645.44 Tm (Open) Tj
+ET
+BT
+/F1 10 Tf 0 g
+1 0 0 1 543.1 645.44 Tm (0.0) Tj
+ET
+BT
+/F2 10 Tf 0 g
+1 0 0 1 482.54 627.44 Tm (Total hours: 3.5) Tj
+ET
+q
+0 G 0.5 w
+36 558 523 52 re S
+Q
+BT
+/F2 12 Tf 0 g
+1 0 0 1 44 595.73 Tm (WO-1002 \267 Quarterly HVAC service) Tj
+ET
+BT
+/F1 10 Tf 0 g
+1 0 0 1 44 579.44 Tm (Asset: HVAC-002 Rooftop HVAC unit) Tj
+ET
+BT
+/F1 10 Tf 0 g
+1 0 0 1 298 579.44 Tm (Assignee: Priya Nair) Tj
+ET
+BT
+/F1 10 Tf 0 g
+1 0 0 1 44 565.44 Tm (Status: Open \267 Priority: Normal) Tj
+ET
+BT
+/F1 10 Tf 0 g
+1 0 0 1 298 565.44 Tm (Opened: 2026-09-05) Tj
+ET
+BT
+/F2 10 Tf 0 g
+1 0 0 1 38 543.44 Tm (Step) Tj
+ET
+BT
+/F2 10 Tf 0 g
+1 0 0 1 78 543.44 Tm (Task) Tj
+ET
+BT
+/F2 10 Tf 0 g
+1 0 0 1 411 543.44 Tm (State) Tj
+ET
+BT
+/F2 10 Tf 0 g
+1 0 0 1 528.11 543.44 Tm (Hours) Tj
+ET
+BT
+/F1 10 Tf 0 g
+1 0 0 1 38 527.44 Tm (1) Tj
+ET
+BT
+/F1 10 Tf 0 g
+1 0 0 1 78 527.44 Tm (Replace filters) Tj
+ET
+BT
+/F1 10 Tf 0 g
+1 0 0 1 411 527.44 Tm (Open) Tj
+ET
+BT
+/F1 10 Tf 0 g
+1 0 0 1 543.1 527.44 Tm (0.0) Tj
+ET
+BT
+/F1 10 Tf 0 g
+1 0 0 1 38 511.44 Tm (2) Tj
+ET
+BT
+/F1 10 Tf 0 g
+1 0 0 1 78 511.44 Tm (Check refrigerant) Tj
+ET
+BT
+/F1 10 Tf 0 g
+1 0 0 1 411 511.44 Tm (Open) Tj
+ET
+BT
+/F1 10 Tf 0 g
+1 0 0 1 543.1 511.44 Tm (0.0) Tj
+ET
+BT
+/F1 10 Tf 0 g
+1 0 0 1 38 495.44 Tm (3) Tj
+ET
+BT
+/F1 10 Tf 0 g
+1 0 0 1 78 495.44 Tm (Clean coils) Tj
+ET
+BT
+/F1 10 Tf 0 g
+1 0 0 1 411 495.44 Tm (Open) Tj
+ET
+BT
+/F1 10 Tf 0 g
+1 0 0 1 543.1 495.44 Tm (0.0) Tj
+ET
+BT
+/F2 10 Tf 0 g
+1 0 0 1 490.88 477.44 Tm (Total hours: 0) Tj
+ET
+q
+0 G 0.5 w
+36 408 523 52 re S
+Q
+BT
+/F2 12 Tf 0 g
+1 0 0 1 44 445.73 Tm (WO-1003 \267 Belt alignment) Tj
+ET
+BT
+/F1 10 Tf 0 g
+1 0 0 1 44 429.44 Tm (Asset: CONV-003 Conveyor line 3) Tj
+ET
+BT
+/F1 10 Tf 0 g
+1 0 0 1 298 429.44 Tm (Assignee: Maria Lopez) Tj
+ET
+BT
+/F1 10 Tf 0 g
+1 0 0 1 44 415.44 Tm (Status: Done \267 Priority: Normal) Tj
+ET
+BT
+/F1 10 Tf 0 g
+1 0 0 1 298 415.44 Tm (Opened: 2026-08-20) Tj
+ET
+BT
+/F2 10 Tf 0 g
+1 0 0 1 38 393.44 Tm (Step) Tj
+ET
+BT
+/F2 10 Tf 0 g
+1 0 0 1 78 393.44 Tm (Task) Tj
+ET
+BT
+/F2 10 Tf 0 g
+1 0 0 1 411 393.44 Tm (State) Tj
+ET
+BT
+/F2 10 Tf 0 g
+1 0 0 1 528.11 393.44 Tm (Hours) Tj
+ET
+BT
+/F1 10 Tf 0 g
+1 0 0 1 38 377.44 Tm (1) Tj
+ET
+BT
+/F1 10 Tf 0 g
+1 0 0 1 78 377.44 Tm (Inspect belt) Tj
+ET
+BT
+/F1 10 Tf 0 g
+1 0 0 1 411 377.44 Tm (Done) Tj
+ET
+BT
+/F1 10 Tf 0 g
+1 0 0 1 543.1 377.44 Tm (1.0) Tj
+ET
+BT
+/F1 10 Tf 0 g
+1 0 0 1 38 361.44 Tm (2) Tj
+ET
+BT
+/F1 10 Tf 0 g
+1 0 0 1 78 361.44 Tm (Align pulleys) Tj
+ET
+BT
+/F1 10 Tf 0 g
+1 0 0 1 411 361.44 Tm (Done) Tj
+ET
+BT
+/F1 10 Tf 0 g
+1 0 0 1 543.1 361.44 Tm (2.5) Tj
+ET
+BT
+/F2 10 Tf 0 g
+1 0 0 1 482.54 343.44 Tm (Total hours: 3.5) Tj
+ET
+q
+0 G 0.5 w
+36 274 523 52 re S
+Q
+BT
+/F2 12 Tf 0 g
+1 0 0 1 44 311.73 Tm (WO-1004 \267 Load test generator) Tj
+ET
+BT
+/F1 10 Tf 0 g
+1 0 0 1 44 295.45 Tm (Asset: GEN-004 Backup generator) Tj
+ET
+BT
+/F1 10 Tf 0 g
+1 0 0 1 298 295.45 Tm (Assignee: Tom Chen) Tj
+ET
+BT
+/F1 10 Tf 0 g
+1 0 0 1 44 281.45 Tm (Status: Open \267 Priority: Urgent) Tj
+ET
+BT
+/F1 10 Tf 0 g
+1 0 0 1 298 281.45 Tm (Opened: 2026-09-10) Tj
+ET
+BT
+/F2 10 Tf 0 g
+1 0 0 1 38 259.45 Tm (Step) Tj
+ET
+BT
+/F2 10 Tf 0 g
+1 0 0 1 78 259.45 Tm (Task) Tj
+ET
+BT
+/F2 10 Tf 0 g
+1 0 0 1 411 259.45 Tm (State) Tj
+ET
+BT
+/F2 10 Tf 0 g
+1 0 0 1 528.11 259.45 Tm (Hours) Tj
+ET
+BT
+/F1 10 Tf 0 g
+1 0 0 1 38 243.45 Tm (1) Tj
+ET
+BT
+/F1 10 Tf 0 g
+1 0 0 1 78 243.45 Tm (Run load bank) Tj
+ET
+BT
+/F1 10 Tf 0 g
+1 0 0 1 411 243.45 Tm (Open) Tj
+ET
+BT
+/F1 10 Tf 0 g
+1 0 0 1 543.1 243.45 Tm (0.0) Tj
+ET
+BT
+/F1 10 Tf 0 g
+1 0 0 1 38 227.45 Tm (2) Tj
+ET
+BT
+/F1 10 Tf 0 g
+1 0 0 1 78 227.45 Tm (Record readings) Tj
+ET
+BT
+/F1 10 Tf 0 g
+1 0 0 1 411 227.45 Tm (Open) Tj
+ET
+BT
+/F1 10 Tf 0 g
+1 0 0 1 543.1 227.45 Tm (0.0) Tj
+ET
+BT
+/F2 10 Tf 0 g
+1 0 0 1 490.88 209.45 Tm (Total hours: 0) Tj
+ET
+q
+0 G 0.5 w
+36 140 523 52 re S
+Q
+BT
+/F2 12 Tf 0 g
+1 0 0 1 44 177.73 Tm (WO-1005 \267 Vibration inspection) Tj
+ET
+BT
+/F1 10 Tf 0 g
+1 0 0 1 44 161.44 Tm (Asset: PUMP-001 Coolant pump) Tj
+ET
+BT
+/F1 10 Tf 0 g
+1 0 0 1 298 161.44 Tm (Assignee: Unassigned) Tj
+ET
+BT
+/F1 10 Tf 0 g
+1 0 0 1 44 147.44 Tm (Status: Open \267 Priority: Low) Tj
+ET
+BT
+/F1 10 Tf 0 g
+1 0 0 1 298 147.44 Tm (Opened: 2026-09-12) Tj
+ET
+BT
+/F2 10 Tf 0 g
+1 0 0 1 38 125.44 Tm (Step) Tj
+ET
+BT
+/F2 10 Tf 0 g
+1 0 0 1 78 125.44 Tm (Task) Tj
+ET
+BT
+/F2 10 Tf 0 g
+1 0 0 1 411 125.44 Tm (State) Tj
+ET
+BT
+/F2 10 Tf 0 g
+1 0 0 1 528.11 125.44 Tm (Hours) Tj
+ET
+BT
+/F1 10 Tf 0 g
+1 0 0 1 78 109.44 Tm (\(no tasks\)) Tj
+ET
+BT
+/F1 10 Tf 0 g
+1 0 0 1 543.1 109.44 Tm (0.0) Tj
+ET
+BT
+/F2 10 Tf 0 g
+1 0 0 1 490.88 91.44 Tm (Total hours: 0) Tj
+ET
+BT
+/F2 10 Tf 0 g
+1 0 0 1 441.97 63.44 Tm (All work orders: 7 hours) Tj
+ET
+BT
+/F1 10 Tf 0 g
+1 0 0 1 38 43.44 Tm (Technician signature: ____________) Tj
+ET
+BT
+/F1 10 Tf 0 g
+1 0 0 1 505.85 43.44 Tm (Page 1 of 1) Tj
+ET
+endstream
+endobj
+xref
+0 8
+0000000000 65535 f 
+0000000015 00000 n 
+0000000064 00000 n 
+0000000121 00000 n 
+0000000218 00000 n 
+0000000320 00000 n 
+0000000435 00000 n 
+0000000571 00000 n 
+trailer
+<< /Size 8 /Root 1 0 R /Info 5 0 R >>
+startxref
+6796
+%%EOF

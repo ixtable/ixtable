@@ -11,7 +11,9 @@ pub mod split;
 
 use crate::archive::{check_named_ids, DocumentConfig, Issue};
 use crate::data::sqltext::transaction_control_error;
-use crate::recordstore::{sqlite::SqliteRecordStore, Bookkeeping, RecordStore, StoreError};
+use crate::recordstore::{
+    sqlite::SqliteRecordStore, Bookkeeping, RecordStore, StoreError, BIND_FINISHED_AT, BIND_HEALTH,
+};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::{collections::HashSet, path::Path};
@@ -94,7 +96,6 @@ const TRACKING_DDL: &str = "CREATE TABLE IF NOT EXISTS _ixtable_migrations(id TE
 CREATE TABLE IF NOT EXISTS _ixtable_migration_log(migration_id TEXT NOT NULL, name TEXT NOT NULL, direction TEXT NOT NULL, status TEXT NOT NULL, checksum TEXT NOT NULL, at TEXT NOT NULL, log TEXT, error TEXT, started_at TEXT, finished_at TEXT, health TEXT)";
 /// Columns older log tables lack: real start/finish times and the health-check outcome.
 const LOG_EXTRA_COLUMNS: [&str; 3] = ["started_at", "finished_at", "health"];
-const LOG_FINISH: &str = "UPDATE _ixtable_migration_log SET finished_at = ?, health = ? WHERE migration_id = ? AND direction = ? AND at = ? AND status = ?";
 const LOG_INSERT: &str = "INSERT INTO _ixtable_migration_log(migration_id,name,direction,status,checksum,at,log,error,started_at,finished_at,health) VALUES (?,?,?,?,?,?,?,?,?,?,?)";
 
 pub fn validate(config: &DocumentConfig) -> Vec<Issue> {
@@ -155,11 +156,14 @@ fn ensure_tracking(store: &mut dyn RecordStore) -> Result<(), StoreError> {
     store.execute_internal(TRACKING_DDL, &[])?;
     for column in LOG_EXTRA_COLUMNS {
         let probe = format!("SELECT {column} FROM _ixtable_migration_log LIMIT 1");
-        if store.query_internal(&probe).is_err() {
-            store.execute_internal(
+        match store.query_internal(&probe) {
+            Ok(_) => {}
+            // Only a missing column means an older log table; other errors (locks) propagate.
+            Err(e) if !e.message.contains("no such column") => return Err(e),
+            Err(_) => store.execute_internal(
                 &format!("ALTER TABLE _ixtable_migration_log ADD COLUMN {column} TEXT"),
                 &[],
-            )?;
+            )?,
         }
     }
     Ok(())
@@ -318,7 +322,7 @@ pub fn run_one(
         started_at,
         ..Default::default()
     };
-    let entry = |status: &str, lines: &str, error: &str| -> Bookkeeping {
+    let entry = |status: &str, lines: &str, error: &str, finish: (&str, &str)| -> Bookkeeping {
         (
             LOG_INSERT.into(),
             vec![
@@ -331,8 +335,8 @@ pub fn run_one(
                 lines.into(),
                 error.into(),
                 log_started.clone(),
-                String::new(),
-                String::new(),
+                finish.0.into(),
+                finish.1.into(),
             ],
         )
     };
@@ -347,29 +351,23 @@ pub fn run_one(
             &sql,
             &[
                 state,
-                entry(if down { "rolled_back" } else { "applied" }, &lines, ""),
+                entry(
+                    if down { "rolled_back" } else { "applied" },
+                    &lines,
+                    "",
+                    (BIND_FINISHED_AT, BIND_HEALTH),
+                ),
             ],
             false,
         )
     });
     log.finished_at = now();
+    // A success row already holds its finish time and health, written inside the transaction.
     match result {
         Ok(report) => {
             log.status = if down { "rolled_back" } else { "applied" }.into();
             log.log = report.log;
             log.health = report.health;
-            // The success row is written inside the transaction, so finish time and health follow.
-            let _ = store.execute_internal(
-                LOG_FINISH,
-                &[
-                    log.finished_at.clone(),
-                    log.health.join("\n"),
-                    m.id.clone(),
-                    direction.into(),
-                    at.clone(),
-                    log.status.clone(),
-                ],
-            );
         }
         Err(e) => {
             // A failed health check rolls the migration back; keep its message as the outcome.
@@ -378,9 +376,8 @@ pub fn run_one(
             if health_failed {
                 log.health = vec![format!("failed: {}", e.message)];
             }
-            let (sql, mut binds) = entry("failed", &lines, &e.message);
-            binds[9] = log.finished_at.clone();
-            binds[10] = log.health.join("\n");
+            let health = log.health.join("\n");
+            let (sql, binds) = entry("failed", &lines, &e.message, (&log.finished_at, &health));
             let _ = store.execute_internal(&sql, &binds);
             log.status = "failed".into();
             log.recovery = Some(recovery(m, &e.message, checkpoint));

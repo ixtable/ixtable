@@ -108,14 +108,22 @@ export function MigrationsTab() {
     );
     setEditing(null);
   };
-  const afterRun = async (result: MigrationRun) => {
+  // Runs apply or rollback and lists only the definition problems the run introduced.
+  const runAndCheck = async (task: () => Promise<MigrationRun>) => {
+    setAfterIssues(null);
+    const key = (i: Issue) => `${i.objectKind}|${i.objectId}|${i.message}`;
+    const before = new Set((await validateDocument()).map(key));
+    const result = await task();
     setRun(result);
     markDirty();
     await reloadMetadata();
-    // Forms and queries bound to dropped or renamed columns show up right away.
+    if (!result.ok) return;
     const all = await validateDocument();
-    setAfterIssues(all.filter((i) => i.objectKind !== "migration"));
+    setAfterIssues(all.filter((i) => i.objectKind !== "migration" && !before.has(key(i))));
   };
+  useEffect(() => {
+    if (editing) setAfterIssues(null);
+  }, [editing]);
   const statusOf = (id: string) => status.find((s) => s.id === id);
   const pendingCount = status.filter((s) => !s.applied && s.appliesToStore).length;
 
@@ -165,14 +173,14 @@ export function MigrationsTab() {
           type="button"
           className="save"
           disabled={busy || postgres || !pendingCount}
-          onClick={() => act(async () => afterRun(await applyMigrations()))}
+          onClick={() => act(() => runAndCheck(applyMigrations))}
         >
           Apply pending ({pendingCount})
         </button>
         <button
           type="button"
           disabled={busy || postgres || !status.some((s) => s.applied)}
-          onClick={() => act(async () => afterRun(await rollbackMigration()))}
+          onClick={() => act(() => runAndCheck(rollbackMigration))}
         >
           Roll back last
         </button>

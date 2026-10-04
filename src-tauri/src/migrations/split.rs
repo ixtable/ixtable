@@ -10,6 +10,20 @@ fn complete(sql: &str) -> bool {
         .unwrap_or(false)
 }
 
+/// True when `text` holds nothing but whitespace and comments.
+fn only_comments(mut text: &str) -> bool {
+    loop {
+        text = text.trim_start();
+        if let Some(rest) = text.strip_prefix("--") {
+            text = rest.split_once('\n').map_or("", |(_, r)| r);
+        } else if let Some(rest) = text.strip_prefix("/*") {
+            text = rest.split_once("*/").map_or("", |(_, r)| r);
+        } else {
+            return text.is_empty();
+        }
+    }
+}
+
 /// Statements in order, each trimmed and ending with `;`.
 pub fn statements(sql: &str) -> Vec<String> {
     let mut out = vec![];
@@ -21,7 +35,7 @@ pub fn statements(sql: &str) -> Vec<String> {
         }
     }
     let rest = sql[start..].trim();
-    if !rest.is_empty() {
+    if !only_comments(rest) {
         out.push(format!("{rest};"));
     }
     out.retain(|s| s != ";");

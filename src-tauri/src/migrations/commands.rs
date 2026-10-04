@@ -190,6 +190,15 @@ pub fn dry_run_migrations(
         }
         None => with_store(&window_label, |s| pending_in(s, &config.migrations))?,
     };
+    // Same checks as Apply, so a dry run never passes what Apply would refuse.
+    let done = with_store(&window_label, |s| applied(s))?;
+    let to_run: Vec<Migration> = selected
+        .iter()
+        .filter(|m| !done.iter().any(|d| d.0 == m.id))
+        .cloned()
+        .collect();
+    preflight(&done, &config.migrations, &to_run)
+        .map_err(|e| AppError::new("VALIDATION_ERROR", e))?;
     let names: Vec<String> = selected.iter().map(|m| m.name.clone()).collect();
     let script = selected
         .iter()

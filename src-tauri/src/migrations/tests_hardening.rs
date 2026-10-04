@@ -137,3 +137,55 @@ fn recovery_text_names_the_assets_tab() {
     assert!(text.contains("Settings › Assets › Checkpoints"), "{text}");
     assert!(!text.contains("Problems/Recovery"));
 }
+
+#[test]
+fn statement_split_drops_a_trailing_comment() {
+    let parts = split::statements("CREATE TABLE t(x);\n-- done");
+    assert_eq!(parts, vec!["CREATE TABLE t(x);".to_string()]);
+    assert!(split::statements("/* a; */ -- b\n  ").is_empty());
+    assert_eq!(split::statements("SELECT 1 -- tail").len(), 1);
+}
+
+#[test]
+fn executed_count_matches_the_preview_split() {
+    let path = temp_db();
+    let sql = "CREATE TABLE t(x TEXT); INSERT INTO t VALUES ('a;b');\n\
+CREATE TRIGGER trg AFTER INSERT ON t BEGIN UPDATE t SET x = 'y;'; END;";
+    let logs = apply_sqlite(&path, &[m("a", 1, sql)]).unwrap();
+    assert_eq!(split::statements(sql).len(), 3);
+    assert!(
+        logs[0].log.contains(&"executed 3 statement(s)".to_string()),
+        "{:?}",
+        logs[0].log
+    );
+    let _ = std::fs::remove_file(path);
+}
+
+#[test]
+fn finish_time_and_health_are_committed_with_the_success_row() {
+    let path = temp_db();
+    apply_sqlite(&path, &[m("a", 1, "CREATE TABLE a(x)")]).unwrap();
+    let conn = rusqlite::Connection::open(&path).unwrap();
+    let (at, finished, health): (String, String, String) = conn
+        .query_row(
+            "SELECT at, finished_at, health FROM _ixtable_migration_log WHERE status = 'applied'",
+            [],
+            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+        )
+        .unwrap();
+    assert!(finished > at, "{finished} vs {at}");
+    assert!(health.contains("integrity_check: ok"), "{health}");
+    let _ = std::fs::remove_file(path);
+}
+
+#[test]
+fn tracking_probe_errors_other_than_a_missing_column_propagate() {
+    let path = temp_db();
+    rusqlite::Connection::open(&path)
+        .unwrap()
+        .execute_batch("CREATE VIEW _ixtable_migration_log AS SELECT * FROM gone;")
+        .unwrap();
+    let err = history(&mut SqliteRecordStore::new(&path)).unwrap_err();
+    assert!(err.message.contains("no such table"), "{}", err.message);
+    let _ = std::fs::remove_file(path);
+}

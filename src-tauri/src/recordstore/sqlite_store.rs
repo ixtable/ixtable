@@ -32,10 +32,11 @@ impl SqliteRecordStore {
         tx.execute_batch(sql).map_err(se)?;
         report.log.push(format!(
             "executed {} statement(s)",
-            sql.matches(';').count().max(1)
+            crate::migrations::split::statements(sql).len().max(1)
         ));
         report.health = health(&tx)?;
         for (record_sql, binds) in record {
+            let binds = super::resolve_binds(binds, &report.health);
             tx.execute(record_sql, params_from_iter(binds.iter()))
                 .map_err(se)?;
         }

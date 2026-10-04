@@ -14,6 +14,7 @@ import { addControl, setLayout, targetContainer } from "./operations";
 import {
   CONTROL_KINDS,
   controlKindLabel,
+  type DesignForm,
   type FormMode,
   formTable,
   isContainerKind,
@@ -22,6 +23,16 @@ import { useColumns } from "./useColumns";
 import { useDesignEditor } from "./useDesignEditor";
 
 type View = "form" | "navigation" | "preview";
+
+/** Controls placed directly on a grid (one tab page for tab groups), for layout checks. */
+const gridItems = (form: DesignForm, parentId: string | null, tab?: string | null) =>
+  form.controls
+    .filter(
+      (c) =>
+        (c.parent?.id ?? null) === parentId &&
+        (tab === undefined || (c.parent?.tab ?? null) === tab),
+    )
+    .map((c) => ({ id: c.id, placement: c.placement, label: c.label }));
 
 /** Form designer: form list, palette, editable grid canvas, properties, navigation, and preview. */
 export function DesignStudio({ objects }: { objects: DbObject[] }) {
@@ -174,8 +185,9 @@ export function DesignStudio({ objects }: { objects: DbObject[] }) {
                 layoutSettings={
                   <LayoutSettings
                     layout={form.layout}
-                    onChange={(layout) =>
-                      editForm(form.id, (f) => setLayout(f, null, layout), "Edit grid")
+                    items={gridItems(form, null)}
+                    onChange={(layout, renames) =>
+                      editForm(form.id, (f) => setLayout(f, null, layout, renames), "Edit grid")
                     }
                   />
                 }
@@ -185,8 +197,15 @@ export function DesignStudio({ objects }: { objects: DbObject[] }) {
               <LayoutSettings
                 title="Container grid"
                 layout={control.layout}
-                onChange={(layout) =>
-                  editForm(form.id, (f) => setLayout(f, control.id, layout), "Edit grid")
+                items={gridItems(
+                  form,
+                  control.id,
+                  control.kind === "tabs"
+                    ? (activeTabs[control.id] ?? control.tabs?.[0]?.id ?? null)
+                    : undefined,
+                )}
+                onChange={(layout, renames) =>
+                  editForm(form.id, (f) => setLayout(f, control.id, layout, renames), "Edit grid")
                 }
               />
             )}

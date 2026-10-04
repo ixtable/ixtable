@@ -1,4 +1,5 @@
 /** Properties of the selected dashboard component. Field pickers list the query's result columns. */
+import { RegionPicker } from "../design/RegionEditor";
 import { Trash2 } from "lucide-react";
 import { type ReactNode, useId } from "react";
 import { ActionPicker } from "../automation/ActionPicker";
@@ -6,6 +7,7 @@ import { FORM_MODES, type FormMode } from "../design/schema";
 import { check } from "../expr";
 import { useDocumentConfig } from "../lib/config-store";
 import { QueryPicker } from "../query/QueryPicker";
+import { ConditionProperties } from "./ConditionProperties";
 import { CHART_LABELS, KIND_LABELS } from "./model";
 import { useQueryColumns } from "./useQueryColumns";
 import { CHART_TYPES, type ChartType, type Dashboard, type DashboardComponent } from "./types";
@@ -418,10 +420,16 @@ export function ComponentProperties({
           )}
         </Field>
       )}
+      <ConditionProperties component={c} columns={columns} change={change} />
       <p className="fd-hint">
         Column {c.placement.column}, row {c.placement.row}, {c.placement.columnSpan} ×{" "}
         {c.placement.rowSpan}. Alt+Arrow resizes, Alt+Shift+Arrow moves.
       </p>
+      <RegionPicker
+        layout={dashboard.layout}
+        placement={c.placement}
+        onChange={(placement) => change({ placement }, "Place component")}
+      />
       <button type="button" onClick={remove}>
         <Trash2 aria-hidden="true" /> Delete component
       </button>

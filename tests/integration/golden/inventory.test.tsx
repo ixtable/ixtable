@@ -282,7 +282,7 @@ it("Inventory: constraints, transactional transfers, and concurrency policies", 
         table: "products",
         values: [{ column: "unit_cost", value: { type: "real", value: 0.3 } }],
         identity: [int(1)],
-        expected: null,
+        expected: [{ column: "name", value: { type: "text", value: "Hex bolt M8" } }],
       });
       await user.clear(name);
       await user.type(name, "Hex bolt M8 zinc");
@@ -296,7 +296,7 @@ it("Inventory: constraints, transactional transfers, and concurrency policies", 
     });
 
     await journey.step("Last-write-wins policy on movements accepts a stale edit", async () => {
-      const changed = await invoke<number>("update_row", {
+      const { changed } = await invoke<{ changed: number }>("update_row", {
         windowLabel: "main",
         table: "stock_movements",
         values: [{ column: "note", value: { type: "text", value: "Counted" } }],

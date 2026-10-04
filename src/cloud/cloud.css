@@ -171,3 +171,6 @@
 .cloud-runtime-bar .cloud-license {
   word-break: break-word;
 }
+.cloud-update-notice {
+  white-space: pre-wrap;
+}

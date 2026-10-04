@@ -94,6 +94,15 @@ pub struct Trigger {
     pub max_attempts: u32,
     #[serde(default = "default_backoff")]
     pub backoff_ms: u64,
+    /// Execution identity: "app" (default, see trigger_auth.rs) or "user".
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub run_as: Option<String>,
+}
+impl Trigger {
+    /// Whether the trigger's steps run under the signed-in user's role.
+    pub fn runs_as_user(&self) -> bool {
+        self.run_as.as_deref() == Some("user")
+    }
 }
 impl Default for Trigger {
     fn default() -> Self {
@@ -109,6 +118,7 @@ impl Default for Trigger {
             idempotency_key: None,
             max_attempts: default_attempts(),
             backoff_ms: default_backoff(),
+            run_as: None,
         }
     }
 }
@@ -361,6 +371,9 @@ pub fn validate(config: &DocumentConfig) -> Vec<Issue> {
         } else if !names.contains_key(t.action_id.as_str()) {
             err(format!("action {} does not exist", t.action_id));
         }
+        if !matches!(t.run_as.as_deref(), None | Some("app") | Some("user")) {
+            err("run as must be app or user".into());
+        }
         if t.max_attempts == 0 {
             err("max attempts must be at least 1".into());
         }
@@ -474,7 +487,7 @@ mod tests {
                 ]
             }, {"id": "a2", "name": "Empty", "steps": []}]),
             json!([
-                {"id": "t1", "name": "T", "table": "", "event": "created", "actionId": "zzz", "mode": "async", "maxAttempts": 0, "condition": ""}
+                {"id": "t1", "name": "T", "table": "", "event": "created", "actionId": "zzz", "mode": "async", "maxAttempts": 0, "condition": "", "runAs": "root"}
             ]),
         );
         let all = messages(&validate(&c));
@@ -494,6 +507,7 @@ mod tests {
             "trigger \"T\": action zzz does not exist",
             "max attempts must be at least 1",
             "trigger \"T\": condition expression is empty",
+            "run as must be app or user",
         ] {
             assert!(
                 all.iter().any(|m| m.contains(expected)),

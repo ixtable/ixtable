@@ -41,6 +41,24 @@ pub struct ScriptReport {
 /// Bookkeeping statement (SQL with `?` placeholders, text binds).
 pub type Bookkeeping = (String, Vec<String>);
 
+/// Bookkeeping bind replaced by the time the script finished, inside its transaction.
+pub const BIND_FINISHED_AT: &str = "\u{0}ixtable:finished_at";
+/// Bookkeeping bind replaced by the script's health lines, inside its transaction.
+pub const BIND_HEALTH: &str = "\u{0}ixtable:health";
+
+/// Binds with the finish-time and health placeholders filled in.
+pub fn resolve_binds(binds: &[String], health: &[String]) -> Vec<String> {
+    let finished = chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Nanos, true);
+    binds
+        .iter()
+        .map(|b| match b.as_str() {
+            BIND_FINISHED_AT => finished.clone(),
+            BIND_HEALTH => health.join("\n"),
+            _ => b.clone(),
+        })
+        .collect()
+}
+
 pub trait RecordStore {
     fn kind(&self) -> &'static str;
     fn capabilities(&self) -> StoreCapabilities;

@@ -1,6 +1,7 @@
 import { fireEvent, screen, waitFor, within } from "@testing-library/react";
 import { invoke } from "@tauri-apps/api/core";
 import { expect, it } from "vitest";
+import { asTauriError } from "../../src/lib/api";
 import { createTable, insertRow, renderNewDocument, value } from "./helpers";
 
 const LONG = { timeout: 20_000 };
@@ -101,4 +102,45 @@ it("previews roles, hides navigation, blocks deletes, and shows fields condition
   const clerkView = await within(page).findByRole("form", { name: "Customers" }, LONG);
   expect(await within(clerkView).findByRole("button", { name: "Edit" }, LONG)).toBeInTheDocument();
   expect(within(clerkView).queryByRole("button", { name: "Delete" })).toBeNull();
+
+  const code = (promise: Promise<unknown>) =>
+    promise.then(
+      () => "OK",
+      (error: unknown) => asTauriError(error).code,
+    );
+  const call = (command: string, args: Record<string, unknown>) =>
+    code(invoke(command, { windowLabel: "main", ...args }));
+  const tablePage = (table: string) =>
+    call("read_table_page", { table, offset: 0, limit: 10, sorts: [], filters: [] });
+  const note = [{ column: "body", value: value("text", "secret") }];
+  await waitFor(async () => expect(await tablePage("notes")).toBe("FORBIDDEN"), LONG);
+  expect(await call("insert_row", { table: "notes", values: note })).toBe("FORBIDDEN");
+  expect(
+    await call("execute_write_batch", { ops: [{ op: "insert", table: "notes", values: note }] }),
+  ).toBe("FORBIDDEN");
+  expect(await call("execute_read_query", { sql: "SELECT * FROM notes" })).toBe("FORBIDDEN");
+  expect(await tablePage("customers")).toBe("OK");
+  const identity = [value("integer", 1)];
+  const rename = [{ column: "name", value: value("text", "Acme Ltd") }];
+  const expected = [{ column: "name", value: value("text", "Acme") }];
+  expect(await call("update_row", { table: "customers", values: rename, identity })).toBe(
+    "EXPECTED_REQUIRED",
+  );
+  expect(await call("update_row", { table: "customers", values: rename, identity, expected })).toBe(
+    "OK",
+  );
+  expect(await call("delete_row", { table: "customers", identity, expected })).toBe("FORBIDDEN");
+  expect(await call("delete_row", { table: "customers", identity })).toBe("FORBIDDEN");
+  expect(await call("insert_row", { table: "customers", values: rename })).toBe("FORBIDDEN");
+
+  await user.selectOptions(
+    screen.getByRole("combobox", { name: "Preview as role" }),
+    "Developer (full access)",
+  );
+  await waitFor(async () => expect(await tablePage("notes")).toBe("OK"), LONG);
+  await user.selectOptions(screen.getByRole("combobox", { name: "Preview as role" }), "Clerk");
+  await waitFor(async () => expect(await tablePage("notes")).toBe("FORBIDDEN"), LONG);
+  await user.click(screen.getByRole("button", { name: "Settings" }));
+  await waitFor(async () => expect(await tablePage("notes")).toBe("OK"), LONG);
+  expect(await call("insert_row", { table: "notes", values: note })).toBe("OK");
 });

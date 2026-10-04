@@ -13,6 +13,7 @@ export function ImpactDialog({
   plan,
   impact,
   confirmLabel,
+  acknowledgement,
   busy,
   error,
   onConfirm,
@@ -22,6 +23,8 @@ export function ImpactDialog({
   plan?: ChangePlan | null;
   impact?: TableImpact | null;
   confirmLabel: string;
+  // Asks for this acknowledgement even when nothing is destroyed, e.g. dependents of a rename.
+  acknowledgement?: string;
   busy?: boolean;
   error?: string;
   onConfirm: () => void;
@@ -32,6 +35,7 @@ export function ImpactDialog({
   const [acknowledged, setAcknowledged] = useState(false);
   const shown = impact ?? plan?.impact ?? null;
   const destructive = plan ? plan.destructive || plan.rebuild : true;
+  const confirmRequired = destructive || !!acknowledgement;
   const statements = plan?.statements ?? shown?.statements ?? [];
   return (
     <div className="schema-dialog-backdrop">
@@ -103,7 +107,7 @@ export function ImpactDialog({
             {error}
           </div>
         )}
-        {destructive && (
+        {confirmRequired && (
           <label className="flex items-center gap-2" htmlFor={confirmId}>
             <input
               id={confirmId}
@@ -111,8 +115,9 @@ export function ImpactDialog({
               checked={acknowledged}
               onChange={(e) => setAcknowledged(e.target.checked)}
             />
-            I reviewed the impact; data removed by this change cannot be recovered except from a
-            checkpoint.
+            {destructive
+              ? "I reviewed the impact; data removed by this change cannot be recovered except from a checkpoint."
+              : acknowledgement}
           </label>
         )}
         <div className="settings-actions">
@@ -122,7 +127,7 @@ export function ImpactDialog({
           <button
             type="button"
             className="save"
-            disabled={busy || (destructive && !acknowledged)}
+            disabled={busy || (confirmRequired && !acknowledged)}
             onClick={onConfirm}
           >
             {confirmLabel}

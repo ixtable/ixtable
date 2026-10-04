@@ -7,7 +7,7 @@ every risk-retirement spike. This index maps each spike to its record.
 
 | Record | Phase 0 spike | Status |
 |---|---|---|
-| [Archive format and recovery](./archive-format.md) | `.ixt` read, write, autosave. Crash-safe atomic checkpoint with large assets | accepted |
+| [Archive format and recovery](./archive-format.md) | `.ixt` read, write, autosave. Crash-safe atomic checkpoint with large assets. Upgrade fixtures in `tests/fixtures/archives/`, forced-termination and 500 MB tests in `src-tauri/src/durability_tests/` | accepted |
 | [Shared grid model](./grid-model.md) | grid schema and CSS Grid renderer | accepted, dashboards in progress |
 | [DuckDB read path](./duckdb-read-path.md) | DuckDB reads over SQLite and PostgreSQL on three OSes. Reproducible extension packaging | accepted on Linux, macOS and Windows pending CI |
 | [RecordStore capabilities](./recordstore-capabilities.md) | PostgreSQL write path and read-after-write consistency | accepted |
@@ -19,6 +19,7 @@ every risk-retirement spike. This index maps each spike to its record.
 | [Cloud architecture](./cloud-architecture.md) | none. ixtable Cloud control plane: schema, RLS, functions, local stack | accepted (foundation) |
 | [Cloud security model](./cloud-security-model.md) | signed personalized bundle and envelope-encryption threat model | accepted, external review pending |
 | [Desktop updates, signing, and CSP](./desktop-updates.md) | none. Signed installers, update channels, webview CSP (PRD Phase 5) | accepted, production keys pending |
+| [Windows support](./windows-support.md) | none. Windows-only failures in Rust tests and the NAPI test bridge | accepted, pending Windows CI |
 
 The Phase 0 item "signed personalized bundle and envelope-encryption threat
 model" belongs to ixtable Cloud. The desktop work does not build it. The

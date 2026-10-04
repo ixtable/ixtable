@@ -1,5 +1,5 @@
 import type { DesignControl, DesignForm } from "../design/schema";
-import { isInputKind } from "../design/schema";
+import { hasEnabledState, isInputKind } from "../design/schema";
 import { check, evaluate, evaluateBoolean, formatValue } from "../expr";
 import type { RecordValues } from "./values";
 
@@ -20,24 +20,43 @@ export function knownNames(columns?: string[]): string[] {
 }
 
 /** Diagnostics text for an expression field in the designer ("" when valid). */
-export function expressionProblem(src: string | null | undefined, columns?: string[]): string {
+export function expressionProblem(
+  src: string | null | undefined,
+  columns?: string[],
+  names?: string[],
+): string {
   if (!present(src)) return "";
-  const diagnostics = check(src, knownNames(columns));
+  const diagnostics = check(src, names ?? knownNames(columns));
   return diagnostics.map((d) => d.message).join("; ");
 }
 
-/** Evaluates a condition; a blank expression gives `fallback`, an error gives false. */
+/** A condition's outcome plus the evaluation error, if any (the value is then false). */
+export type ConditionResult = { value: boolean; error?: string };
+
+/** Like `condition`, but reports why an expression failed so the UI can show it. */
+export function conditionResult(
+  src: string | null | undefined,
+  scope: FormScope | Record<string, unknown>,
+  fallback = true,
+): ConditionResult {
+  if (!present(src)) return { value: fallback };
+  try {
+    return { value: evaluateBoolean(src, scope) };
+  } catch (reason) {
+    return { value: false, error: reason instanceof Error ? reason.message : String(reason) };
+  }
+}
+
+/**
+ * Evaluates a condition; a blank expression gives `fallback`, an error gives false.
+ * Dashboards use `conditionResult` to show the error as well.
+ */
 export function condition(
   src: string | null | undefined,
-  scope: FormScope,
+  scope: FormScope | Record<string, unknown>,
   fallback = true,
 ): boolean {
-  if (!present(src)) return fallback;
-  try {
-    return evaluateBoolean(src, scope);
-  } catch {
-    return false;
-  }
+  return conditionResult(src, scope, fallback).value;
 }
 
 export type Computed = { value: unknown; error?: string };
@@ -105,31 +124,52 @@ function matchesPattern(pattern: string, value: unknown): boolean {
 export const cellText = (value: unknown, control?: DesignControl) =>
   formatted(value, control?.format);
 
-/** Container visibility: a control is hidden when it or any ancestor container is hidden. */
-export function visibleControls(form: DesignForm, scope: FormScope): Set<string> {
+/**
+ * Controls for which `own(control)` holds and holds for every ancestor container, so a hidden
+ * or disabled section or tab group passes that state to everything inside it.
+ */
+function inherited(form: DesignForm, own: (control: DesignControl) => boolean): Set<string> {
   const byId = new Map(form.controls.map((control) => [control.id, control]));
   const memo = new Map<string, boolean>();
-  const visible = (control: DesignControl, depth = 0): boolean => {
+  const holds = (control: DesignControl, depth = 0): boolean => {
     const known = memo.get(control.id);
     if (known !== undefined) return known;
     const parent = control.parent ? byId.get(control.parent.id) : undefined;
-    const result =
-      condition(control.visibleWhen, scope) &&
-      (!parent || depth > 20 || visible(parent, depth + 1));
+    const result = own(control) && (!parent || depth > 20 || holds(parent, depth + 1));
     memo.set(control.id, result);
     return result;
   };
-  return new Set(form.controls.filter((control) => visible(control)).map((c) => c.id));
+  return new Set(form.controls.filter((control) => holds(control)).map((c) => c.id));
 }
+
+/** Container visibility: a control is hidden when it or any ancestor container is hidden. */
+export const visibleControls = (form: DesignForm, scope: FormScope): Set<string> =>
+  inherited(form, (control) => condition(control.visibleWhen, scope));
+
+/**
+ * Container enabled state: a control is disabled when it or any ancestor container is.
+ * `enabledWhen` on a static kind (label, image) does not apply and is ignored.
+ */
+export const enabledControls = (form: DesignForm, scope: FormScope): Set<string> =>
+  inherited(
+    form,
+    (control) => !hasEnabledState(control.kind) || condition(control.enabledWhen, scope),
+  );
 
 export type FormErrors = { fields: Record<string, string>; form: string[] };
 
-/** Validates every visible bound control and the form-level rules. */
+/**
+ * Validates every visible, enabled bound control and the form-level rules. Like
+ * read-only controls, disabled ones (or ones in a disabled container) are skipped:
+ * the user cannot change them, so their errors could not be fixed.
+ */
 export function validateForm(form: DesignForm, scope: FormScope): FormErrors {
   const visible = visibleControls(form, scope);
+  const enabled = enabledControls(form, scope);
   const fields: Record<string, string> = {};
   for (const control of form.controls) {
-    if (!visible.has(control.id) || !isInputKind(control.kind) || control.readOnly) continue;
+    if (!visible.has(control.id) || !enabled.has(control.id)) continue;
+    if (!isInputKind(control.kind) || control.readOnly) continue;
     const column = control.binding?.column;
     const message = validateControl(control, column ? scope.record[column] : null, scope);
     if (message) fields[control.id] = message;
@@ -138,6 +178,23 @@ export function validateForm(form: DesignForm, scope: FormScope): FormErrors {
     .filter((rule) => present(rule.expression) && !condition(rule.expression, scope, true))
     .map((rule) => rule.message || "The record is not valid.");
   return { fields, form: messages };
+}
+
+/**
+ * Columns the user cannot edit right now because their only controls are disabled (by
+ * their own `enabledWhen` or a container's). Their edits are left out of a save so the
+ * stored value is kept: a value typed before the field was disabled is never written.
+ */
+export function disabledColumns(form: DesignForm, scope: FormScope): Set<string> {
+  const enabled = enabledControls(form, scope);
+  const editable = new Set<string>();
+  const disabled = new Set<string>();
+  for (const control of form.controls) {
+    const column = control.binding?.column;
+    if (!column || !isInputKind(control.kind)) continue;
+    (enabled.has(control.id) ? editable : disabled).add(column);
+  }
+  return new Set([...disabled].filter((column) => !editable.has(column)));
 }
 
 export const hasErrors = (errors: FormErrors) =>

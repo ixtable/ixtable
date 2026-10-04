@@ -26,9 +26,17 @@ export interface JoinCondition {
   rightColumn: string;
 }
 
+export type JoinKind = "inner" | "left" | "right" | "full";
+export const JOIN_KINDS: ReadonlyArray<{ id: JoinKind; label: string; sql: string }> = [
+  { id: "inner", label: "Inner join", sql: "INNER JOIN" },
+  { id: "left", label: "Left join", sql: "LEFT JOIN" },
+  { id: "right", label: "Right join", sql: "RIGHT JOIN" },
+  { id: "full", label: "Full outer join", sql: "FULL OUTER JOIN" },
+];
+
 export interface BuilderJoin {
   id: string;
-  kind: "inner" | "left";
+  kind: JoinKind;
   // Alias of the joined source.
   source: string;
   conditions: JoinCondition[];
@@ -41,6 +49,7 @@ export interface BuilderField {
   column: string;
   alias?: string;
   aggregate?: Aggregate | null;
+  // False for a field used only for sorting: it is not output.
   selected: boolean;
 }
 

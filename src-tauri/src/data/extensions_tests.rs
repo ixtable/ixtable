@@ -211,5 +211,18 @@ fn bundled_archive_unpacks_and_loads() {
         )
         .unwrap();
     assert!(loaded);
-    fs::remove_dir_all(root).unwrap();
+    drop(conn);
+    // DuckDB never unloads a LOADed extension, and Windows cannot delete a mapped
+    // DLL, so cleanup retries and then gives up silently there.
+    let mut cleaned = fs::remove_dir_all(&root);
+    for _ in 0..5 {
+        if cleaned.is_ok() || cfg!(not(windows)) {
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(100));
+        cleaned = fs::remove_dir_all(&root);
+    }
+    if cfg!(not(windows)) {
+        cleaned.unwrap();
+    }
 }

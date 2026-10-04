@@ -1,9 +1,12 @@
 import { useEffect, useId, useState } from "react";
 import { DialogFrame } from "../components/DialogFrame";
 import { saveDocument } from "../lib/api";
+import { archiveSizeReport } from "../persistence/api";
+import type { ArchiveSizeReport } from "../persistence/types";
 import { documentState } from "../release/api";
 import { useShell } from "../shell/context";
 import { restoreCopy, uploadArchive } from "./api";
+import { BackupSizeCheck } from "./BackupSizeCheck";
 import { invokeFunction, listVersions, requireSession } from "./client";
 import { CloudError } from "./errors";
 import { requestOpenSession } from "./session";
@@ -20,6 +23,7 @@ export function VersionsPanel({ app, revision }: { app: CloudApp | null; revisio
   const shell = useShell();
   const [versions, setVersions] = useState<AppVersion[] | null>(null);
   const [pending, setPending] = useState<PendingRestore | null>(null);
+  const [sizeCheck, setSizeCheck] = useState<ArchiveSizeReport | null>(null);
   const { busy, error, notice, run } = useCloudAction();
   const { progress, track } = useTransfer();
   const titleId = useId();
@@ -58,8 +62,14 @@ export function VersionsPanel({ app, revision }: { app: CloudApp | null; revisio
       }
       await restore({ version, target });
     });
+  // PRD §7.4: show the size report first; over-limit archives are not uploaded.
+  const checkSize = () =>
+    run(async () => {
+      setSizeCheck(await archiveSizeReport());
+    });
   const backup = () =>
     run(async () => {
+      setSizeCheck(null);
       if (!(await documentState()).path) await shell.save();
       let state = await documentState();
       if (state.dirty) {
@@ -143,10 +153,18 @@ export function VersionsPanel({ app, revision }: { app: CloudApp | null; revisio
       )}
       {app.backupsEnabled && (
         <div className="cloud-actions">
-          <button type="button" disabled={busy} onClick={backup}>
+          <button type="button" disabled={busy} onClick={checkSize}>
             Back up to cloud
           </button>
         </div>
+      )}
+      {sizeCheck && (
+        <BackupSizeCheck
+          report={sizeCheck}
+          busy={busy}
+          onConfirm={backup}
+          onCancel={() => setSizeCheck(null)}
+        />
       )}
       <TransferBar progress={progress} label="Transfer progress" />
       <ActionStatus error={error} notice={notice} />

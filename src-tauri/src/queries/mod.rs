@@ -225,6 +225,7 @@ pub async fn execute_parameterized_query(
     run_id: Option<String>,
 ) -> Result<QueryRun, AppError> {
     blocking(move || {
+        crate::authz::require_unrestricted(&window_label, "run ad hoc SQL")?;
         let connection = crate::manager()?.read_connection(&window_label)?;
         let declared = parameters.unwrap_or_default();
         run_on(
@@ -251,6 +252,7 @@ pub async fn run_saved_query(
     run_id: Option<String>,
 ) -> Result<QueryRun, AppError> {
     blocking(move || {
+        crate::authz::check(&window_label, "query", &id, crate::authz::Op::Read)?;
         let manager = crate::manager()?;
         let config = manager.config(&window_label)?;
         let query = find_saved(&config, &id)?;

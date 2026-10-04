@@ -327,3 +327,13 @@
     display: none;
   }
 }
+/* Component disabled by its enabledWhen expression; text keeps full contrast. */
+.dash-disabled {
+  background: #f1f1ee;
+}
+.dash-disabled-body {
+  border: 0;
+  margin: 0;
+  padding: 0;
+  min-width: 0;
+}

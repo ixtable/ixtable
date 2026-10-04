@@ -4,16 +4,24 @@ import { asTauriError, type TauriError } from "../lib/api";
 import { chooseBundleToOpen } from "../lib/dialog";
 import { type OpenRequest, useEachRequest } from "../lib/launch";
 import type { SessionState } from "../lib/types";
-import { inspectRuntimeBundle } from "./api";
+import { inspectRuntimeBundle, previewRuntimeUpdate } from "./api";
 import { BundleError } from "./BundleError";
-import type { BundleSummary } from "./types";
+import type { BundleSummary, PendingMigration } from "./types";
+import { UpdateConfirm } from "./UpdateConfirm";
 
-type Act = (path: string, password: string, allowDowngrade: boolean) => Promise<SessionState>;
+type Act = (
+  path: string,
+  password: string,
+  allowDowngrade: boolean,
+  sha256: string,
+) => Promise<SessionState>;
 type Pending = { path: string; summary: BundleSummary };
+type Confirm = Pending & { secret: string; migrations: PendingMigration[] | null };
 
 /**
  * Choose a `.ixtr` file, verify it, ask for its password when protected, then run `act`
- * (open or update). Errors are explained per code; a downgrade needs a second, explicit click.
+ * (open or update). An update or downgrade first shows its release notes and pending
+ * migrations for confirmation; a downgrade is applied only from its explicit button.
  */
 export function BundleFileFlow({
   act,
@@ -39,6 +47,7 @@ export function BundleFileFlow({
   const [error, setError] = useState<TauriError | null>(null);
   const [prompt, setPrompt] = useState<Pending | null>(null);
   const [downgrade, setDowngrade] = useState<Pending | null>(null);
+  const [confirm, setConfirm] = useState<Confirm | null>(null);
   const [password, setPassword] = useState("");
   const titleId = useId();
 
@@ -46,9 +55,10 @@ export function BundleFileFlow({
     setBusy(true);
     setError(null);
     try {
-      const state = await act(pending.path, secret, allowDowngrade);
+      const state = await act(pending.path, secret, allowDowngrade, pending.summary.sha256);
       setPrompt(null);
       setDowngrade(null);
+      setConfirm(null);
       setPassword("");
       onDone(state, pending.summary);
     } catch (reason) {
@@ -63,9 +73,33 @@ export function BundleFileFlow({
     }
   };
 
+  // Updates and downgrades stop at the confirm step; everything else runs `act` right away.
+  const proceed = async (pending: Pending, secret: string) => {
+    const { action, pendingMigrations, migrationsUnavailable } = pending.summary;
+    if (action !== "update" && action !== "downgrade") return attempt(pending, secret);
+    setBusy(true);
+    setError(null);
+    try {
+      const migrations =
+        pendingMigrations ??
+        (migrationsUnavailable ? null : await previewRuntimeUpdate(pending.path, secret));
+      setPrompt(null);
+      setConfirm({ ...pending, secret, migrations });
+    } catch (reason) {
+      const failure = asTauriError(reason);
+      setError(failure);
+      if (failure.code === "BUNDLE_PASSWORD" || failure.code === "BUNDLE_PASSWORD_REQUIRED") {
+        setPrompt(pending);
+      }
+    } finally {
+      setBusy(false);
+    }
+  };
+
   const start = async () => {
     setError(null);
     setDowngrade(null);
+    setConfirm(null);
     setPrompt(null);
     const path = await chooseBundleToOpen();
     if (typeof path !== "string" || !path) {
@@ -77,13 +111,14 @@ export function BundleFileFlow({
   const verify = async (path: string) => {
     setError(null);
     setDowngrade(null);
+    setConfirm(null);
     setPrompt(null);
     setBusy(true);
     try {
       const summary = await inspectRuntimeBundle(path);
       setBusy(false);
       if (summary.encrypted) setPrompt({ path, summary });
-      else await attempt({ path, summary }, "");
+      else await proceed({ path, summary }, "");
     } catch (reason) {
       setBusy(false);
       setError(asTauriError(reason));
@@ -100,7 +135,7 @@ export function BundleFileFlow({
   };
   const submit = (event: FormEvent) => {
     event.preventDefault();
-    if (prompt) attempt(prompt, password).catch(() => undefined);
+    if (prompt) proceed(prompt, password).catch(() => undefined);
   };
 
   return (
@@ -153,6 +188,28 @@ export function BundleFileFlow({
             </div>
           </form>
         </DialogFrame>
+      )}
+      {confirm && (
+        <UpdateConfirm
+          name={confirm.summary.name}
+          version={confirm.summary.version}
+          installedVersion={confirm.summary.installedVersion}
+          releaseNotes={confirm.summary.releaseNotes}
+          migrations={confirm.migrations}
+          migrationsUnavailable={confirm.summary.migrationsUnavailable}
+          downgrade={confirm.summary.action === "downgrade"}
+          busy={busy}
+          onApply={() => {
+            attempt(confirm, confirm.secret, confirm.summary.action === "downgrade").catch(
+              () => undefined,
+            );
+          }}
+          onCancel={() => {
+            setConfirm(null);
+            setPassword("");
+            onCancel?.();
+          }}
+        />
       )}
       {error && <BundleError error={error} />}
       {downgrade && (

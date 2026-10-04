@@ -6,6 +6,7 @@ import type { DocumentConfig } from "../lib/types";
 import { newId } from "../lib/utils";
 import { useShell } from "../shell/context";
 import { setObjectPermission, toggleListed } from "./rbac";
+import { userTriggerGaps } from "./trigger-warnings";
 import "./runtime.css";
 import type { ObjectKind, Permissions, Role } from "./types";
 
@@ -130,6 +131,12 @@ export function RolesTab() {
                 Delete role
               </button>
             </div>
+            {userTriggerGaps(config, role.id).map((gap) => (
+              <p key={gap.triggerId} className="rt-error" role="status">
+                Trigger "{gap.name}" runs as the signed-in user, but this role cannot{" "}
+                {gap.missing.join(", ")}. Saves that fire it will be refused for this role.
+              </p>
+            ))}
             <h3>Objects</h3>
             <p className="rt-muted">
               Form permissions govern records changed through that form. Table permissions govern

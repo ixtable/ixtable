@@ -7,10 +7,12 @@ import {
   duplicateReport,
   fieldExpression,
   findComponent,
+  isPageBand,
   newComponent,
   newGroup,
   newReport,
   pageDimensions,
+  reportProblems,
   withBand,
 } from "../../src/reports/model";
 
@@ -93,5 +95,19 @@ describe("report model", () => {
         rows: [[{ type: "integer", value: 1 }, { type: "null" }]],
       }),
     ).toEqual([{ a: 1, b: null }]);
+  });
+});
+
+describe("reportProblems", () => {
+  it("flags tables in page headers and footers only", () => {
+    const report = newReport("R");
+    const table = newComponent("table", 523);
+    report.bands.pageFooter.components.push(table);
+    report.bands.detail.components.push(newComponent("table", 523));
+    expect(reportProblems(report)).toEqual([
+      `Page footer component ${table.id}: tables are not supported in page headers or footers`,
+    ]);
+    expect(isPageBand("pageHeader")).toBe(true);
+    expect(isPageBand("detail")).toBe(false);
   });
 });

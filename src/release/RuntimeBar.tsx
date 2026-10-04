@@ -66,9 +66,7 @@ export function RuntimeBar() {
       </div>
       <BundleFileFlow
         className="runtime-bar-action"
-        act={(path, password, allowDowngrade) =>
-          updateRuntimeInstallation(path, password, allowDowngrade)
-        }
+        act={updateRuntimeInstallation}
         onDone={(state) => {
           applySession(state);
           refresh().catch(() => undefined);

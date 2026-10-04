@@ -27,6 +27,12 @@ export function createFakeBackend() {
   const keyOf = (t: FakeTable, row: Row) => t.columns.filter((c) => c.pk).map((c) => row[c.name]);
   const find = (t: FakeTable, identity: DataValue[]) =>
     t.rows.find((row) => keyOf(t, row).every((k, i) => k === fromValue(identity[i])));
+  // Optimistic check: original values that no longer match conflict.
+  const checkExpected = (row: Row, expected: unknown) => {
+    for (const e of (expected as NamedValue[] | null) ?? [])
+      if (row[e.column] !== fromValue(e.value))
+        throw { code: "CONFLICT", message: `${e.column} changed` };
+  };
   const table = (name: string) => {
     const t = tables[name];
     if (!t) throw new Error(`Table ${name} does not exist`);
@@ -46,7 +52,7 @@ export function createFakeBackend() {
       foreignKeys: [],
       withoutRowid: false,
     }),
-    read_table_page: ({ table: name, filters }) => {
+    read_table_page: ({ table: name, filters, offset = 0, limit = 100 }) => {
       const t = table(name as string);
       const rows = t.rows.filter((row) =>
         (filters as Filter[]).every((f) =>
@@ -55,13 +61,14 @@ export function createFakeBackend() {
             : row[f.column] === fromValue(f.value as DataValue),
         ),
       );
+      const page = rows.slice(offset as number, (offset as number) + (limit as number));
       return {
-        columns: t.columns.map((c) => ({ name: c.name })),
-        rows: rows.map((row) => t.columns.map((c) => toValue(row[c.name]))),
-        identities: rows.map((row) => keyOf(t, row).map(toValue)),
+        columns: t.columns.map((c) => ({ name: c.name, declaredType: "", generated: false })),
+        rows: page.map((row) => t.columns.map((c) => toValue(row[c.name]))),
+        identities: page.map((row) => keyOf(t, row).map(toValue)),
         total: rows.length,
-        offset: 0,
-        limit: 1000,
+        offset,
+        limit,
       };
     },
     insert_row: ({ table: name, values }) => {
@@ -73,25 +80,27 @@ export function createFakeBackend() {
       const problem = t.reject?.(row);
       if (problem) throw { code: "CONSTRAINT_VIOLATION", message: problem };
       t.rows.push(row);
-      return keyOf(t, row).map(toValue);
+      return { changed: 1, identity: keyOf(t, row).map(toValue) };
     },
-    update_row: ({ table: name, values, identity }) => {
+    update_row: ({ table: name, values, identity, expected }) => {
       const t = table(name as string);
       const row = find(t, identity as DataValue[]);
       if (!row) throw { code: "STALE_ROW", message: "expected one row" };
+      checkExpected(row, expected);
       const next = { ...row };
       for (const v of values as NamedValue[]) next[v.column] = fromValue(v.value);
       const problem = t.reject?.(next);
       if (problem) throw { code: "CONSTRAINT_VIOLATION", message: problem };
       Object.assign(row, next);
-      return 1;
+      return { changed: 1 };
     },
-    delete_row: ({ table: name, identity }) => {
+    delete_row: ({ table: name, identity, expected }) => {
       const t = table(name as string);
       const row = find(t, identity as DataValue[]);
       if (!row) throw { code: "STALE_ROW", message: "expected one row" };
+      checkExpected(row, expected);
       t.rows.splice(t.rows.indexOf(row), 1);
-      return 1;
+      return { changed: 1 };
     },
     execute_write_batch: ({ ops }) => {
       const snapshot = Object.fromEntries(
@@ -101,10 +110,9 @@ export function createFakeBackend() {
         ]),
       );
       try {
-        return (ops as Array<Record<string, unknown>>).map(({ op, ...args }) => {
-          const result = handlers[`${op}_row`](args);
-          return op === "insert" ? { changed: 1, identity: result } : { changed: result as number };
-        });
+        return (ops as Array<Record<string, unknown>>).map(({ op, ...args }) =>
+          handlers[`${op}_row`](args),
+        );
       } catch (error) {
         for (const [name, saved] of Object.entries(snapshot)) Object.assign(tables[name], saved);
         throw error;

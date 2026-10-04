@@ -4,6 +4,7 @@ import userEvent from "@testing-library/user-event";
 import { invoke } from "@tauri-apps/api/core";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import App from "../../src/App";
+import { asTauriError } from "../../src/lib/api";
 import {
   cloudUnavailable,
   createConfirmedUser,
@@ -141,6 +142,17 @@ describe.skipIf(!!skip)("ixtable Cloud distribution", () => {
       table: "companies",
       values: [{ column: "name", value: value("text", "Runtime-only Ltd") }],
     });
+    const refusedWrite = await invoke("insert_row", {
+      windowLabel: "main",
+      table: "deal_stages",
+      values: [{ column: "name", value: value("text", "Hacked") }],
+    }).catch((error: unknown) => asTauriError(error).code);
+    expect(refusedWrite).toBe("FORBIDDEN");
+    const refusedSql = await invoke("execute_read_query", {
+      windowLabel: "main",
+      sql: "SELECT * FROM deal_stages",
+    }).catch((error: unknown) => asTauriError(error).code);
+    expect(refusedSql).toBe("FORBIDDEN");
     const names = async () => (await readPage("companies")).rows.map((row) => row[1]?.value);
     expect(await names()).toContain("Runtime-only Ltd");
 

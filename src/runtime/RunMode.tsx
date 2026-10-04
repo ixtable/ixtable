@@ -1,12 +1,14 @@
-import { type ComponentType, createElement, useContext, useEffect, useState } from "react";
+import { type ComponentType, createElement, useContext, useEffect, useRef, useState } from "react";
+import { NAVIGATE_EVENT, provideAppState, SET_STATE_EVENT } from "../automation/context";
 import * as dashboardsModule from "../dashboards";
-import type { NavigationItem } from "../design/schema";
+import { GenerateAppButton } from "../design/GenerateAppButton";
+import { flattenNavigation, formTable, type NavigationItem } from "../design/schema";
 import { useDocumentConfig } from "../lib/config-store";
-import type { TableSchema } from "../lib/types";
+import type { DocumentConfig } from "../lib/types";
 import { ReportPreview } from "../reports";
 import { ShellContext } from "../shell/context";
 import { type BackLink, BackCrumb } from "./BackCrumb";
-import { tableSchema } from "./data";
+import { tableContext } from "./data";
 import { FormRenderer } from "./FormRenderer";
 import {
   canOpen,
@@ -50,6 +52,7 @@ export function RunMode() {
   const roles = config.roles ?? [];
   const assigned = assignedRuntimeRole();
   const back = usePageBack(runtime);
+  useActionEvents(runtime);
   return (
     <RuntimeContext.Provider value={runtime}>
       <header className="titlebar">
@@ -97,6 +100,16 @@ export function RunMode() {
               {runtime.notice.message}
             </p>
           )}
+          {!runtimeOnly && !hasPages(config) && (
+            <div className="rt-empty" role="region" aria-label="Build your app">
+              <p className="rt-muted">This application has no pages yet.</p>
+              <GenerateAppButton
+                onDone={(added) =>
+                  !added && runtime.notify("There are no tables to generate from.", "error")
+                }
+              />
+            </div>
+          )}
           {page ? (
             <PageView
               key={`${runtime.roleId ?? ""}:${runtime.visit}:${JSON.stringify(page)}`}
@@ -104,12 +117,58 @@ export function RunMode() {
               back={back}
             />
           ) : (
-            <p className="rt-muted">This application has no pages yet.</p>
+            runtimeOnly && <p className="rt-muted">This application has no pages yet.</p>
           )}
         </section>
       </div>
     </RuntimeContext.Provider>
   );
+}
+
+/**
+ * Follows navigation and app-state changes from actions that run outside a page
+ * (sync triggers, custom concurrency actions), and gives them the app state.
+ */
+function useActionEvents(runtime: RuntimeNavigation) {
+  const ref = useRef(runtime);
+  useEffect(() => {
+    ref.current = runtime;
+  });
+  useEffect(() => {
+    const navigate = (event: Event) => {
+      const target = (event as CustomEvent<RuntimePage>).detail;
+      if (!target?.id) return;
+      event.preventDefault();
+      ref.current.navigate({ ...target, navId: undefined });
+    };
+    const setState = (event: Event) => {
+      const { scope, key, value } = (event as CustomEvent).detail ?? {};
+      if (scope !== "app" || !key) return;
+      event.preventDefault();
+      ref.current.setAppState(key, value);
+    };
+    window.addEventListener(NAVIGATE_EVENT, navigate);
+    window.addEventListener(SET_STATE_EVENT, setState);
+    const release = provideAppState(() => ref.current.app);
+    return () => {
+      window.removeEventListener(NAVIGATE_EVENT, navigate);
+      window.removeEventListener(SET_STATE_EVENT, setState);
+      release();
+    };
+  }, []);
+}
+
+/**
+ * True when the application has a navigation item of any kind (form, table, dashboard,
+ * report, …) other than a new document's blank form (no source, no controls).
+ */
+function hasPages(config: DocumentConfig) {
+  const forms = config.design?.forms ?? [];
+  return flattenNavigation(config.design?.navigation ?? []).some((item) => {
+    if (item.kind !== "form") return true;
+    const form = forms.find((f) => f.id === item.targetId);
+    return !!form && (!!formTable(form) || form.controls.length > 0);
+  });
 }
 
 /** The page trail's back link target, or null at the root of a trail. */
@@ -194,13 +253,13 @@ export function PageView({ page, back = null }: { page: RuntimePage; back?: Back
   }
 }
 
-/** A table navigation item: the generated CRUD forms for the table, built in memory. */
+/** A table navigation item: the generated CRUD forms (with lookups and related lists), built in memory. */
 function TablePage({ table, back }: { table: string; back: BackLink | null }) {
-  const [schema, setSchema] = useState<TableSchema | null>(null);
+  const [context, setContext] = useState<Awaited<ReturnType<typeof tableContext>> | null>(null);
   const [error, setError] = useState("");
   useEffect(() => {
-    tableSchema(table)
-      .then(setSchema)
+    tableContext(table)
+      .then(setContext)
       .catch((reason) => setError(reason instanceof Error ? reason.message : String(reason)));
   }, [table]);
   if (error)
@@ -209,6 +268,7 @@ function TablePage({ table, back }: { table: string; back: BackLink | null }) {
         {error}
       </p>
     );
-  if (!schema) return <p className="rt-muted">Loading…</p>;
-  return <FormRenderer formId={tableForms(schema).list.id} mode="list" back={back} />;
+  if (!context) return <p className="rt-muted">Loading…</p>;
+  const { schema, ...options } = context;
+  return <FormRenderer formId={tableForms(schema, options).list.id} mode="list" back={back} />;
 }

@@ -11,10 +11,13 @@
  * - `params.operation` (`update` or `delete`), `params.table`,
  *   `params.changes` (requested column values; `{}` for a delete), and
  *   `params.expected` (original values the caller started from, or null).
+ * A `match: current` step on the routed row sends those original values (else the
+ * row as read when the write began) as its `expected`, not a fresh read.
  */
 import type { RecordWrite } from "../lib/records";
 import { setRecordRouter } from "../lib/records";
 import type { DocumentConfig, NamedValue } from "../lib/types";
+import { expectedOf } from "./rows";
 import { runAction } from "./runner";
 import type { TriggerEnv } from "./triggers";
 import { readRow } from "./triggers";
@@ -74,9 +77,17 @@ async function runCustom(action: ActionDef, write: RecordWrite, env: TriggerEnv)
     old,
     expected: write.meta?.expected,
   });
+  // `match: current` writes against the caller's snapshot, so a concurrent change raises CONFLICT.
+  const expected = write.meta?.expected ?? (await expectedOf(write.table, old));
   const outcome = await runAction(
     action,
-    env.context({ ...scope, triggerDepth: write.meta?.triggerDepth ?? 0, directWrites: true }),
+    env.context({
+      ...scope,
+      triggerDepth: write.meta?.triggerDepth ?? 0,
+      directWrites: true,
+      snapshot: old,
+      current: { table: write.table, identity: write.identity ?? [], expected },
+    }),
   );
   if (!outcome.ok) throw new Error(outcome.error ?? `Action ${action.name} failed`);
   return 1;

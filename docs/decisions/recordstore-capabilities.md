@@ -86,6 +86,16 @@ the entity's policy at write time (`recordstore::commands::resolve_expected`):
 
 Every frontend caller sends `expected`: the grid, Runtime forms, related lists,
 and automation record steps, which send the values of the rows they matched.
+Within one action run, a row the action already wrote sends its post-write
+values as the next write's `expected` (in `rollback` mode, lookups still see the
+data as it was before the action), and a step on a row the action deleted fails.
+On a table with no primary key a `match: current` step sends the record as
+loaded, not the form's unsaved edits.
+
+A write that commits but whose sync trigger then fails rejects with
+`CommittedWriteError`. A Runtime form treats it as saved: a created record opens
+as saved (so Save again cannot insert a duplicate), an updated one reloads, and
+the form shows `Saved.` with the trigger's error.
 
 ### Custom concurrency actions
 
@@ -102,6 +112,15 @@ unaffected. The action runs with:
 - `params.operation` (`update` or `delete`), `params.table`, `params.changes`
   (the requested column values), and `params.expected` (the original values the
   caller started from, or null).
+
+A `match: current` step on the routed row sends the caller's original values
+(the form or grid snapshot, else the row as read when the write began) as
+`expected`, so a concurrent change raises `CONFLICT` from forms and grids alike.
+
+Routing happens only in the TypeScript frontend. Rust treats `customAction`
+like `optimistic` (it requires `expected`), so a direct `update_row` or
+`delete_row` call with `expected` writes without running the action. The
+frontend is the only client today.
 
 The action's own record steps write directly, with no re-routing, under its
 `onError` semantics; use `rollback` to make its writes one transaction. They
@@ -146,6 +165,12 @@ needs an explicit, recorded confirmation (PRD §21.4).
 - `tests/integration/schema-designer.test.tsx`: changes labelled by store
   capability, rebuild and drop previews.
 - `tests/integration/optimistic-grid.test.tsx`: a stale grid edit is rejected.
+- `tests/unit/automation-expected.test.ts`: rows written twice in one run
+  (rollback and immediate, keyed and keyless), custom actions conflicting on a
+  stale form snapshot, keyless `expected` from the loaded record.
+- `tests/integration/runtime-committed-write.test.tsx`: same-row writes in a
+  rollback action, and Runtime forms treating a committed write with a failed
+  sync trigger as saved.
 - `tests/integration/migrations.test.tsx`: dry run, apply with checkpoint,
   rollback, a failing migration, a legacy `postgres` target flagged as an
   error, and migrations disabled for a PostgreSQL document.

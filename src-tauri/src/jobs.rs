@@ -19,7 +19,7 @@ use rusqlite::{params, Connection, OptionalExtension, Row, TransactionBehavior};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::path::{Path, PathBuf};
-use std::sync::OnceLock;
+use std::sync::{Mutex, OnceLock};
 
 pub const DEFAULT_LEASE_MS: u64 = 5 * 60 * 1000;
 /// Longest retry delay, however many attempts have failed.
@@ -579,16 +579,34 @@ impl JobStore {
 }
 
 static STORE: OnceLock<JobStore> = OnceLock::new();
+static STORE_INIT: Mutex<()> = Mutex::new(());
+
+/// The value in `cell`, running `init` exactly once even under concurrent first
+/// calls (a failed `init` leaves the cell empty for the next call to retry).
+fn get_or_init_once<'a, T>(
+    cell: &'a OnceLock<T>,
+    lock: &Mutex<()>,
+    init: impl FnOnce() -> Result<T, AppError>,
+) -> Result<&'a T, AppError> {
+    if let Some(v) = cell.get() {
+        return Ok(v);
+    }
+    let _guard = lock.lock().unwrap_or_else(|e| e.into_inner());
+    if let Some(v) = cell.get() {
+        return Ok(v);
+    }
+    let value = init()?;
+    Ok(cell.get_or_init(|| value))
+}
 
 /// The app-wide queue in `<state>/data/jobs.db` (same state dir as the global store).
+/// Opened once: a second open would run startup recovery again and requeue jobs
+/// the first instance already claimed.
 pub fn store() -> Result<&'static JobStore, AppError> {
-    if let Some(s) = STORE.get() {
-        return Ok(s);
-    }
-    let base = crate::paths::state_dir();
-    let opened = JobStore::open(&base.join("data").join("jobs.db"))?;
-    let _ = STORE.set(opened);
-    Ok(STORE.get().unwrap())
+    get_or_init_once(&STORE, &STORE_INIT, || {
+        let base = crate::paths::state_dir();
+        JobStore::open(&base.join("data").join("jobs.db"))
+    })
 }
 
 /// The queue of the record store a window writes to: Studio sessions of a
@@ -1139,5 +1157,43 @@ mod tests {
                 .len(),
             1
         );
+    }
+
+    #[test]
+    fn concurrent_first_calls_open_the_store_once() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        use std::sync::{Arc, Barrier};
+        static CELL: OnceLock<JobStore> = OnceLock::new();
+        static LOCK: Mutex<()> = Mutex::new(());
+        static OPENS: AtomicUsize = AtomicUsize::new(0);
+        let path = temp();
+        let barrier = Arc::new(Barrier::new(8));
+        let handles: Vec<_> = (0..8)
+            .map(|_| {
+                let barrier = barrier.clone();
+                let path = path.clone();
+                std::thread::spawn(move || {
+                    barrier.wait();
+                    let store = get_or_init_once(&CELL, &LOCK, || {
+                        OPENS.fetch_add(1, Ordering::SeqCst);
+                        std::thread::sleep(std::time::Duration::from_millis(20));
+                        JobStore::open(&path)
+                    })
+                    .unwrap();
+                    store as *const JobStore as usize
+                })
+            })
+            .collect();
+        let stores: Vec<usize> = handles.into_iter().map(|h| h.join().unwrap()).collect();
+        assert_eq!(OPENS.load(Ordering::SeqCst), 1);
+        assert!(stores.iter().all(|s| *s == stores[0]));
+    }
+
+    #[test]
+    fn failed_init_leaves_the_cell_empty_for_a_retry() {
+        static CELL: OnceLock<u32> = OnceLock::new();
+        static LOCK: Mutex<()> = Mutex::new(());
+        assert!(get_or_init_once(&CELL, &LOCK, || Err(AppError::new("X", "boom"))).is_err());
+        assert_eq!(*get_or_init_once(&CELL, &LOCK, || Ok(7)).unwrap(), 7);
     }
 }

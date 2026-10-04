@@ -60,8 +60,9 @@ outcome, the error, and the step log.
 A claim runs in an `IMMEDIATE` transaction. It picks the oldest due `queued`
 job, marks it `running`, and sets the lease, so two workers cannot claim the
 same job. A job whose lease expired, because the app crashed or quit mid-run,
-goes back to `queued` on the next claim or start. Opening the store (once
-per app process, which runs as a single instance) also requeues every
+goes back to `queued` on the next claim or start. Opening the store (exactly
+once per app process, under a lock, even when the first calls race; the app
+runs as a single instance) also requeues every
 `running` job whose lease token names another instance at once, so a job
 interrupted by a quit or crash retries promptly instead of waiting out its
 5-minute lease. Cancel and retry are explicit commands. Like completion and
@@ -108,7 +109,8 @@ clear message. It reports `complete_job` or `fail_job` with the step log.
   cancel and retry, expired leases recovered after restart, unexpired leases of
   a previous process reclaimed on open, guarded cancel and result transitions
   (including a cancel racing a completion), stale lease tokens refused,
-  separate Studio and runtime queues, v1 queue migration.
+  separate Studio and runtime queues, v1 queue migration, concurrent first
+  opens initialising the store once.
 - `tests/unit/automation-write-path.test.ts`: truthful messages when a sync
   trigger fails after a commit, browser contexts handing navigation to Run
   mode, polling for queued jobs.

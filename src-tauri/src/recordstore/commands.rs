@@ -47,6 +47,10 @@ fn effective_expected(
 /// policy except `lastWriteWins` (an unresolved one included) needs them: an
 /// update or delete without `expected` fails with `EXPECTED_REQUIRED` instead
 /// of overwriting blindly.
+///
+/// `customAction` is enforced here like `optimistic`: routing the write to the
+/// entity's action happens only in the TypeScript frontend (`src/automation/custom.ts`),
+/// so a direct command with `expected` writes the row without running the action.
 pub(crate) fn resolve_expected(
     policy: Option<&str>,
     table: &str,

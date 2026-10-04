@@ -20,6 +20,8 @@ export interface FoundRow {
   object: Record<string, unknown>;
   /** Original values for the optimistic check (stored, non-generated, non-blob columns). */
   expected: NamedValue[];
+  /** True when `expected` was just read from the database (not a snapshot). */
+  fresh: boolean;
 }
 
 export const keyColumns = (columns: DbColumn[]) =>
@@ -62,6 +64,7 @@ export async function matchRows(
         expected: page.columns
           .map((c, j) => ({ column: c.name, value: row[j] }))
           .filter((v) => keep.has(v.column)),
+        fresh: true,
       });
     if (page.rows.length < MATCH_PAGE_SIZE) break;
   }
@@ -69,10 +72,15 @@ export async function matchRows(
   return found;
 }
 
-/** The current record as a row to write: by its key columns, else by its rowid. */
+/**
+ * The current record as a row to write: by its key columns, else by its rowid.
+ * Without a key the row is not re-read, so `expected` comes from `snapshot` (the
+ * record as loaded, before unsaved edits) when given, else from `record`.
+ */
 export async function currentRow(
   table: string,
   record: Record<string, unknown> | null,
+  snapshot?: Record<string, unknown> | null,
 ): Promise<FoundRow[]> {
   if (!record) throw new Error("There is no current record");
   const schema = await inspectTable(table);
@@ -95,9 +103,10 @@ export async function currentRow(
     {
       identity: [toDataValue(record.rowid)],
       object: record,
-      expected: Object.entries(record)
+      expected: Object.entries(snapshot ?? record)
         .filter(([column]) => keep.has(column))
         .map(([column, value]) => ({ column, value: toDataValue(value) })),
+      fresh: false,
     },
   ];
 }
@@ -119,3 +128,26 @@ export async function withKeys(
     return { ...values };
   }
 }
+
+/** Comparable original values of `object` (a row as read or loaded) for `table`. */
+export async function expectedOf(
+  table: string,
+  object: Record<string, unknown>,
+): Promise<NamedValue[]> {
+  const keep = comparable((await inspectTable(table)).columns);
+  return Object.entries(object)
+    .filter(([column]) => keep.has(column))
+    .map(([column, value]) => ({ column, value: toDataValue(value) }));
+}
+
+/** Key of a row within one action run: table plus identity. */
+export const rowKey = (table: string, identity: DataValue[]) =>
+  `${table}\u0000${JSON.stringify(identity)}`;
+
+/** `expected` after writing `values` over it: the row's values once the write applies. */
+export const afterWrite = (expected: NamedValue[], values: NamedValue[]): NamedValue[] => {
+  const written = new Map(values.map((v) => [v.column, v.value]));
+  return expected.map((v) =>
+    written.has(v.column) ? { ...v, value: written.get(v.column) as DataValue } : v,
+  );
+};

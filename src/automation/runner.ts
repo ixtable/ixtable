@@ -17,7 +17,10 @@
  * onError=continue (saving nothing in rollback mode).
  * Nested runAction steps join the caller's transaction when there is one.
  * Updates and deletes send the matched rows' original values (`expected`), so
- * optimistic entities reject them if the row changed since it was read. On a
+ * optimistic entities reject them if the row changed since it was read. A row
+ * written earlier in the same run carries its post-write values forward as the
+ * next write's `expected` (rollback mode, where lookups see the data as it was
+ * before the action, and snapshot rows); a row deleted earlier fails the step. On a
  * `customAction` entity they run the entity's action instead (src/automation/custom.ts),
  * joining the caller's transaction like a nested runAction.
  * If the writes commit but a sync trigger on them fails, the action reports that
@@ -34,10 +37,10 @@ import {
   updateRecord,
   writeRecordBatch,
 } from "../lib/records";
-import type { DataValue, DocumentConfig, QueryResult } from "../lib/types";
+import type { DataValue, DocumentConfig, NamedValue, QueryResult } from "../lib/types";
 import * as queryApi from "../query/api";
 import { customActionFor, customScope } from "./custom";
-import { currentRow, type FoundRow, matchRows, withKeys } from "./rows";
+import { afterWrite, currentRow, type FoundRow, matchRows, rowKey, withKeys } from "./rows";
 import type { ActionDef, MatchSpec, OnError, Step, StepLog, ValueMap } from "./types";
 import { rowToObject, toNamedValues } from "./values";
 
@@ -71,6 +74,10 @@ export interface ActionContext {
   now?: Date;
   /** Set while a custom concurrency action runs: its record steps write to the store directly. */
   directWrites?: boolean;
+  /** The current record as loaded (before unsaved edits); `expected` for a keyless current row. */
+  snapshot?: Record<string, unknown>;
+  /** Original values a write of this row must match (custom actions: what the caller edited). */
+  current?: { table: string; identity: DataValue[]; expected: NamedValue[] };
 }
 
 export interface ActionResult {
@@ -108,6 +115,8 @@ interface Frame {
   tx: Transaction | null;
   stack: string[];
   wrote: { value: boolean };
+  /** Rows written in this run: their `expected` from now on, or null once deleted. */
+  seen: Map<string, NamedValue[] | null>;
 }
 
 const message = (e: unknown) =>
@@ -140,6 +149,9 @@ export async function runAction(
     tx: null,
     stack: [],
     wrote: { value: false },
+    seen: new Map(
+      ctx.current ? [[rowKey(ctx.current.table, ctx.current.identity), ctx.current.expected]] : [],
+    ),
   };
   const outcome = await execute(def, frame, "");
   if (frame.wrote.value) ctx.refresh?.();
@@ -260,16 +272,18 @@ async function runCustom(
   frame: Frame,
   path: string,
   request: Parameters<typeof customScope>[0],
+  identity: DataValue[],
 ) {
   if (frame.stack.length >= MAX_ACTION_DEPTH)
     throw new Error(`Actions nested deeper than ${MAX_ACTION_DEPTH}`);
   const scope = customScope(request);
   const child: Frame = {
     ...frame,
-    ctx: { ...frame.ctx, directWrites: true },
+    ctx: { ...frame.ctx, directWrites: true, snapshot: request.old },
     scope: { ...frame.scope, ...scope, form: {}, results: {} },
   };
   child.scope.steps = child.scope.results;
+  if (request.expected) frame.seen.set(rowKey(request.table, identity), request.expected);
   const outcome = await execute(action, child, `${path}.custom`);
   if (outcome.cancelled) throw new Cancelled();
   if (outcome.aborted) throw new Aborted(outcome.error ?? `Action ${action.name} failed`);
@@ -312,16 +326,25 @@ async function runStep(step: Step, frame: Frame, path: string): Promise<void> {
       for (const row of rows) {
         const meta = writeMeta(frame, { old: row.object, expected: row.expected });
         if (custom)
-          await runCustom(custom, frame, path, {
-            operation: "update",
-            table: step.table,
-            values: named,
-            old: row.object,
-            expected: row.expected,
-          });
-        else if (frame.tx)
-          frame.tx.writes.push(write("update", step.table, named, row.identity, meta));
-        else await direct(frame, () => updateRecord(step.table, named, row.identity, meta));
+          await runCustom(
+            custom,
+            frame,
+            path,
+            {
+              operation: "update",
+              table: step.table,
+              values: named,
+              old: row.object,
+              expected: row.expected,
+            },
+            row.identity,
+          );
+        else {
+          if (frame.tx)
+            frame.tx.writes.push(write("update", step.table, named, row.identity, meta));
+          else await direct(frame, () => updateRecord(step.table, named, row.identity, meta));
+          remember(frame, step.table, row, afterWrite(row.expected, named));
+        }
       }
       if (step.match === "current" && scope.record && typeof scope.record === "object")
         scope.record = { ...(scope.record as Record<string, unknown>), ...values };
@@ -334,16 +357,24 @@ async function runStep(step: Step, frame: Frame, path: string): Promise<void> {
       for (const row of rows) {
         const meta = writeMeta(frame, { old: row.object, expected: row.expected });
         if (custom)
-          await runCustom(custom, frame, path, {
-            operation: "delete",
-            table: step.table,
-            values: [],
-            old: row.object,
-            expected: row.expected,
-          });
-        else if (frame.tx)
-          frame.tx.writes.push(write("delete", step.table, [], row.identity, meta));
-        else await direct(frame, () => deleteRecord(step.table, row.identity, meta));
+          await runCustom(
+            custom,
+            frame,
+            path,
+            {
+              operation: "delete",
+              table: step.table,
+              values: [],
+              old: row.object,
+              expected: row.expected,
+            },
+            row.identity,
+          );
+        else {
+          if (frame.tx) frame.tx.writes.push(write("delete", step.table, [], row.identity, meta));
+          else await direct(frame, () => deleteRecord(step.table, row.identity, meta));
+          remember(frame, step.table, row, null);
+        }
       }
       return;
     }
@@ -455,11 +486,34 @@ function exists(config: DocumentConfig, kind: string, id: string) {
 }
 
 async function findRows(table: string, match: MatchSpec, frame: Frame): Promise<FoundRow[]> {
+  let rows: FoundRow[];
   if (match === "current")
-    return currentRow(table, frame.scope.record as Record<string, unknown> | null);
-  const criteria = evalMap(match, frame);
-  if (!Object.keys(criteria).length) throw new Error("Match has no columns");
-  return matchRows(table, criteria);
+    rows = await currentRow(
+      table,
+      frame.scope.record as Record<string, unknown> | null,
+      frame.ctx.snapshot,
+    );
+  else {
+    const criteria = evalMap(match, frame);
+    if (!Object.keys(criteria).length) throw new Error("Match has no columns");
+    rows = await matchRows(table, criteria);
+  }
+  return rows.map((row) => {
+    const known = frame.seen.get(rowKey(table, row.identity));
+    if (known === null) throw new Error(`A ${table} row was already deleted by this action`);
+    return known ? { ...row, expected: known } : row;
+  });
+}
+
+/**
+ * Records a row this run wrote. Lookups after an immediate write re-read the row
+ * (seeing trigger changes too), so its entry is dropped; rollback-mode and
+ * snapshot rows keep their post-write values as the next `expected`.
+ */
+function remember(frame: Frame, table: string, row: FoundRow, next: NamedValue[] | null) {
+  const key = rowKey(table, row.identity);
+  if (next === null || frame.tx || !row.fresh) frame.seen.set(key, next);
+  else frame.seen.delete(key);
 }
 
 const write = (

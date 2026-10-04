@@ -275,5 +275,19 @@ fn altering_a_column_keeps_replaces_or_removes_its_check() {
         alter(h, Some(String::new()));
         assert!(h.store.table_def("stock").unwrap().checks.is_empty());
         assert!(accepts(h, 500), "{}: check removed", h.name);
+        let staged = |check: &str| AlterTable::AlterColumn {
+            column: "qty".into(),
+            definition: CreateColumn {
+                nullable: false,
+                check: Some(check.into()),
+                ..col("qty", "integer")
+            },
+        };
+        h.store
+            .alter_table("stock", &[staged("qty < 1000"), staged("qty < 600")])
+            .unwrap_or_else(|e| panic!("{}: {e:?}", h.name));
+        assert_eq!(h.store.table_def("stock").unwrap().checks.len(), 1);
+        assert!(!accepts(h, 700), "{}: second staged check wins", h.name);
+        assert!(accepts(h, 599), "{}", h.name);
     });
 }

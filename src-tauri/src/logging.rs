@@ -17,19 +17,44 @@ const LOG_FILE: &str = "ixtable.log";
 /// Secret key words. A `key=value` / `"key": value` pair is masked when its key,
 /// split into snake/kebab/camelCase words, contains one of these as a word run
 /// (`access_token`, `refreshToken`, `X-Api-Key`, `client_secret`, `DEK`).
-const SECRET_KEYS: [&str; 12] = [
+/// Plurals are listed explicitly so innocent words (`desk`, `index`) stay clear.
+const SECRET_KEYS: [&str; 23] = [
     "password",
+    "passwords",
     "passwd",
     "pwd",
     "secret",
+    "secrets",
     "token",
+    "tokens",
     "api_key",
     "apikey",
     "authorization",
     "passphrase",
     "dek",
     "private_key",
+    "privatekey",
+    "credential",
     "credentials",
+    "accesstoken",
+    "refreshtoken",
+    "authtoken",
+    "clientsecret",
+    "secretkey",
+    "cookie",
+];
+/// Words that also name counts (`max_tokens=100`): a purely numeric value stays clear.
+const COUNT_KEYS: [&str; 2] = ["token", "tokens"];
+/// HTTP auth schemes: in `Bearer abc` the credential after the scheme is masked too.
+const AUTH_SCHEMES: [&str; 8] = [
+    "bearer",
+    "basic",
+    "digest",
+    "token",
+    "negotiate",
+    "ntlm",
+    "apikey",
+    "hoba",
 ];
 const MASK: &str = "***";
 
@@ -144,6 +169,29 @@ pub fn panic_record(thread: Option<&str>, payload: &str, location: Option<String
     )
 }
 
+const PANIC_LOCK_WAIT: std::time::Duration = std::time::Duration::from_millis(200);
+
+/// Retries `try_lock` on the log lock until `wait` elapses (poisoning is ignored).
+fn lock_within(wait: std::time::Duration) -> Option<std::sync::MutexGuard<'static, ()>> {
+    let deadline = std::time::Instant::now() + wait;
+    loop {
+        match LOCK.try_lock() {
+            Ok(guard) => return Some(guard),
+            Err(std::sync::TryLockError::Poisoned(e)) => return Some(e.into_inner()),
+            Err(std::sync::TryLockError::WouldBlock) => {}
+        }
+        if std::time::Instant::now() >= deadline {
+            return None;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(5));
+    }
+}
+
+/// The line written to stderr when the panic record cannot reach the log file.
+fn stderr_fallback(record: &str) -> String {
+    format!("ixtable log (lock busy): ERROR panic {}", redact(record))
+}
+
 /// Chains a panic hook that appends a redacted `panic` record to the local log,
 /// then runs the previous hook (stderr output and backtrace stay as they were).
 pub fn install_panic_hook() {
@@ -159,13 +207,14 @@ pub fn install_panic_hook() {
             .location()
             .map(|l| format!("{}:{}:{}", l.file(), l.line(), l.column()));
         let thread = std::thread::current();
-        // A panic while the log lock is held must not deadlock the hook.
-        if let Ok(_guard) = LOCK.try_lock() {
-            let _ = global().write(
-                "error",
-                "panic",
-                &panic_record(thread.name(), &payload, location),
-            );
+        let record = panic_record(thread.name(), &payload, location);
+        // A panic while this thread holds the log lock must not deadlock the hook:
+        // wait briefly for another thread's write, then fall back to stderr.
+        match lock_within(PANIC_LOCK_WAIT) {
+            Some(_guard) => {
+                let _ = global().write("error", "panic", &record);
+            }
+            None => eprintln!("{}", stderr_fallback(&record)),
         }
         previous(info);
     }));
@@ -205,9 +254,9 @@ fn redact_urls(text: &str) -> String {
     out
 }
 
-/// True when an identifier names a secret: its words (split at `_`, `-`, and
-/// lower-to-upper case changes) contain a [`SECRET_KEYS`] entry as a word run.
-fn is_secret_key(key: &str) -> bool {
+/// The [`SECRET_KEYS`] entries an identifier contains as a word run (words split
+/// at `_`, `-`, and lower-to-upper case changes).
+fn secret_words(key: &str) -> Vec<&'static str> {
     let mut words = String::with_capacity(key.len() + 4);
     let mut prev_lower = false;
     for c in key.chars() {
@@ -225,7 +274,9 @@ fn is_secret_key(key: &str) -> bool {
     let words = format!("_{words}_");
     SECRET_KEYS
         .iter()
-        .any(|k| words.contains(&format!("_{k}_")))
+        .copied()
+        .filter(|k| words.contains(&format!("_{k}_")))
+        .collect()
 }
 
 fn redact_keys(text: &str) -> String {
@@ -242,10 +293,15 @@ fn redact_keys(text: &str) -> String {
         let key_end = (i..bytes.len())
             .find(|&k| !is_key_char(bytes[k]))
             .unwrap_or(bytes.len());
-        match is_secret_key(&text[i..key_end])
-            .then(|| secret_value(bytes, key_end))
+        let found = secret_words(&text[i..key_end]);
+        let span = (!found.is_empty())
+            .then(|| secret_value(bytes, key_end, found.contains(&"authorization")))
             .flatten()
-        {
+            .filter(|&(s, e)| {
+                !(found.iter().all(|w| COUNT_KEYS.contains(w))
+                    && bytes[s..e].iter().all(u8::is_ascii_digit))
+            });
+        match span {
             Some((value_start, value_end)) => {
                 out.push_str(&text[i..value_start]);
                 out.push_str(MASK);
@@ -260,8 +316,10 @@ fn redact_keys(text: &str) -> String {
     out
 }
 /// The value span after a key ending at `j`: an optional closing quote, spaces,
-/// `=` or `:`, spaces, then a quoted or bare value. `None` when no value follows.
-fn secret_value(bytes: &[u8], mut j: usize) -> Option<(usize, usize)> {
+/// `=` or `:`, spaces, then a quoted or bare value. A bare value that is an auth
+/// scheme (any word when `auth_header`) runs on through the credential after it
+/// (`Bearer abc.def`). `None` when no value follows.
+fn secret_value(bytes: &[u8], mut j: usize, auth_header: bool) -> Option<(usize, usize)> {
     if j < bytes.len() && matches!(bytes[j], b'"' | b'\'') {
         j += 1;
     }
@@ -278,15 +336,30 @@ fn secret_value(bytes: &[u8], mut j: usize) -> Option<(usize, usize)> {
     let (start, end) = if j < bytes.len() && matches!(bytes[j], b'"' | b'\'') {
         (j + 1, closing_quote(bytes, j))
     } else {
-        let end = (j..bytes.len())
-            .find(|&k| {
-                bytes[k].is_ascii_whitespace()
-                    || matches!(bytes[k], b'"' | b'\'' | b';' | b'&' | b',' | b'}')
-            })
-            .unwrap_or(bytes.len());
-        (j, end)
+        let end = bare_end(bytes, j);
+        let word = &bytes[j..end];
+        let is_scheme = word.iter().all(u8::is_ascii_alphabetic)
+            && (auth_header
+                || AUTH_SCHEMES
+                    .iter()
+                    .any(|s| s.as_bytes().eq_ignore_ascii_case(word)));
+        let next = end + 1;
+        if is_scheme && bytes.get(end) == Some(&b' ') && bare_end(bytes, next) > next {
+            (j, bare_end(bytes, next))
+        } else {
+            (j, end)
+        }
     };
     (end > start).then_some((start, end))
+}
+/// End of a bare (unquoted) value starting at `j`.
+fn bare_end(bytes: &[u8], j: usize) -> usize {
+    (j..bytes.len())
+        .find(|&k| {
+            bytes[k].is_ascii_whitespace()
+                || matches!(bytes[k], b'"' | b'\'' | b';' | b'&' | b',' | b'}')
+        })
+        .unwrap_or(bytes.len())
 }
 /// Index of the quote closing the value opened at `open` (or the end of the
 /// text): honors backslash escapes (`'it\\'s'`) and doubled quotes (`'it''s'`).
@@ -445,6 +518,81 @@ mod tests {
         assert_eq!(
             redact("see https://example.com/users/@me"),
             "see https://example.com/users/@me"
+        );
+    }
+
+    #[test]
+    fn redacts_plural_and_compound_secret_keys() {
+        for (input, expected) in [
+            ("passwords=a,b", "passwords=***,b"),
+            ("secrets=s1 x", "secrets=*** x"),
+            ("tokens=abc x", "tokens=*** x"),
+            ("credential=c1", "credential=***"),
+            ("credentials: c2", "credentials: ***"),
+            ("passwd=p", "passwd=***"),
+            ("apikey=k", "apikey=***"),
+            ("clientsecret=s", "clientsecret=***"),
+            ("privateKey=k", "privateKey=***"),
+            ("pwd=1234", "pwd=***"),
+        ] {
+            assert_eq!(redact(input), expected, "{input}");
+        }
+        for safe in [
+            "max_tokens=100",
+            "tokens: 5",
+            "desk=1",
+            "index=3",
+            "passport=1",
+            "secretary=bob",
+            "tokenizer=bpe",
+            "compass=north",
+        ] {
+            assert_eq!(redact(safe), safe);
+        }
+    }
+
+    #[test]
+    fn redacts_auth_scheme_and_credential_as_one_value() {
+        for (input, expected) in [
+            (
+                "Authorization: Bearer abc.def next",
+                "Authorization: *** next",
+            ),
+            ("authorization=Basic dXNlcjpw x", "authorization=*** x"),
+            ("Authorization: Custom k1 x", "Authorization: *** x"),
+            ("token: Bearer abc x", "token: *** x"),
+            (
+                r#"{"Authorization": "Bearer a b"}"#,
+                r#"{"Authorization": "***"}"#,
+            ),
+            ("Authorization: Bearer", "Authorization: ***"),
+        ] {
+            assert_eq!(redact(input), expected, "{input}");
+        }
+        assert_eq!(redact("password=abc user=x"), "password=*** user=x");
+    }
+
+    #[test]
+    fn panic_lock_wait_falls_back_when_busy() {
+        let guard = LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let started = std::time::Instant::now();
+        let waited =
+            std::thread::spawn(|| lock_within(std::time::Duration::from_millis(50)).is_some())
+                .join()
+                .unwrap();
+        assert!(!waited);
+        assert!(started.elapsed() >= std::time::Duration::from_millis(50));
+        drop(guard);
+        let holder = std::thread::spawn(|| {
+            let _g = LOCK.lock().unwrap_or_else(|e| e.into_inner());
+            std::thread::sleep(std::time::Duration::from_millis(30));
+        });
+        std::thread::sleep(std::time::Duration::from_millis(5));
+        assert!(lock_within(PANIC_LOCK_WAIT).is_some());
+        holder.join().unwrap();
+        assert_eq!(
+            stderr_fallback("boom password=pw"),
+            "ixtable log (lock busy): ERROR panic boom password=***"
         );
     }
 

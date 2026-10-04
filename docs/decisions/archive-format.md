@@ -38,7 +38,10 @@ load. A newer config version fails with `UNSUPPORTED_VERSION` and a message
 that asks the user to update ixtable, not with `INVALID_ARCHIVE`. Top-level
 config fields this build does not know (a newer build with the same config
 version) are kept in `DocumentConfig.extra` and written back unchanged by
-saves, `document.json`, and the `config.yaml` projection.
+saves, `document.json`, and the `config.yaml` projection. This covers top-level
+fields only. An unknown field inside a nested object (a form, a query, a
+report) is dropped on save, so a build that adds nested fields must bump the
+config version; older builds then refuse the document instead of losing data.
 
 Ordinary tables that this build does not know are copied, with rows and
 indexes, from the previous archive of the same document. Views, triggers,

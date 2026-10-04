@@ -79,6 +79,9 @@ pub struct DocumentConfig {
     pub cloud: Option<crate::cloud::CloudLink>,
     /// Top-level fields this build does not know (written by a newer ixtable with
     /// the same config version). Kept verbatim through load, save, and YAML.
+    /// Only top-level fields: an unknown field inside a nested object (a form, a
+    /// query) is dropped on save. A newer build that adds nested fields must bump
+    /// the config version, which this build refuses to open (`NewerConfig`).
     #[serde(flatten)]
     pub extra: serde_json::Map<String, serde_json::Value>,
 }

@@ -42,7 +42,7 @@ use stream::{read_payload, write_payload};
 pub use stream::{HashingReader, HashingWriter};
 pub use workspace::{
     asset_content, asset_dir, check_ids, extract_document, extract_to, write_asset_metadata,
-    write_config_files, write_session_metadata,
+    write_atomic, write_config_files, write_session_metadata,
 };
 
 pub const FORMAT_VERSION: i64 = 2;

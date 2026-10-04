@@ -32,6 +32,67 @@ fn column_sql(c: &ColumnDef, identity: bool) -> String {
 fn cols(list: &[String]) -> String {
     list.iter().map(|c| q(c)).collect::<Vec<_>>().join(",")
 }
+/// PostgreSQL truncates identifiers to 63 bytes (NAMEDATALEN - 1).
+const PG_IDENT_MAX: usize = 63;
+
+/// A deterministic check constraint name, `<table>_<column>_check` like PostgreSQL's
+/// own default, kept within 63 bytes (long names keep a prefix plus a hash) and made
+/// unique against `taken` with a numeric suffix.
+fn check_name(table: &str, column: Option<&str>, taken: &[&str]) -> String {
+    let base = match column {
+        Some(c) => format!("{table}_{c}_check"),
+        None => format!("{table}_check"),
+    };
+    let fit = |s: String| -> String {
+        if s.len() <= PG_IDENT_MAX {
+            return s;
+        }
+        let hash = s.bytes().fold(0xcbf29ce484222325u64, |h, b| {
+            (h ^ b as u64).wrapping_mul(0x100000001b3)
+        });
+        let mut cut = PG_IDENT_MAX - 17;
+        while !s.is_char_boundary(cut) {
+            cut -= 1;
+        }
+        format!("{}_{hash:016x}", &s[..cut])
+    };
+    let mut n = 0;
+    loop {
+        let candidate = fit(if n == 0 {
+            base.clone()
+        } else {
+            format!("{base}{n}")
+        });
+        if !taken.iter().any(|t| t.eq_ignore_ascii_case(&candidate)) {
+            return candidate;
+        }
+        n += 1;
+    }
+}
+
+/// Names the checks `op` added to `after` (the plan leaves them unnamed) so a later
+/// operation in the same batch can drop them by name.
+fn name_new_checks(op: &AlterTable, table: &str, before: &TableDef, after: &mut TableDef) {
+    let column = match op {
+        AlterTable::AlterColumn { column, .. } => Some(column.as_str()),
+        AlterTable::AddColumn { column } => Some(column.name.as_str()),
+        _ => None,
+    };
+    for i in 0..after.checks.len() {
+        if after.checks[i].name.is_some() || before.checks.contains(&after.checks[i]) {
+            continue;
+        }
+        let taken: Vec<String> = before
+            .checks
+            .iter()
+            .chain(after.checks.iter())
+            .filter_map(|c| c.name.clone())
+            .collect();
+        let taken: Vec<&str> = taken.iter().map(String::as_str).collect();
+        after.checks[i].name = Some(check_name(table, column, &taken));
+    }
+}
+
 fn named(name: &Option<String>) -> String {
     name.as_deref()
         .map(|n| format!("CONSTRAINT {} ", q(n)))
@@ -131,8 +192,12 @@ fn op_sql(
             if column.unique {
                 sql.push_str(" UNIQUE");
             }
-            if let Some(check) = column.check.as_deref().filter(|c| !c.trim().is_empty()) {
-                sql.push_str(&format!(" CHECK ({check})"));
+            for c in after.checks.iter().filter(|c| !before.checks.contains(c)) {
+                sql.push_str(&format!(
+                    " {}CHECK ({})",
+                    named(&c.name).trim_end(),
+                    c.expression
+                ));
             }
             vec![sql]
         }
@@ -237,10 +302,14 @@ fn op_sql(
                 q(&constraint_name(u.map(|u| &u.name), "unique constraint")?)
             )]
         }
-        AlterTable::AddCheck { expression, name } => vec![format!(
-            "ALTER TABLE {t} ADD {}CHECK ({expression})",
-            named(name)
-        )],
+        AlterTable::AddCheck { expression, name } => {
+            let added = after.checks.iter().find(|c| !before.checks.contains(c));
+            let name = name.clone().or_else(|| added.and_then(|c| c.name.clone()));
+            vec![format!(
+                "ALTER TABLE {t} ADD {}CHECK ({expression})",
+                named(&name)
+            )]
+        }
         AlterTable::DropCheck { expression } => {
             let c = before.checks.iter().find(|c| {
                 c.expression.trim() == expression.trim()
@@ -263,10 +332,11 @@ impl PostgresRecordStore {
         let mut current = original;
         let mut name = table.to_string();
         for op in ops {
-            let next = plan::apply_ops(&current, std::slice::from_ref(op), |_, _| {
+            let mut next = plan::apply_ops(&current, std::slice::from_ref(op), |_, _| {
                 (ChangeMode::InPlace, None)
             })
             .map_err(StoreError::validation)?;
+            name_new_checks(op, &name, &current, &mut next.def);
             statements.extend(op_sql(op, &name, &current, &next.def)?);
             if let AlterTable::RenameTable { new_name } = op {
                 name = new_name.clone();
@@ -519,5 +589,78 @@ impl RecordStore for PostgresRecordStore {
                     .collect()
             })
             .collect())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::data::{CheckDef, CreateColumn};
+
+    #[test]
+    fn check_names_are_deterministic_unique_and_fit_postgres() {
+        assert_eq!(check_name("stock", Some("qty"), &[]), "stock_qty_check");
+        assert_eq!(
+            check_name("stock", Some("qty"), &["stock_qty_check"]),
+            "stock_qty_check1"
+        );
+        assert_eq!(check_name("stock", None, &[]), "stock_check");
+        let long = "t".repeat(70);
+        let a = check_name(&long, Some("c"), &[]);
+        assert!(a.len() <= PG_IDENT_MAX);
+        assert_eq!(a, check_name(&long, Some("c"), &[]));
+        assert_ne!(a, check_name(&long, Some("d"), &[]));
+        let wide = "é".repeat(40);
+        assert!(check_name(&wide, Some("c"), &[]).len() <= PG_IDENT_MAX);
+    }
+
+    #[test]
+    fn a_check_added_by_alter_column_can_be_dropped_in_the_same_batch() {
+        let alter = |check: &str| AlterTable::AlterColumn {
+            column: "qty".into(),
+            definition: CreateColumn {
+                name: "qty".into(),
+                logical_type: Some(LogicalType::Integer),
+                nullable: true,
+                check: Some(check.into()),
+                ..Default::default()
+            },
+        };
+        let before = TableDef {
+            name: "stock".into(),
+            columns: vec![ColumnDef {
+                name: "qty".into(),
+                declared_type: "integer".into(),
+                logical_type: LogicalType::Integer,
+                nullable: true,
+                default_expression: None,
+                generated_expression: None,
+            }],
+            checks: vec![CheckDef {
+                name: Some("stock_qty_check".into()),
+                expression: "qty > 0".into(),
+            }],
+            ..Default::default()
+        };
+        let mut current = before;
+        let mut statements = vec![];
+        for op in [alter("qty < 100"), alter("qty < 50")] {
+            let mut next = plan::apply_ops(&current, std::slice::from_ref(&op), |_, _| {
+                (ChangeMode::InPlace, None)
+            })
+            .unwrap();
+            name_new_checks(&op, "stock", &current, &mut next.def);
+            statements.extend(op_sql(&op, "stock", &current, &next.def).unwrap());
+            current = next.def;
+        }
+        assert_eq!(
+            statements,
+            vec![
+                r#"ALTER TABLE "stock" DROP CONSTRAINT "stock_qty_check""#,
+                r#"ALTER TABLE "stock" ADD CONSTRAINT "stock_qty_check1" CHECK (qty < 100)"#,
+                r#"ALTER TABLE "stock" DROP CONSTRAINT "stock_qty_check1""#,
+                r#"ALTER TABLE "stock" ADD CONSTRAINT "stock_qty_check" CHECK (qty < 50)"#,
+            ]
+        );
     }
 }

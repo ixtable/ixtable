@@ -108,17 +108,22 @@ export function TableSchemaDesigner({
     const ops: AlterTableOperation[] = [];
     const target = after.name.trim() || name;
     if (target !== name) ops.push({ operation: "rename_column", column: name, newName: target });
+    const checkChanged = after.check.trim() !== before.check.trim();
     const changed =
       after.logicalType !== before.logicalType ||
       after.required !== before.required ||
       after.defaultExpression !== before.defaultExpression ||
       after.unique !== before.unique ||
-      after.check.trim() !== "";
+      checkChanged;
+    // An untouched check is sent as null (keep, and follow a rename); "" removes it.
     if (changed)
       ops.push({
         operation: "alter_column",
         column: target,
-        definition: specFromDraft({ ...after, name: target }),
+        definition: {
+          ...specFromDraft({ ...after, name: target }),
+          check: checkChanged ? after.check.trim() : null,
+        },
       });
     if (ops.length) stage(...ops);
   };

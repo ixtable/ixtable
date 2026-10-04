@@ -33,9 +33,22 @@ and none hits SQLite's 1 GB blob limit. Format 1 archives open unchanged and
 are rewritten as format 2 on the next save. A newer format fails with a message
 that asks the user to update ixtable.
 
+`DocumentConfig.version` is checked the same way. Older configs upgrade on
+load. A newer config version fails with `UNSUPPORTED_VERSION` and a message
+that asks the user to update ixtable, not with `INVALID_ARCHIVE`. Top-level
+config fields this build does not know (a newer build with the same config
+version) are kept in `DocumentConfig.extra` and written back unchanged by
+saves, `document.json`, and the `config.yaml` projection. This covers top-level
+fields only. An unknown field inside a nested object (a form, a query, a
+report) is dropped on save, so a build that adds nested fields must bump the
+config version; older builds then refuse the document instead of losing data.
+
 Ordinary tables that this build does not know are copied, with rows and
 indexes, from the previous archive of the same document. Views, triggers,
-virtual tables, and tables from a different document are never copied.
+virtual tables, and tables from a different document are never copied. The
+one exception is Restore as copy: the new archive gets a new document id but
+deliberately copies the checkpoint, so it keeps the checkpoint's unknown
+tables too.
 
 ### Save path
 
@@ -57,9 +70,20 @@ Opening a document extracts it to `recovery/<sessionId>/`: `data.db`,
 `attachments/<id>/{content,metadata.json}`. Record writes go to that `data.db`.
 The global store registers each session with a `dirty` flag.
 
+The JSON and YAML files in the workspace are each written atomically: a hidden
+temp sibling, `fsync`, rename, then a directory sync. A crash leaves the old
+or the new file, never a truncated one. `document.json` and `config.yaml`
+hold the same config, so recovery reads `document.json` and falls back to
+`config.yaml` when it is missing or unreadable.
+
 On the next start, a dirty session that never closed is offered for recovery.
-Recovery checks `PRAGMA integrity_check` on `data.db`, loads `document.json`,
-and verifies every asset checksum. Valid work is checkpointed and saved back
+Recovery checks `PRAGMA integrity_check` on `data.db`, loads the config, and
+verifies every asset checksum. It opens `data.db` read-write (never creating
+it): a crash in the middle of a transaction leaves a hot rollback journal, and
+only a writable connection can roll it back. A read-only open fails with
+`SQLITE_READONLY_ROLLBACK` and would reject work that is recoverable. Rolling
+back drops only the uncommitted transaction, which is the correct crash
+outcome. Valid work is checkpointed and saved back
 into the `.ixt`. Invalid work never touches the archive, and the error is
 shown instead.
 
@@ -85,8 +109,14 @@ checkpoints are validated archive copies under
   preservation, newer and ancient format rejection, large chunked payloads with
   checksum checks, interrupted writes that keep the last valid archive, no
   copying from another document.
-- `src-tauri/src/recovery.rs` tests: valid WIP loads with its assets, and
-  invalid WIP is reported, not loaded.
+- `src-tauri/src/recovery.rs` tests: valid WIP loads with its assets,
+  invalid WIP is reported, not loaded, a truncated or missing `document.json`
+  falls back to `config.yaml`, config files leave no temp files, and a hot
+  journal left by a crash is rolled back instead of rejected.
+- `src-tauri/src/archive.rs` tests: a newer config version is
+  `UNSUPPORTED_VERSION`, and unknown top-level config fields survive save,
+  reopen, and the YAML round trip.
+- `src-tauri/src/checkpoints.rs` tests: Restore as copy keeps unknown tables.
 - `tests/integration/persistence.test.tsx`: autosave states, autosave failure
   and retry, crash recovery from the start screen, invalid recovered work,
   ignored temp-file leftovers.

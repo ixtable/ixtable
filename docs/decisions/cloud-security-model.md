@@ -29,7 +29,16 @@ users cannot obtain new bundles or keys.
 ### Trusted-user limits (PRD §20.2, §21.2, §21.3)
 
 - Runtime RBAC protects navigation, queries, forms, reports and actions in
-  the official Runtime. It is not a defense against a user who extracts a
+  the official Runtime. Rust enforces it at every command entry point that
+  reads or writes records (`src-tauri/src/authz.rs`): row and batch writes,
+  table pages, saved queries, report PDF export and attachment export. A
+  role gets `FORBIDDEN` for anything its permissions (or the forms and
+  reports it may open) do not grant, and may not run ad hoc SQL. The role
+  comes only from the signed manifest, re-verified against the pinned cloud
+  key every time the installation opens or `cloud.json` is used: an edited
+  record (for example `owner: true`) fails with `INSTALLATION_TAMPERED`.
+  A cloud session whose role was never set is allowed nothing. It is not a
+  defense against a user who extracts a
   valid PostgreSQL credential and connects directly. Strong isolation needs
   per-user, least-privileged database credentials and database permissions
   set by the developer. Per-user envelopes (`scope = 'user'`) exist for this;

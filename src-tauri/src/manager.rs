@@ -82,6 +82,8 @@ pub struct Session {
     save_lock: Arc<Mutex<()>>,
     /// OS advisory lock on `<workspace>.lock`, held while the session is open so other ixtable processes never treat the workspace as abandoned.
     pub(crate) workspace_lock: Option<crate::recovery::WorkspaceLock>,
+    /// Runtime role enforced at command entry points (see `authz`).
+    pub access: crate::authz::Access,
 }
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -270,6 +272,7 @@ impl DocumentManager {
             config_revision: 0,
             save_lock: Arc::default(),
             workspace_lock,
+            access: Default::default(),
         };
         let state = s.state();
         // Registered under the sessions lock so recovery listing never sees it as abandoned.

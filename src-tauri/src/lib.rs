@@ -2,6 +2,7 @@ pub mod archive;
 pub mod archive_io;
 pub mod asset_data;
 pub mod assets;
+pub mod authz;
 pub mod automation;
 pub mod bundle;
 pub mod bundle_export;
@@ -115,6 +116,7 @@ fn list_attachments(window_label: String) -> Result<Vec<Attachment>, AppError> {
 }
 #[tauri::command]
 fn export_attachment(window_label: String, id: String, path: String) -> Result<(), AppError> {
+    authz::require_unrestricted(&window_label, "export attachments")?;
     manager()?.export_attachment(&window_label, &id, &PathBuf::from(path))
 }
 #[tauri::command]
@@ -167,10 +169,12 @@ fn read_table_page(
     sorts: Vec<data::Sort>,
     filters: Vec<data::Filter>,
 ) -> Result<data::Page, AppError> {
+    authz::check(&window_label, "table", &table, authz::Op::Read)?;
     manager()?.table_page(&window_label, &table, offset, limit, &sorts, &filters)
 }
 #[tauri::command]
 fn execute_read_query(window_label: String, sql: String) -> Result<data::QueryResult, AppError> {
+    authz::require_unrestricted(&window_label, "run ad hoc SQL")?;
     manager()?.read_query(&window_label, &sql)
 }
 #[tauri::command]
@@ -179,6 +183,7 @@ fn insert_row(
     table: String,
     values: Vec<data::NamedValue>,
 ) -> Result<Vec<data::DataValue>, AppError> {
+    authz::check(&window_label, "table", &table, authz::Op::Create)?;
     recordstore::insert_row(&window_label, &table, &values)
 }
 /// `expected` carries the values the user started from; entities with the
@@ -191,6 +196,7 @@ fn update_row(
     identity: Vec<data::DataValue>,
     expected: Option<Vec<data::NamedValue>>,
 ) -> Result<u64, AppError> {
+    authz::check(&window_label, "table", &table, authz::Op::Update)?;
     recordstore::update_row(&window_label, &table, &values, &identity, expected)
 }
 #[tauri::command]
@@ -200,6 +206,7 @@ fn delete_row(
     identity: Vec<data::DataValue>,
     expected: Option<Vec<data::NamedValue>>,
 ) -> Result<u64, AppError> {
+    authz::check(&window_label, "table", &table, authz::Op::Delete)?;
     recordstore::delete_row(&window_label, &table, &identity, expected)
 }
 #[tauri::command]
@@ -422,6 +429,7 @@ pub fn run() {
             recordstore::commands::clear_datasource_password,
             recordstore::commands::connect_datasource,
             // roles commands
+            authz::set_runtime_role_preview,
             // design commands
             design::validate_design,
             // queries commands

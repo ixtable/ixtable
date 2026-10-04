@@ -2,8 +2,9 @@ import { useEffect, useState } from "react";
 import { kindForColumn } from "../design/generate";
 import type { DesignControl, Relationship } from "../design/schema";
 import { registerRecordHook } from "../lib/records";
-import type { TableSchema } from "../lib/types";
-import { runQuerySql } from "../query/api";
+import type { DataValue, TableSchema } from "../lib/types";
+import { asTauriError, readTablePage } from "../lib/api";
+import { runQuerySql, toDataValue } from "../query/api";
 import { tableSchema } from "./data";
 import { fromDataValue, type RecordValues } from "./values";
 
@@ -61,6 +62,26 @@ export async function columnLookups(
   return Object.fromEntries(entries.filter((e): e is [string, Relationship] => !!e));
 }
 
+/**
+ * `[key, display]` rows read one key at a time through `read_table_page`, for a
+ * runtime role (Rust refuses it ad hoc SQL but authorizes lookup table reads).
+ */
+async function labelsByKey(lookup: Relationship, keys: unknown[]) {
+  const rows = await Promise.all(
+    keys.map(async (key): Promise<DataValue[] | null> => {
+      const page = await readTablePage(lookup.table, {
+        limit: 1,
+        filters: [{ column: lookup.valueColumn, operator: "eq", value: toDataValue(key) }],
+      });
+      const row = page.rows[0];
+      if (!row) return null;
+      const at = (name: string) => row[page.columns.findIndex((c) => c.name === name)];
+      return [at(lookup.valueColumn), at(lookup.displayColumn)];
+    }),
+  );
+  return { rows: rows.filter((row): row is DataValue[] => row !== null) };
+}
+
 /** Display labels for the keys in `rows`: one bound `IN (...)` query per lookup, through DuckDB. */
 export async function lookupLabels(lookups: Lookups, rows: RecordValues[]): Promise<LookupLabels> {
   const result: LookupLabels = {};
@@ -83,7 +104,11 @@ export async function lookupLabels(lookups: Lookups, rows: RecordValues[]): Prom
         const sql =
           `SELECT ${quote(lookup.valueColumn)} AS lookup_key, ${quote(lookup.displayColumn)} AS lookup_display ` +
           `FROM ${quote(lookup.table)} WHERE ${quote(lookup.valueColumn)} IN (${placeholders.join(", ")})`;
-        const found = await runQuerySql(sql, params).catch(() => null);
+        const found = await runQuerySql(sql, params).catch((error) =>
+          asTauriError(error).code === "FORBIDDEN"
+            ? labelsByKey(lookup, [...missing.values()]).catch(() => null)
+            : null,
+        );
         for (const row of found?.rows ?? []) {
           const key = String(fromDataValue(row[0]));
           const display = fromDataValue(row[1]);

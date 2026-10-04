@@ -87,7 +87,11 @@ application name. It has no ribbon (view switch, undo, redo), no mode switch,
 no Save buttons, no `PROJECT /` breadcrumb, and no "Preview as role" switch.
 A manual bundle runs with full access, because the document config has no
 default runtime role. A cloud installation runs as the role in its signed
-manifest and shows it as `Role: <name>`. Runtime sessions keep the ids the
+manifest and shows it as `Role: <name>`. The role lives in the Rust session
+(`authz.rs`) and is checked at each record command, so a direct `invoke`
+gets `FORBIDDEN` just like the UI. Studio's "Preview as role" sets the same
+Rust role while Run mode shows, so a preview behaves like the installed
+runtime; leaving Run mode ends it. Runtime sessions keep the ids the
 bundle was published with; only Studio rewrites the legacy `main` form id
 (`design/upgrade.rs`, `rekey_legacy_ids`).
 

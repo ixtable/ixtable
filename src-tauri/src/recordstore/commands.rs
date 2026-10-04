@@ -265,6 +265,15 @@ pub fn execute_write_batch(
     window_label: String,
     ops: Vec<crate::recordstore::WriteOp>,
 ) -> Result<Vec<WriteOutcome>, AppError> {
+    use crate::authz::{check, Op};
+    for op in &ops {
+        let kind = match op {
+            WriteOp::Insert { .. } => Op::Create,
+            WriteOp::Update { .. } => Op::Update,
+            WriteOp::Delete { .. } => Op::Delete,
+        };
+        check(&window_label, "table", op.table(), kind)?;
+    }
     let mut resolved = Vec::with_capacity(ops.len());
     for op in ops {
         resolved.push(match op {

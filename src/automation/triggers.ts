@@ -11,6 +11,7 @@
 import { evaluate, evaluateBoolean } from "../expr";
 import { inspectTable, readTablePage } from "../lib/api";
 import { type RecordWrite, registerRecordHook } from "../lib/records";
+import { activeRoleId } from "../runtime/rbac";
 import type { DataValue, DocumentConfig, Filter } from "../lib/types";
 import { enqueueJob, notifyJobsChanged } from "./api";
 import { type ActionContext, runAction } from "./runner";
@@ -27,6 +28,8 @@ export interface JobPayload {
   old: Record<string, unknown> | null;
   identity: unknown[];
   triggerDepth: number;
+  /** Role active when the job was created (null: developer); the worker never exceeds it. */
+  roleId?: string | null;
 }
 
 export interface TriggerEnv {
@@ -111,6 +114,7 @@ export async function dispatchTriggers(
         old,
         identity: plainIdentity,
         triggerDepth: depth,
+        roleId: activeRoleId(),
       };
       await enqueueJob({
         triggerId: trigger.id,

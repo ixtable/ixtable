@@ -1,5 +1,5 @@
 import { createHash, generateKeyPairSync, sign } from "node:crypto";
-import { readFileSync, readdirSync, statSync } from "node:fs";
+import { existsSync, readFileSync, readdirSync, statSync, writeFileSync } from "node:fs";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import type { AddressInfo } from "node:net";
 import { join } from "node:path";
@@ -52,7 +52,11 @@ function manifestFor(body: Json) {
     userId: USER_ID,
     roleId: ROLE_ID,
     roleName: "Field worker",
-    rolePermissions: { navigation: [], objects: [], actions: [] },
+    rolePermissions: {
+      navigation: [],
+      objects: [{ kind: "table", id: "notes", read: true, create: true }],
+      actions: [],
+    },
     installationId: body.installationId,
     fingerprint: "a".repeat(64),
     issuedAt: new Date(now).toISOString(),
@@ -227,6 +231,10 @@ it("installs a signed cloud bundle, rejects tampering, and updates keeping recor
     table: "notes",
     values: [{ column: "body", value: value("text", "written at runtime") }],
   });
+  expect(await failure(call("execute_read_query", { sql: "SELECT 1" }))).toMatch(/FORBIDDEN/);
+  expect(
+    await failure(call("delete_row", { table: "notes", identity: [value("integer", 1)] })),
+  ).toMatch(/FORBIDDEN/);
 
   cloud.archive = v2;
   cloud.version = "1.1.0";
@@ -259,6 +267,18 @@ it("installs a signed cloud bundle, rejects tampering, and updates keeping recor
   expect(offline.bundleVersion).toBe("1.1.0");
   expect(await notes()).toEqual(["written at runtime"]);
   await call("close_document", { force: true });
+
+  const appDir = join(STATE, "data", "cloud-installations", APP_ID);
+  const docDir = readdirSync(appDir).find((d) => existsSync(join(appDir, d, "cloud.json")))!;
+  const recordPath = join(appDir, docDir, "cloud.json");
+  const record = JSON.parse(readFileSync(recordPath, "utf8"));
+  const signed = JSON.parse(record.signedManifest);
+  record.signedManifest = canonical({ ...signed, owner: true, roleId: null });
+  record.manifest = { ...record.manifest, owner: true, roleId: null };
+  writeFileSync(recordPath, JSON.stringify(record));
+  expect(await failure(call("cloud_open_installed", { appId: APP_ID }))).toMatch(
+    /INSTALLATION_TAMPERED/,
+  );
 }, 120_000);
 
 it("delivers a PostgreSQL credential by envelope and key grant, memory only", async () => {

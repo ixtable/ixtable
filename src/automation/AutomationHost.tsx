@@ -1,5 +1,6 @@
 import { useEffect, useRef } from "react";
 import { useDocumentConfig } from "../lib/config-store";
+import { authorizer } from "../runtime/rbac";
 import { useShell } from "../shell/context";
 import { browserContext, DATABASE_CHANGED_EVENT } from "./context";
 import { installTriggers } from "./triggers";
@@ -26,8 +27,12 @@ export function AutomationHost() {
     () =>
       installTriggers({
         getConfig: () => configRef.current,
+        // Sync trigger actions act with the role of the user whose write fired them.
         context: (base) =>
-          browserContext(configRef.current, (m, t) => notifyRef.current(m, t), base),
+          browserContext(configRef.current, (m, t) => notifyRef.current(m, t), {
+            ...base,
+            authorize: authorizer(configRef.current),
+          }),
       }),
     [],
   );

@@ -109,10 +109,97 @@ pub struct CloudRecord {
     pub email: String,
     pub public_key_fingerprint: String,
     pub recorded_at: String,
+    /// The manifest exactly as signed. Older records lack it and are verified
+    /// from `manifest`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub signed_manifest: Option<serde_json::Value>,
 }
 
+/// `cloud.json` as written, unverified. Identity and role must come from
+/// [`verified_record`] instead.
 pub fn read_record(dir: &Path) -> Option<CloudRecord> {
     serde_json::from_slice(&fs::read(dir.join(CLOUD_JSON)).ok()?).ok()
+}
+
+fn tampered() -> AppError {
+    err(
+        "INSTALLATION_TAMPERED",
+        "The cloud installation record does not match its ixtable Cloud signature; reinstall the application",
+    )
+}
+
+/// Re-verifies a stored record's manifest signature (not its expiry: the
+/// installation opens offline) and returns the manifest as signed.
+pub fn verify_record(
+    record: &CloudRecord,
+    key: &ed25519_dalek::VerifyingKey,
+) -> Result<Manifest, AppError> {
+    let candidates = match &record.signed_manifest {
+        Some(signed) => vec![signed.clone()],
+        // Older records: the stored manifest as written, and without null fields.
+        None => {
+            let value = serde_json::to_value(&record.manifest).map_err(|_| tampered())?;
+            let mut stripped = value.clone();
+            if let Some(map) = stripped.as_object_mut() {
+                map.retain(|_, v| !v.is_null());
+            }
+            vec![value, stripped]
+        }
+    };
+    candidates
+        .iter()
+        .find_map(|c| super::manifest::verify_signature(c, &record.signature, key).ok())
+        .ok_or_else(tampered)
+}
+
+/// The installation's `cloud.json` with its manifest re-verified against the
+/// pinned cloud key and bound to this device's installation of the app. Fail
+/// closed: a missing, unreadable, or edited record is an error.
+pub fn verified_record(dir: &Path) -> Result<CloudRecord, AppError> {
+    let mut record = read_record(dir).ok_or_else(|| {
+        err(
+            "INSTALLATION_CORRUPT",
+            "The cloud installation record is missing",
+        )
+    })?;
+    let verified = verify_record(&record, &super::config::public_key()?)?;
+    let local = read_local(&verified.app_id)?.ok_or_else(tampered)?;
+    if dir.parent() != Some(app_root(&verified.app_id)?.as_path())
+        || local.installation_id != verified.installation_id
+    {
+        return Err(tampered());
+    }
+    record.manifest = verified;
+    Ok(record)
+}
+
+/// The runtime role a verified manifest grants: None (developer access) only
+/// for the signed owner without a role; otherwise the signed role, or a role
+/// allowed nothing. Mirrors `runtimeRoleFor` in src/cloud/session.ts.
+pub fn manifest_role(m: &Manifest) -> Option<crate::roles::Role> {
+    if m.owner && m.role_id.is_none() {
+        return None;
+    }
+    Some(crate::roles::Role {
+        id: m
+            .role_id
+            .clone()
+            .unwrap_or_else(|| crate::authz::NO_ROLE.into()),
+        name: m.role_name.clone().unwrap_or_else(|| "Runtime user".into()),
+        permissions: serde_json::from_value(m.role_permissions.clone()).unwrap_or_default(),
+    })
+}
+
+/// Opens the installation in `dir` with the role its verified record grants.
+fn open_with_role(
+    mgr: &DocumentManager,
+    window: &str,
+    dir: &Path,
+) -> Result<SessionState, AppError> {
+    let role = manifest_role(&verified_record(dir)?.manifest);
+    let state = installation::open_session(mgr, window, dir)?;
+    crate::authz::set_role(window, role)?;
+    Ok(state)
 }
 
 /// The installation directory of an installed cloud app, if any.
@@ -163,6 +250,7 @@ pub fn header_for(m: &Manifest, document_id: &str, public_key_b64: &str) -> Bund
 pub fn install_verified(
     window: &str,
     m: &Manifest,
+    signed_manifest: &serde_json::Value,
     signature: &str,
     email: &str,
     archive: &Path,
@@ -216,6 +304,7 @@ pub fn install_verified(
                 email: email.into(),
                 public_key_fingerprint: bundle::fingerprint(public_key_b64),
                 recorded_at: Utc::now().to_rfc3339(),
+                signed_manifest: Some(signed_manifest.clone()),
             };
             bundle::write_atomic(
                 &dir.join(CLOUD_JSON),
@@ -231,7 +320,7 @@ pub fn install_verified(
                 "cloud",
                 &format!("{action:?} {} {} ({})", m.app_name, m.version, m.version_id),
             );
-            installation::open_session(mgr, window, &dir)
+            open_with_role(mgr, window, &dir)
         }
         Err(e) => {
             crate::logging::warn(
@@ -239,7 +328,7 @@ pub fn install_verified(
                 &format!("install {}: {}: {}", m.app_id, e.code, e.message),
             );
             if reopen && dir.join(CLOUD_JSON).exists() {
-                installation::open_session(mgr, window, &dir)?;
+                open_with_role(mgr, window, &dir)?;
             }
             Err(e)
         }
@@ -251,13 +340,7 @@ pub fn open_installed(window: &str, app_id: &str) -> Result<SessionState, AppErr
     let dir = installed_dir(app_id)?.ok_or_else(|| {
         err("NOT_INSTALLED", "This application is not installed on this computer yet; connect to ixtable Cloud to install it")
     })?;
-    if read_record(&dir).is_none() {
-        return Err(err(
-            "INSTALLATION_CORRUPT",
-            "The cloud installation record is missing",
-        ));
-    }
-    installation::open_session(crate::manager()?, window, &dir)
+    open_with_role(crate::manager()?, window, &dir)
 }
 
 /// The cloud installation directory of the window's runtime session.

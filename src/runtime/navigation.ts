@@ -1,8 +1,9 @@
-import { createContext, useCallback, useContext, useMemo, useState } from "react";
+import { createContext, useCallback, useContext, useEffect, useMemo, useState } from "react";
 import { humanize } from "../design/generate";
 import type { FormMode, NavigationItem } from "../design/schema";
 import type { DocumentConfig } from "../lib/types";
-import { assignedRuntimeRole, can, findRole } from "./rbac";
+import { setRuntimeRolePreview } from "./api";
+import { assignedRuntimeRole, can, findRole, setPreviewedRole } from "./rbac";
 
 export type PageKind = "form" | "report" | "dashboard" | "table";
 export type RuntimePage = {
@@ -93,6 +94,13 @@ export function visibleNavigation(
   });
 }
 
+/** Leaving Run mode ends any role preview (Studio modes run with full access). */
+function endPreview() {
+  if (assignedRuntimeRole()) return;
+  setPreviewedRole(null);
+  setRuntimeRolePreview(null).catch(() => undefined);
+}
+
 /** State behind `RuntimeContext` for Run mode. */
 export function useRuntimeState(config: DocumentConfig): RuntimeNavigation {
   const [history, setHistory] = useState<RuntimePage[]>([]);
@@ -100,6 +108,13 @@ export function useRuntimeState(config: DocumentConfig): RuntimeNavigation {
   const assigned = assignedRuntimeRole();
   const [previewRole, setRole] = useState<string | null>(null);
   const roleId = assigned ? assigned.id : previewRole;
+  // Rust enforces the previewed role too, so a preview behaves like the installed runtime.
+  useEffect(() => {
+    if (assigned) return;
+    setPreviewedRole(previewRole);
+    setRuntimeRolePreview(previewRole).catch(() => undefined);
+  }, [previewRole, assigned]);
+  useEffect(() => endPreview, []);
   const [state, setState] = useState<Record<string, unknown>>({});
   const [notice, setNotice] = useState<Notice | null>(null);
   const [visit, setVisit] = useState(0);

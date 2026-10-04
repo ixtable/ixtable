@@ -6,6 +6,7 @@
  */
 import { asTauriError } from "../lib/api";
 import type { DocumentConfig } from "../lib/types";
+import { authorizer } from "../runtime/rbac";
 import { claimNextJob, completeJob, failJob, JOBS_CHANGED_EVENT } from "./api";
 import { type ActionContext, runAction } from "./runner";
 import type { JobPayload } from "./triggers";
@@ -18,7 +19,10 @@ export interface WorkerEnv {
   onJob?(job: Job, ok: boolean): void;
 }
 
-/** A context without a user: navigation, confirmation and form state fail clearly. */
+/**
+ * A context without a user: navigation, confirmation and form state fail clearly.
+ * It never exceeds the active role nor the role the job was created under.
+ */
 export function headlessContext(
   config: DocumentConfig,
   payload: Partial<JobPayload>,
@@ -34,6 +38,7 @@ export function headlessContext(
     old: payload.old ?? undefined,
     app,
     triggerDepth: payload.triggerDepth ?? 1,
+    authorize: authorizer(config, payload.roleId ?? null),
     navigate: unavailable("Navigation"),
     confirm: async () => unavailable("Confirmation")(),
     setState: (scope) => {

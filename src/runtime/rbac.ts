@@ -17,6 +17,25 @@ export function assignRuntimeRole(role: AssignedRole | null) {
 }
 export const assignedRuntimeRole = () => assigned;
 
+// Role previewed in Studio Run mode (Rust enforces it too; see `syncPreviewRole`).
+let previewed: string | null = null;
+export const setPreviewedRole = (roleId: string | null) => {
+  previewed = roleId;
+};
+
+/** The role runtime checks use now: the cloud-assigned role, else the previewed one. */
+export const activeRoleId = () => (assigned ? assigned.id : previewed);
+
+/**
+ * An action-context `authorize` for the active role (trigger and job contexts).
+ * `roleId` (a job's originating role) further restricts it: both must allow.
+ */
+export const authorizer =
+  (config: Pick<DocumentConfig, "roles">, roleId: string | null = null) =>
+  (kind: string, id: string, op: string) =>
+    can(config, activeRoleId(), kind, id, op as Operation) &&
+    (roleId == null || can(config, roleId, kind, id, op as Operation));
+
 export const findRole = (config: Pick<DocumentConfig, "roles">, roleId: string | null) => {
   if (assigned) return roleId == null || roleId === assigned.id ? assigned : undefined;
   return roleId == null ? null : (config.roles ?? []).find((role) => role.id === roleId);

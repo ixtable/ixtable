@@ -24,6 +24,7 @@ it("rejects a grid edit made from stale values and shows the current ones", asyn
     table: "tickets",
     values: [{ column: "status", value: value("text", "closed") }],
     identity: [value("integer", 1)],
+    expected: [{ column: "status", value: value("text", "open") }],
   });
 
   await user.clear(cell);

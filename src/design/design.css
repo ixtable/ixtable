@@ -93,7 +93,7 @@
 }
 .fd-toolbar button[aria-pressed="true"] {
   background: #292c32;
-  color: #fff;
+  color: var(--ix-on-dark);
   border-color: #292c32;
 }
 .fd-toolbar label {
@@ -115,7 +115,7 @@
   background: #fff;
 }
 .fd-card small {
-  color: #818791;
+  color: var(--ix-subtle);
   font-size: 11px;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -131,7 +131,7 @@
 .fd-card-head span {
   font-size: 10px;
   letter-spacing: 0.04em;
-  color: #979ca5;
+  color: var(--ix-subtle);
   text-transform: uppercase;
 }
 .fd-container {
@@ -155,7 +155,7 @@
   font-weight: 600;
 }
 .fd-hint {
-  color: #7a8089;
+  color: var(--ix-subtle);
   font-size: 11px;
   margin: 0 0 8px;
 }
@@ -171,7 +171,7 @@
 .fd-fieldset legend {
   font-size: 11px;
   font-weight: 700;
-  color: #6d737b;
+  color: var(--ix-subtle);
   padding: 0 4px;
 }
 .studio-properties .fd-row {
@@ -218,7 +218,7 @@
   border-color: #c2412d;
 }
 .fd-problem {
-  color: #b3261e;
+  color: var(--ix-danger);
   font-weight: 400;
 }
 .fd-rule {
@@ -228,7 +228,7 @@
 .fd-link {
   border: 0 !important;
   padding: 0 !important;
-  color: #3d6fd8;
+  color: var(--ix-link);
   background: transparent !important;
   font-size: 12px;
 }
@@ -305,10 +305,10 @@
   border-radius: 5px;
   background: #fffaf2;
   font-size: 11px;
-  color: #6a4a10;
+  color: var(--ix-warning);
 }
 .fd-issues li.error {
-  color: #9b1c1c;
+  color: var(--ix-danger);
 }
 .fd-asset-preview img {
   max-width: 100%;

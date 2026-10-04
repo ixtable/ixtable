@@ -122,7 +122,14 @@ it("previews roles, hides navigation, blocks deletes, and shows fields condition
   expect(await tablePage("customers")).toBe("OK");
   const identity = [value("integer", 1)];
   const rename = [{ column: "name", value: value("text", "Acme Ltd") }];
-  expect(await call("update_row", { table: "customers", values: rename, identity })).toBe("OK");
+  const expected = [{ column: "name", value: value("text", "Acme") }];
+  expect(await call("update_row", { table: "customers", values: rename, identity })).toBe(
+    "EXPECTED_REQUIRED",
+  );
+  expect(await call("update_row", { table: "customers", values: rename, identity, expected })).toBe(
+    "OK",
+  );
+  expect(await call("delete_row", { table: "customers", identity, expected })).toBe("FORBIDDEN");
   expect(await call("delete_row", { table: "customers", identity })).toBe("FORBIDDEN");
   expect(await call("insert_row", { table: "customers", values: rename })).toBe("FORBIDDEN");
 

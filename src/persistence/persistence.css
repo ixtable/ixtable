@@ -8,12 +8,12 @@
   gap: 3px;
 }
 .save-status small {
-  color: #788078;
+  color: var(--ix-on-dark-muted);
 }
 .save-status .text-button {
   justify-self: start;
   padding: 2px 0;
-  color: #d6dbd3;
+  color: var(--ix-on-dark-muted);
   text-decoration: underline;
   font-size: 10px;
 }
@@ -60,7 +60,7 @@
   border-bottom: 1px solid #eceee9;
 }
 .asset-table th {
-  color: #5d635c;
+  color: var(--ix-subtle);
   font-weight: 600;
 }
 .asset-actions {
@@ -103,7 +103,7 @@
 }
 .size-breakdown dt {
   font-size: 11px;
-  color: #5d635c;
+  color: var(--ix-subtle);
 }
 .size-breakdown dd {
   margin: 2px 0 0;
@@ -137,7 +137,7 @@
 }
 .size-largest small,
 .checkpoint-list small {
-  color: #6b7169;
+  color: var(--ix-subtle);
 }
 .log-lines li {
   display: grid;
@@ -149,13 +149,13 @@
   border-bottom: 1px solid #eceee9;
 }
 .log-lines .log-area {
-  color: #52775b;
+  color: var(--ix-accent);
 }
 .log-lines .log-error b {
-  color: #b42318;
+  color: var(--ix-danger);
 }
 .log-lines .log-warn b {
-  color: #8a5a00;
+  color: var(--ix-warning);
 }
 .recovery-item {
   display: flex;
@@ -172,7 +172,7 @@
 }
 .recovery-item small,
 .recovery-intro {
-  color: #6b7169;
+  color: var(--ix-subtle);
   font-size: 12px;
 }
 .asset-actions button:focus-visible,

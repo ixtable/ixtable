@@ -41,12 +41,10 @@ export interface JobPayload {
 export interface TriggerEnv {
   getConfig(): DocumentConfig;
   /**
-   * Builds the interactive context sync trigger actions run with. `triggerAuth` is
-   * set for app-mode triggers: the context must then skip role checks.
+   * Builds the interactive context sync trigger and custom actions run with.
+   * `triggerAuth` is set for app-mode triggers: the context must then skip role checks.
    */
-  context(
-    base: Pick<ActionContext, "record" | "old" | "triggerDepth" | "triggerAuth">,
-  ): ActionContext;
+  context(base: Partial<ActionContext>): ActionContext;
   app?(): Record<string, unknown>;
 }
 
@@ -171,7 +169,7 @@ async function dispatch(
 }
 
 /** Reads one row by identity (primary key values, or rowid); null when it can't. */
-async function readRow(
+export async function readRow(
   table: string,
   identity: DataValue[],
 ): Promise<Record<string, unknown> | null> {

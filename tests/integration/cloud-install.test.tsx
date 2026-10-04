@@ -238,7 +238,13 @@ it("installs a signed cloud bundle, rejects tampering, and updates keeping recor
   });
   expect(await failure(call("execute_read_query", { sql: "SELECT 1" }))).toMatch(/FORBIDDEN/);
   expect(
-    await failure(call("delete_row", { table: "notes", identity: [value("integer", 1)] })),
+    await failure(
+      call("delete_row", {
+        table: "notes",
+        identity: [value("integer", 1)],
+        expected: [{ column: "body", value: value("text", "written at runtime") }],
+      }),
+    ),
   ).toMatch(/FORBIDDEN/);
 
   cloud.archive = v2;

@@ -113,10 +113,66 @@ have depended on a backup that ixtable cannot check.
 
 ### Optimistic concurrency
 
-`update_row` and `delete_row` accept the original values as `expected`. For
-tables with the `optimistic` policy, the store compares them in the `WHERE`
-clause. When no row matches, the write fails with `CONFLICT` and the grid
-shows the current values.
+`update_row`, `delete_row`, and the update and delete operations of
+`execute_write_batch` accept the original values as `expected`. Rust enforces
+the entity's policy at write time (`recordstore::commands::resolve_expected`):
+
+- `optimistic`, `customAction`, and a table with no resolved policy need
+  `expected`. An update or delete without it fails with `EXPECTED_REQUIRED`
+  instead of overwriting blindly. The store compares the values in the
+  `WHERE` clause. When no row matches, the write fails with `CONFLICT` and the
+  grid shows the current values.
+- `lastWriteWins` drops `expected`, so a stale edit overwrites.
+
+Every frontend caller sends `expected`: the grid, Runtime forms, related lists,
+and automation record steps, which send the values of the rows they matched.
+Within one action run, a row the action already wrote sends its post-write
+values as the next write's `expected` (in `rollback` mode, lookups still see the
+data as it was before the action), and a step on a row the action deleted fails.
+On a table with no primary key a `match: current` step sends the record as
+loaded, not the form's unsaved edits.
+
+A write that commits but whose sync trigger then fails rejects with
+`CommittedWriteError`. A Runtime form treats it as saved: a created record opens
+as saved (so Save again cannot insert a duplicate), an updated one reloads, and
+the form shows `Saved.` with the trigger's error.
+
+### Custom concurrency actions
+
+Rust stores records; it does not run actions (expressions are evaluated only in
+TypeScript). For a `customAction` entity, `updateRecord` and `deleteRecord` in
+`src/lib/records.ts` run the entity's `actionId` instead of writing, through a
+router that automation installs (`src/automation/custom.ts`). Update and delete
+steps of an action do the same, joining the caller's transaction. Inserts are
+unaffected. The action runs with:
+
+- `record`: the row with the requested changes applied (the current row for a
+  delete), so `match: current` targets it;
+- `old`: the row before the change;
+- `params.operation` (`update` or `delete`), `params.table`, `params.changes`
+  (the requested column values), and `params.expected` (the original values the
+  caller started from, or null).
+
+A `match: current` step on the routed row sends the caller's original values
+(the form or grid snapshot, else the row as read when the write began) as
+`expected`, so a concurrent change raises `CONFLICT` from forms and grids alike.
+
+Routing happens only in the TypeScript frontend. Rust treats `customAction`
+like `optimistic` (it requires `expected`), so a direct `update_row` or
+`delete_row` call with `expected` writes without running the action. The
+frontend is the only client today.
+
+The action's own record steps write directly, with no re-routing, under its
+`onError` semantics; use `rollback` to make its writes one transaction. They
+send `expected` like any optimistic write, so a row that changed after the
+action read it still conflicts. A failing action rejects the caller's write.
+
+Each of those writes goes through the same Rust authorization as any record
+write (`authz::check`, or a trigger grant). A custom action started by a user's
+save, or by a user-mode trigger, runs under the user's role, which must be
+allowed to run the action. Inside an app-mode trigger it runs with the
+trigger's grant: Rust counts the routed action's steps as steps the trigger
+declares (`trigger_auth::action_steps`).
 
 ### Credentials and TLS
 
@@ -143,8 +199,14 @@ needs an explicit, recorded confirmation (PRD §21.4).
 - `src-tauri/src/recordstore/conformance.rs`, run on SQLite and PostgreSQL:
   CRUD visible to DuckDB after each commit, constraint codes and cascades,
   atomic batches with bound values, logical types round-tripping through
-  DuckDB, optimistic updates rejecting stale values, store-specific schema
-  change modes that keep data, and transactional scripts with rollback.
+  DuckDB, optimistic updates rejecting stale values, write-time policies
+  (`EXPECTED_REQUIRED` and `CONFLICT` for optimistic, overwrite for
+  `lastWriteWins`), store-specific schema change modes that keep data, and
+  transactional scripts with rollback.
+- `tests/unit/automation-write-path.test.ts`: automation sends `expected`,
+  custom concurrency actions from `records.ts` and from action steps.
+- `tests/integration/automation-runtime.test.tsx`: a custom concurrency action
+  replaces the write; a blind `update_row` fails with `EXPECTED_REQUIRED`.
 - `src-tauri/src/recordstore/sqlite_tests.rs` and
   `src-tauri/src/migrations/tests.rs`.
 - `tests/integration/schema-designer.test.tsx`: changes labelled by store
@@ -156,6 +218,12 @@ needs an explicit, recorded confirmation (PRD §21.4).
   `tests/unit/relationships.test.ts`: capability-driven pickers, the
   capability summary, composite edges and cardinality labels.
 - `tests/integration/optimistic-grid.test.tsx`: a stale grid edit is rejected.
+- `tests/unit/automation-expected.test.ts`: rows written twice in one run
+  (rollback and immediate, keyed and keyless), custom actions conflicting on a
+  stale form snapshot, keyless `expected` from the loaded record.
+- `tests/integration/runtime-committed-write.test.tsx`: same-row writes in a
+  rollback action, and Runtime forms treating a committed write with a failed
+  sync trigger as saved.
 - `tests/integration/migrations.test.tsx`: dry run, apply with checkpoint,
   rollback, a failing migration, a legacy `postgres` target flagged as an
   error, and migrations disabled for a PostgreSQL document.

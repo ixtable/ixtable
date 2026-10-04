@@ -158,6 +158,37 @@ fn async_jobs_authorize_with_their_live_lease() {
     assert!(verify("w", &c, &stale, "audit_log", Op::Create, now, &job("t-async")).is_err());
 }
 
+#[test]
+fn updates_of_custom_action_entities_declare_the_routed_action() {
+    let mut c = config();
+    c.actions.push(
+        serde_json::from_value(json!(
+            {"id": "a-guard", "name": "Guarded stock", "onError": "stop", "steps": [
+                {"id": "s-guard", "kind": "createRecord", "table": "stock_audit", "values": {"m": "'x'"}}
+            ]}
+        ))
+        .unwrap(),
+    );
+    let now = Instant::now();
+    let token = issue("w-custom", &c, "orders", TriggerEvent::Created, now).unwrap();
+    let guard = step(&token, "t-app", "s-guard");
+    let check = |c: &DocumentConfig| {
+        verify("w-custom", c, &guard, "stock_audit", Op::Create, now, &no_job)
+    };
+    assert_eq!(check(&c).unwrap_err().code, "FORBIDDEN");
+    c.entities.push(crate::recordstore::EntitySettings {
+        id: "e-inventory".into(),
+        table: "inventory".into(),
+        concurrency: "customAction".into(),
+        action_id: Some("a-guard".into()),
+    });
+    assert!(check(&c).is_ok());
+    let needed = needed_grants(&c, &c.triggers[1]);
+    assert!(needed.contains(&("action".into(), "a-guard".into(), Op::Execute)));
+    assert!(needed.contains(&("table".into(), "stock_audit".into(), Op::Create)));
+    release("w-custom", &token);
+}
+
 fn grant(kind: &str, id: &str, write: bool) -> ObjectPermission {
     ObjectPermission {
         kind: kind.into(),

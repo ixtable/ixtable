@@ -1,9 +1,16 @@
-import { type ReactNode, useCallback, useEffect, useRef, useState } from "react";
+import { type ReactNode, useCallback, useState } from "react";
+import { DialogFrame } from "../components/DialogFrame";
 
 type Pending = { message: string; resolve: (ok: boolean) => void };
 
-/** In-app confirmation dialog: returns the dialog element and an async `confirm(message)`. */
-export function useConfirm(): [ReactNode, (message: string) => Promise<boolean>] {
+/**
+ * In-app confirmation dialog: returns the dialog element and an async
+ * `confirm(message)`. `fallbackFocus` receives focus on close when the opener
+ * was removed (e.g. the Delete button of a deleted row).
+ */
+export function useConfirm(
+  fallbackFocus?: () => HTMLElement | null | undefined,
+): [ReactNode, (message: string) => Promise<boolean>] {
   const [pending, setPending] = useState<Pending | null>(null);
   const confirm = useCallback(
     (message: string) => new Promise<boolean>((resolve) => setPending({ message, resolve })),
@@ -13,32 +20,39 @@ export function useConfirm(): [ReactNode, (message: string) => Promise<boolean>]
     pending?.resolve(ok);
     setPending(null);
   };
-  const element = pending ? <ConfirmDialog message={pending.message} onClose={close} /> : null;
+  const element = pending ? (
+    <ConfirmDialog message={pending.message} onClose={close} fallbackFocus={fallbackFocus} />
+  ) : null;
   return [element, confirm];
 }
 
-function ConfirmDialog({ message, onClose }: { message: string; onClose: (ok: boolean) => void }) {
-  const ok = useRef<HTMLButtonElement>(null);
-  useEffect(() => ok.current?.focus(), []);
+function ConfirmDialog({
+  message,
+  onClose,
+  fallbackFocus,
+}: {
+  message: string;
+  onClose: (ok: boolean) => void;
+  fallbackFocus?: () => HTMLElement | null | undefined;
+}) {
   return (
-    <div
+    <DialogFrame
       className="rt-dialog"
       role="alertdialog"
       aria-modal="true"
       aria-label="Confirm"
-      onKeyDown={(event) => {
-        if (event.key === "Escape") onClose(false);
-      }}
+      onClose={() => onClose(false)}
+      fallbackFocus={fallbackFocus}
     >
       <p>{message}</p>
       <div className="rt-actions">
         <button type="button" onClick={() => onClose(false)}>
           Cancel
         </button>
-        <button type="button" ref={ok} className="primary" onClick={() => onClose(true)}>
+        <button type="button" data-autofocus className="primary" onClick={() => onClose(true)}>
           Confirm
         </button>
       </div>
-    </div>
+    </DialogFrame>
   );
 }

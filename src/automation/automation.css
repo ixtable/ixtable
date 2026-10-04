@@ -17,11 +17,11 @@
   background: none;
   padding: 10px 12px;
   font-size: 12px;
-  color: #5d635c;
+  color: var(--ix-subtle);
   border-bottom: 2px solid transparent;
 }
 .ax-tabs button[aria-selected="true"] {
-  color: #244a31;
+  color: var(--ix-accent);
   font-weight: 700;
   border-bottom-color: #52775b;
 }
@@ -83,7 +83,7 @@
 .ax-field label,
 .ax-check {
   font-size: 11px;
-  color: #5d635c;
+  color: var(--ix-subtle);
 }
 .ax-check {
   display: flex;
@@ -106,7 +106,7 @@
   border-color: #b5463a;
 }
 .ax-problem {
-  color: #9b3328;
+  color: var(--ix-danger);
   font-size: 11px;
 }
 .ax-mode button {
@@ -166,22 +166,22 @@
 }
 .ax-status-succeeded,
 .ax-ok {
-  color: #2f6b3d;
+  color: var(--ix-accent);
 }
 .ax-status-failed,
 .ax-fail {
-  color: #9b3328;
+  color: var(--ix-danger);
 }
 .ax-status-cancelled {
-  color: #8a8a82;
+  color: var(--ix-subtle);
 }
 .ax-issues {
   margin: 0;
   padding-left: 18px;
-  color: #9b3328;
+  color: var(--ix-danger);
 }
 .ax-issues .warning {
-  color: #8a6a1f;
+  color: var(--ix-subtle);
 }
 .ax-mode .sr-only {
   position: absolute;

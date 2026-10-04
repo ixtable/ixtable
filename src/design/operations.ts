@@ -1,4 +1,4 @@
-import type { GridLayout, Placement } from "../grid/types";
+import type { GridLayout, GridTrack, Placement } from "../grid/types";
 import { newId } from "../lib/utils";
 import {
   type ControlKind,
@@ -70,15 +70,19 @@ export function setLayout(
   };
 }
 
-/** Sets the number of equal-width base columns. */
+/** Keeps the first `count` tracks and appends `1fr` tracks; authored tracks are never rewritten. */
+export const resizeTracks = (tracks: GridTrack[], count: number): GridTrack[] => {
+  const length = Math.max(1, Math.min(24, Math.round(count) || 1));
+  return Array.from(
+    { length },
+    (_, i) => tracks[i] ?? { kind: "fr" as const, value: 1, min: null, max: null },
+  );
+};
+
+/** Sets the number of base columns, keeping existing tracks and adding or removing at the end. */
 export const withColumnCount = (layout: GridLayout, count: number): GridLayout => ({
   ...layout,
-  columns: Array.from({ length: Math.max(1, Math.min(24, count)) }, () => ({
-    kind: "fr" as const,
-    value: 1,
-    min: null,
-    max: null,
-  })),
+  columns: resizeTracks(layout.columns, count),
 });
 
 /** Adds a control of `kind` to the container `parent` (the form grid when null). */

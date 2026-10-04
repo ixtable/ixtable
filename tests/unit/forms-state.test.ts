@@ -4,6 +4,7 @@ import {
   compute,
   condition,
   defaultRecord,
+  enabledControls,
   expressionProblem,
   hasErrors,
   validateControl,
@@ -131,5 +132,30 @@ describe("form validation and expressions", () => {
       { column: "a", value: { type: "text", value: "x" } },
       { column: "b", value: { type: "integer", value: 2 } },
     ]);
+  });
+
+  it("passes a container's disabled state to everything inside it", () => {
+    const f = newForm("Orders", { kind: "table", table: "orders" });
+    const tabs = { ...newControl("tabs", f), enabledWhen: "record.open" };
+    f.controls.push(tabs);
+    const page = { id: tabs.id, tab: tabs.tabs?.[0]?.id };
+    const section = newControl("section", f, page);
+    f.controls.push(section);
+    const inner = { ...newControl("text", f, { id: section.id }), binding: { column: "name" } };
+    const button = newControl("button", f, { id: section.id });
+    const list = newControl("relatedList", f, page);
+    const own = { ...newControl("number", f), enabledWhen: "record.qty > 1" };
+    const outside = newControl("text", f);
+    f.controls.push(inner, button, list, own, outside);
+    const nested = [tabs, section, inner, button, list].map((c) => c.id);
+    const closed = enabledControls(f, scope({ open: false, qty: 5 }));
+    expect(nested.filter((id) => closed.has(id))).toEqual([]);
+    expect(closed.has(own.id)).toBe(true);
+    expect(closed.has(outside.id)).toBe(true);
+    const open = enabledControls(f, scope({ open: true, qty: 0 }));
+    expect(nested.filter((id) => open.has(id))).toEqual(nested);
+    expect(open.has(own.id)).toBe(false);
+    // Visibility is independent of enabled state.
+    expect(visibleControls(f, scope({ open: false })).has(inner.id)).toBe(true);
   });
 });

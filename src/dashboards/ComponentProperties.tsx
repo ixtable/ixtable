@@ -1,4 +1,5 @@
 /** Properties of the selected dashboard component. Field pickers list the query's result columns. */
+import { RegionPicker } from "../design/RegionEditor";
 import { Trash2 } from "lucide-react";
 import { type ReactNode, useId } from "react";
 import { ActionPicker } from "../automation/ActionPicker";
@@ -422,6 +423,11 @@ export function ComponentProperties({
         Column {c.placement.column}, row {c.placement.row}, {c.placement.columnSpan} ×{" "}
         {c.placement.rowSpan}. Alt+Arrow resizes, Alt+Shift+Arrow moves.
       </p>
+      <RegionPicker
+        layout={dashboard.layout}
+        placement={c.placement}
+        onChange={(placement) => change({ placement }, "Place component")}
+      />
       <button type="button" onClick={remove}>
         <Trash2 aria-hidden="true" /> Delete component
       </button>

@@ -16,6 +16,7 @@ import {
   hasErrors,
   validateControl,
   validateForm,
+  enabledControls,
   visibleControls,
 } from "./formState";
 import { useRuntimeNavigation } from "./navigation";
@@ -168,6 +169,7 @@ export function RecordView({
     [record, formState, app],
   );
   const visible = useMemo(() => visibleControls(form, scope), [form, scope]);
+  const enabled = useMemo(() => enabledControls(form, scope), [form, scope]);
   const readOnly = mode === "detail" || readOnlySource;
   const locked = useMemo(() => {
     const set = new Set<string>();
@@ -318,6 +320,7 @@ export function RecordView({
     form,
     scope,
     visible,
+    enabled,
     errors: errors.fields,
     readOnly,
     locked,

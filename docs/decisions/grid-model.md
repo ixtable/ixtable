@@ -35,8 +35,22 @@ with spans clamped to the active column count.
 
 `<GridCanvas>` and `<GridItem>` render a layout with CSS Grid. In edit mode
 they add keyboard resizing with Alt+Arrow, moving with Alt+Shift+Arrow, and
-labelled toolbar buttons. Per-item span limits come from the caller, so the
-form designer can give each control kind its own limits.
+labelled toolbar buttons. Per-item span limits come from the caller:
+`controlConstraints` in `src/design/constraints.ts` gives each form control kind
+a minimum width (for example 1 column for a yes/no field, 4 for sections and tab
+groups, 6 for related lists on a 12-column grid, scaled to the grid's column
+count) and caps every kind at the full width. The designer canvas, the runtime
+form body, and the span fields in the properties panel all use it. Dashboards
+use `constraintsFor` in `src/dashboards/model.ts` the same way.
+
+`<LayoutSettings>` (`src/design/LayoutSettings.tsx`) is the one grid editor for
+forms, form containers, and dashboards. It edits column and row tracks (kind,
+size, minimum and maximum pixels), gaps, padding, item alignment, named regions,
+and breakpoints. Changing the column count keeps the authored tracks and only
+adds `1fr` tracks or removes tracks at the end. The form designer passes the
+placed controls so `validateLayout` problems are listed under the settings. Each
+item's properties offer a region picker (`RegionPicker`) when the grid has named
+regions.
 
 Rust validates layouts in `design::validate_layout` and `validate_span`. The
 dashboard module calls the same functions, so a placement that overflows the
@@ -58,6 +72,11 @@ same `Issue` shape, plus rendering warnings such as overlapping regions.
 - `tests/unit/grid.test.ts`: track and container CSS, breakpoints, wrapping,
   named regions, resize and move limits, overlap detection, validation that
   mirrors the Rust errors, and serialization.
+- `tests/unit/layout-settings.test.tsx`: track, alignment, and region editing,
+  listed validation problems, and the region picker.
+- `tests/unit/form-constraints.test.ts`: per-kind form control limits.
+- `tests/integration/form-grid-designer.test.tsx`: keyboard resizing stops at a
+  control's limit, and grid edits reach the saved definition.
 - `tests/unit/grid-canvas.test.tsx`: labelled resize buttons, keyboard resize
   and move within limits, breakpoint by measured width, pointer drag snapping.
 - `src-tauri/src/design/tests.rs`: placements cannot overflow columns, and

@@ -105,22 +105,31 @@ function matchesPattern(pattern: string, value: unknown): boolean {
 export const cellText = (value: unknown, control?: DesignControl) =>
   formatted(value, control?.format);
 
-/** Container visibility: a control is hidden when it or any ancestor container is hidden. */
-export function visibleControls(form: DesignForm, scope: FormScope): Set<string> {
+/**
+ * Controls for which `own(control)` holds and holds for every ancestor container, so a hidden
+ * or disabled section or tab group passes that state to everything inside it.
+ */
+function inherited(form: DesignForm, own: (control: DesignControl) => boolean): Set<string> {
   const byId = new Map(form.controls.map((control) => [control.id, control]));
   const memo = new Map<string, boolean>();
-  const visible = (control: DesignControl, depth = 0): boolean => {
+  const holds = (control: DesignControl, depth = 0): boolean => {
     const known = memo.get(control.id);
     if (known !== undefined) return known;
     const parent = control.parent ? byId.get(control.parent.id) : undefined;
-    const result =
-      condition(control.visibleWhen, scope) &&
-      (!parent || depth > 20 || visible(parent, depth + 1));
+    const result = own(control) && (!parent || depth > 20 || holds(parent, depth + 1));
     memo.set(control.id, result);
     return result;
   };
-  return new Set(form.controls.filter((control) => visible(control)).map((c) => c.id));
+  return new Set(form.controls.filter((control) => holds(control)).map((c) => c.id));
 }
+
+/** Container visibility: a control is hidden when it or any ancestor container is hidden. */
+export const visibleControls = (form: DesignForm, scope: FormScope): Set<string> =>
+  inherited(form, (control) => condition(control.visibleWhen, scope));
+
+/** Container enabled state: a control is disabled when it or any ancestor container is. */
+export const enabledControls = (form: DesignForm, scope: FormScope): Set<string> =>
+  inherited(form, (control) => condition(control.enabledWhen, scope));
 
 export type FormErrors = { fields: Record<string, string>; form: string[] };
 

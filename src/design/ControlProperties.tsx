@@ -1,6 +1,9 @@
 import { Trash2 } from "lucide-react";
 import { ActionPicker } from "../automation/ActionPicker";
 import type { DbObject } from "../lib/types";
+import { resizePlacement } from "../grid/engine";
+import { AssetPicker } from "./AssetPicker";
+import { controlConstraints } from "./constraints";
 import { ExpressionField } from "./ExpressionField";
 import { clampPlacement, moveToContainer, removeControl } from "./operations";
 import {
@@ -12,9 +15,12 @@ import {
   isInputKind,
 } from "./schema";
 import { ColumnSelect, RelatedListProperties, TabsProperties } from "./KindProperties";
+import { RegionPicker } from "./RegionEditor";
 import { useColumns } from "./useColumns";
 import { useDesignEditor } from "./useDesignEditor";
 
+/** Static kinds have nothing to enable or disable. */
+const hasEnabledState = (kind: DesignControl["kind"]) => kind !== "label" && kind !== "image";
 const numberOrNull = (value: string) => (value === "" ? null : Number(value));
 const parentKey = (parent?: ControlParent | null) =>
   parent ? `${parent.id}|${parent.tab ?? ""}` : "";
@@ -55,6 +61,8 @@ export function ControlProperties({
   const setValidation = (patch: Partial<DesignControl["validation"]>) =>
     change({ validation: { ...validation, ...patch } }, "Edit validation");
   const input = isInputKind(control.kind);
+  const grid = containerLayout(form, control.parent);
+  const limits = controlConstraints(control.kind, grid.columns.length);
   const span = (field: "column" | "row" | "columnSpan" | "rowSpan", label: string) => (
     <label>
       {label}
@@ -65,9 +73,14 @@ export function ControlProperties({
         onChange={(e) =>
           change(
             {
-              placement: clampPlacement(
-                { ...control.placement, [field]: Math.max(1, Number(e.target.value) || 1) },
-                containerLayout(form, control.parent).columns.length,
+              placement: resizePlacement(
+                clampPlacement(
+                  { ...control.placement, [field]: Math.max(1, Number(e.target.value) || 1) },
+                  grid.columns.length,
+                ),
+                {},
+                grid,
+                limits,
               ),
             },
             "Move control",
@@ -143,6 +156,11 @@ export function ControlProperties({
         {span("columnSpan", "Column span")}
         {span("rowSpan", "Row span")}
       </div>
+      <RegionPicker
+        layout={grid}
+        placement={control.placement}
+        onChange={(placement) => change({ placement }, "Place control")}
+      />
       {control.kind === "select" && (
         <>
           <label>
@@ -228,13 +246,7 @@ export function ControlProperties({
         <RelatedListProperties form={form} control={control} columns={columns} tables={tables} />
       )}
       {control.kind === "image" && (
-        <label>
-          Asset id
-          <input
-            value={control.assetId ?? ""}
-            onChange={(e) => change({ assetId: e.target.value || null })}
-          />
-        </label>
+        <AssetPicker control={control} onChange={(assetId) => change({ assetId }, "Pick image")} />
       )}
       {input && (
         <fieldset className="fd-fieldset">
@@ -300,12 +312,14 @@ export function ControlProperties({
           columns={columns}
           onChange={(visibleWhen) => change({ visibleWhen })}
         />
-        <ExpressionField
-          label="Enabled when"
-          value={control.enabledWhen}
-          columns={columns}
-          onChange={(enabledWhen) => change({ enabledWhen })}
-        />
+        {hasEnabledState(control.kind) && (
+          <ExpressionField
+            label="Enabled when"
+            value={control.enabledWhen}
+            columns={columns}
+            onChange={(enabledWhen) => change({ enabledWhen })}
+          />
+        )}
         {(input || control.kind === "computed") && (
           <ExpressionField
             label={control.kind === "computed" ? "Expression" : "Computed value"}

@@ -14,8 +14,10 @@ use std::{
 
 pub const MAX_LOG_BYTES: u64 = 5 * 1024 * 1024;
 const LOG_FILE: &str = "ixtable.log";
-/// Keys whose values are masked wherever they appear as `key=value` or `"key": value`.
-const SECRET_KEYS: [&str; 9] = [
+/// Secret key words. A `key=value` / `"key": value` pair is masked when its key,
+/// split into snake/kebab/camelCase words, contains one of these as a word run
+/// (`access_token`, `refreshToken`, `X-Api-Key`, `client_secret`, `DEK`).
+const SECRET_KEYS: [&str; 12] = [
     "password",
     "passwd",
     "pwd",
@@ -25,6 +27,9 @@ const SECRET_KEYS: [&str; 9] = [
     "apikey",
     "authorization",
     "passphrase",
+    "dek",
+    "private_key",
+    "credentials",
 ];
 const MASK: &str = "***";
 
@@ -128,6 +133,44 @@ pub fn error(area: &str, message: &str) {
     log("error", area, message);
 }
 
+/// One local crash record for a Rust panic (PRD §27.5; never uploaded). The
+/// message is redacted by [`log`] like every other line.
+pub fn panic_record(thread: Option<&str>, payload: &str, location: Option<String>) -> String {
+    let one_line = payload.replace(['\n', '\r'], " ");
+    format!(
+        "panic in thread {:?} at {}: {one_line}",
+        thread.unwrap_or("<unnamed>"),
+        location.as_deref().unwrap_or("<unknown>")
+    )
+}
+
+/// Chains a panic hook that appends a redacted `panic` record to the local log,
+/// then runs the previous hook (stderr output and backtrace stay as they were).
+pub fn install_panic_hook() {
+    let previous = std::panic::take_hook();
+    std::panic::set_hook(Box::new(move |info| {
+        let payload = info
+            .payload()
+            .downcast_ref::<&str>()
+            .map(|s| s.to_string())
+            .or_else(|| info.payload().downcast_ref::<String>().cloned())
+            .unwrap_or_else(|| "<non-string panic payload>".into());
+        let location = info
+            .location()
+            .map(|l| format!("{}:{}:{}", l.file(), l.line(), l.column()));
+        let thread = std::thread::current();
+        // A panic while the log lock is held must not deadlock the hook.
+        if let Ok(_guard) = LOCK.try_lock() {
+            let _ = global().write(
+                "error",
+                "panic",
+                &panic_record(thread.name(), &payload, location),
+            );
+        }
+        previous(info);
+    }));
+}
+
 /// Masks URL credentials (`scheme://user:pass@`) and `key=value` / `"key": "value"` secrets.
 pub fn redact(text: &str) -> String {
     redact_keys(&redact_urls(text))
@@ -162,58 +205,88 @@ fn redact_urls(text: &str) -> String {
     out
 }
 
+/// True when an identifier names a secret: its words (split at `_`, `-`, and
+/// lower-to-upper case changes) contain a [`SECRET_KEYS`] entry as a word run.
+fn is_secret_key(key: &str) -> bool {
+    let mut words = String::with_capacity(key.len() + 4);
+    let mut prev_lower = false;
+    for c in key.chars() {
+        if c == '_' || c == '-' {
+            words.push('_');
+            prev_lower = false;
+            continue;
+        }
+        if c.is_ascii_uppercase() && prev_lower {
+            words.push('_');
+        }
+        prev_lower = c.is_ascii_lowercase() || c.is_ascii_digit();
+        words.push(c.to_ascii_lowercase());
+    }
+    let words = format!("_{words}_");
+    SECRET_KEYS
+        .iter()
+        .any(|k| words.contains(&format!("_{k}_")))
+}
+
 fn redact_keys(text: &str) -> String {
-    let lower = text.to_ascii_lowercase();
     let bytes = text.as_bytes();
     let mut out = String::with_capacity(text.len());
     let mut i = 0;
-    'scan: while i < bytes.len() {
-        for key in SECRET_KEYS {
-            if !lower[i..].starts_with(key) || (i > 0 && is_word(bytes[i - 1])) {
-                continue;
-            }
-            let mut j = i + key.len();
-            while j < bytes.len() && (is_word(bytes[j]) || bytes[j] == b'"' || bytes[j] == b'\'') {
-                if bytes[j] == b'"' || bytes[j] == b'\'' {
-                    j += 1;
-                    break;
-                }
-                j += 1;
-            }
-            while j < bytes.len() && bytes[j] == b' ' {
-                j += 1;
-            }
-            if j >= bytes.len() || !matches!(bytes[j], b'=' | b':') {
-                continue;
-            }
-            j += 1;
-            while j < bytes.len() && bytes[j] == b' ' {
-                j += 1;
-            }
-            let (value_start, value_end) = if j < bytes.len() && matches!(bytes[j], b'"' | b'\'') {
-                (j + 1, closing_quote(bytes, j))
-            } else {
-                let end = (j..bytes.len())
-                    .find(|&k| {
-                        bytes[k].is_ascii_whitespace()
-                            || matches!(bytes[k], b'"' | b'\'' | b';' | b'&' | b',' | b'}')
-                    })
-                    .unwrap_or(bytes.len());
-                (j, end)
-            };
-            if value_end == value_start {
-                continue;
-            }
-            out.push_str(&text[i..value_start]);
-            out.push_str(MASK);
-            i = value_end;
-            continue 'scan;
+    while i < bytes.len() {
+        if !is_key_char(bytes[i]) || (i > 0 && is_key_char(bytes[i - 1])) {
+            let ch = text[i..].chars().next().unwrap_or(' ');
+            out.push(ch);
+            i += ch.len_utf8();
+            continue;
         }
-        let ch = text[i..].chars().next().unwrap_or(' ');
-        out.push(ch);
-        i += ch.len_utf8();
+        let key_end = (i..bytes.len())
+            .find(|&k| !is_key_char(bytes[k]))
+            .unwrap_or(bytes.len());
+        match is_secret_key(&text[i..key_end])
+            .then(|| secret_value(bytes, key_end))
+            .flatten()
+        {
+            Some((value_start, value_end)) => {
+                out.push_str(&text[i..value_start]);
+                out.push_str(MASK);
+                i = value_end;
+            }
+            None => {
+                out.push_str(&text[i..key_end]);
+                i = key_end;
+            }
+        }
     }
     out
+}
+/// The value span after a key ending at `j`: an optional closing quote, spaces,
+/// `=` or `:`, spaces, then a quoted or bare value. `None` when no value follows.
+fn secret_value(bytes: &[u8], mut j: usize) -> Option<(usize, usize)> {
+    if j < bytes.len() && matches!(bytes[j], b'"' | b'\'') {
+        j += 1;
+    }
+    while j < bytes.len() && bytes[j] == b' ' {
+        j += 1;
+    }
+    if j >= bytes.len() || !matches!(bytes[j], b'=' | b':') {
+        return None;
+    }
+    j += 1;
+    while j < bytes.len() && bytes[j] == b' ' {
+        j += 1;
+    }
+    let (start, end) = if j < bytes.len() && matches!(bytes[j], b'"' | b'\'') {
+        (j + 1, closing_quote(bytes, j))
+    } else {
+        let end = (j..bytes.len())
+            .find(|&k| {
+                bytes[k].is_ascii_whitespace()
+                    || matches!(bytes[k], b'"' | b'\'' | b';' | b'&' | b',' | b'}')
+            })
+            .unwrap_or(bytes.len());
+        (j, end)
+    };
+    (end > start).then_some((start, end))
 }
 /// Index of the quote closing the value opened at `open` (or the end of the
 /// text): honors backslash escapes (`'it\\'s'`) and doubled quotes (`'it''s'`).
@@ -230,8 +303,8 @@ fn closing_quote(bytes: &[u8], open: usize) -> usize {
     }
     bytes.len()
 }
-fn is_word(b: u8) -> bool {
-    b.is_ascii_alphanumeric() || b == b'_'
+fn is_key_char(b: u8) -> bool {
+    b.is_ascii_alphanumeric() || b == b'_' || b == b'-'
 }
 
 /// The newest `limit` (default 200, max 5000) diagnostic log entries.
@@ -283,6 +356,57 @@ mod tests {
         assert_eq!(redact("https://example.com/a"), "https://example.com/a");
         assert_eq!(redact("passwords are fine"), "passwords are fine");
         assert_eq!(redact("über token=x ✓"), "über token=*** ✓");
+    }
+
+    #[test]
+    fn panic_records_are_one_redacted_line() {
+        let record = panic_record(
+            Some("main"),
+            "connect failed\npassword=hunter2",
+            Some("src/x.rs:1:2".into()),
+        );
+        assert_eq!(
+            record,
+            "panic in thread \"main\" at src/x.rs:1:2: connect failed password=hunter2"
+        );
+        assert_eq!(redact(&record), record.replace("hunter2", MASK));
+        assert!(panic_record(None, "boom", None).contains("<unnamed>"));
+    }
+
+    #[test]
+    fn redacts_secret_keys_in_any_naming_style() {
+        for (input, expected) in [
+            ("access_token=abc123 next", "access_token=*** next"),
+            ("refresh_token: abc", "refresh_token: ***"),
+            (
+                r#"{"refresh_token": "r-1", "n": 1}"#,
+                r#"{"refresh_token": "***", "n": 1}"#,
+            ),
+            (r#"{"accessToken":"a.b.c"}"#, r#"{"accessToken":"***"}"#),
+            ("clientSecret=s", "clientSecret=***"),
+            ("X-Api-Key: k1", "X-Api-Key: ***"),
+            ("APIKey=k2", "APIKey=***"),
+            (
+                "GET /cb?code=1&access_token=t0k&state=2",
+                "GET /cb?code=1&access_token=***&state=2",
+            ),
+            ("dek=AAAA", "dek=***"),
+            (r#"{"wrappedDek": "QUJD"}"#, r#"{"wrappedDek": "***"}"#),
+            ("db_password='p w'", "db_password='***'"),
+            ("private_key=-----BEGIN", "private_key=***"),
+        ] {
+            assert_eq!(redact(input), expected, "{input}");
+        }
+        for safe in [
+            "max_tokens=100",
+            "index=3",
+            "desk=1",
+            "tokens: 5",
+            "the token was refreshed",
+            "passwords are fine",
+        ] {
+            assert_eq!(redact(safe), safe);
+        }
     }
 
     #[test]

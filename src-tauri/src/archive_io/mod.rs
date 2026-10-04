@@ -88,6 +88,9 @@ pub struct WriteRequest<'a> {
     pub attachments: Vec<(&'a Attachment, Payload<'a>)>,
     /// Previous archive of the same document whose unknown tables are carried over.
     pub preserve_from: Option<&'a Path>,
+    /// The new archive is a deliberate copy of `preserve_from` under a new document
+    /// id (Restore as copy), so its unknown tables carry over despite the id change.
+    pub preserve_copy: bool,
 }
 
 #[derive(Debug, Default)]
@@ -168,7 +171,8 @@ pub fn write(path: &Path, req: WriteRequest<'_>) -> Result<WriteReport, ArchiveE
             "PRAGMA journal_mode=OFF; PRAGMA synchronous=OFF; PRAGMA application_id={APPLICATION_ID};{SCHEMA}"
         ))?;
         if let Some(prev) = req.preserve_from.filter(|p| p.exists()) {
-            report.preserved_tables = preserve_unknown_tables(&conn, prev, req.metadata)?;
+            report.preserved_tables =
+                preserve_unknown_tables(&conn, prev, req.metadata, req.preserve_copy)?;
         }
         let tx = conn.transaction()?;
         tx.execute(
@@ -460,6 +464,7 @@ pub fn write_archive(path: &Path, doc: &ArchiveDocument) -> Result<(), ArchiveEr
                 .map(|a| (a, Payload::Bytes(&a.contents)))
                 .collect(),
             preserve_from: Some(path),
+            preserve_copy: false,
         },
     )
     .map(|_| ())

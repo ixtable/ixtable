@@ -181,8 +181,23 @@ fn op_sql(
                     q(&constraint_name(u.map(|u| &u.name), "unique constraint")?)
                 ));
             }
-            if let Some(check) = definition.check.as_deref().filter(|c| !c.trim().is_empty()) {
-                out.push(format!("ALTER TABLE {t} ADD CHECK ({check})"));
+            // The plan already replaced the column's checks; apply the difference.
+            for c in before.checks.iter().filter(|c| !after.checks.contains(c)) {
+                // Drop first so a type change is not validated against the old check.
+                out.insert(
+                    0,
+                    format!(
+                        "ALTER TABLE {t} DROP CONSTRAINT {}",
+                        q(&constraint_name(Some(&c.name), "check constraint")?)
+                    ),
+                );
+            }
+            for c in after.checks.iter().filter(|c| !before.checks.contains(c)) {
+                out.push(format!(
+                    "ALTER TABLE {t} ADD {}CHECK ({})",
+                    named(&c.name),
+                    c.expression
+                ));
             }
             out
         }

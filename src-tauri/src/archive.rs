@@ -34,6 +34,10 @@ pub enum ArchiveError {
         "This document was created by a newer ixtable (format {0}). Update ixtable to open it."
     )]
     NewerFormat(i64),
+    #[error(
+        "This document's configuration (version {0}) was created by a newer ixtable. Update ixtable to open it."
+    )]
+    NewerConfig(u32),
     #[error("Corrupt payload: {0}")]
     Corrupt(String),
 }
@@ -73,6 +77,10 @@ pub struct DocumentConfig {
     /// The ixtable Cloud application this document publishes to.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub cloud: Option<crate::cloud::CloudLink>,
+    /// Top-level fields this build does not know (written by a newer ixtable with
+    /// the same config version). Kept verbatim through load, save, and YAML.
+    #[serde(flatten)]
+    pub extra: serde_json::Map<String, serde_json::Value>,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
@@ -116,10 +124,7 @@ impl DocumentConfig {
     /// Brings an older config up to `CONFIG_VERSION`; newer versions are rejected.
     pub fn upgrade(mut self) -> Result<Self, ArchiveError> {
         if self.version > CONFIG_VERSION {
-            return Err(ArchiveError::Invalid(format!(
-                "unsupported config version {}",
-                self.version
-            )));
+            return Err(ArchiveError::NewerConfig(self.version));
         }
         self.version = CONFIG_VERSION;
         Ok(self)
@@ -146,6 +151,7 @@ impl Default for DocumentConfig {
             roles: vec![],
             release: ReleaseInfo::default(),
             cloud: None,
+            extra: serde_json::Map::new(),
         }
     }
 }
@@ -271,6 +277,41 @@ mod tests {
         let reopened = read_archive(&path).unwrap();
         fs::remove_file(path).unwrap();
         assert_eq!(reopened.config.design, document.config.design);
+    }
+
+    #[test]
+    fn newer_config_versions_are_a_compatibility_error() {
+        let newer = serde_json::from_value::<DocumentConfig>(serde_json::json!({
+            "version": CONFIG_VERSION + 1, "name": "Future", "activeMode": "data"
+        }))
+        .unwrap();
+        let err = newer.upgrade().unwrap_err();
+        assert!(matches!(err, ArchiveError::NewerConfig(v) if v == CONFIG_VERSION + 1));
+        assert!(err.to_string().contains("newer ixtable"), "{err}");
+        let app = crate::manager::AppError::from(err);
+        assert_eq!(app.code, "UNSUPPORTED_VERSION");
+    }
+
+    #[test]
+    fn unknown_top_level_fields_survive_load_save_and_yaml() {
+        let path = std::env::temp_dir().join(format!("extra-fields-{}.ixt", Uuid::new_v4()));
+        let mut document = create_document("Extra").unwrap();
+        let mut json = serde_json::to_value(&document.config).unwrap();
+        json["futureFeature"] = serde_json::json!({"enabled": true, "items": [1, 2]});
+        document.config = serde_json::from_value(json).unwrap();
+        assert!(document.config.extra.contains_key("futureFeature"));
+        write_archive(&path, &document).unwrap();
+        let reopened = read_archive(&path).unwrap();
+        fs::remove_file(path).unwrap();
+        assert_eq!(reopened.config, document.config);
+        let yaml = document_config_yaml(&reopened.config).unwrap();
+        assert!(yaml.contains("futureFeature"), "{yaml}");
+        let from_yaml = document_config_from_yaml(&yaml).unwrap();
+        assert_eq!(
+            from_yaml.extra["futureFeature"],
+            serde_json::json!({"enabled": true, "items": [1, 2]})
+        );
+        assert_eq!(from_yaml, reopened.config);
     }
 
     #[test]

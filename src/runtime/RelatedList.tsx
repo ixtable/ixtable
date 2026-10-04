@@ -175,7 +175,7 @@ export function RelatedRecords({ ctx, control }: { ctx: BodyContext; control: De
                   {booleanColumn(column) ? (
                     <BooleanCell value={record[column]} />
                   ) : (
-                    (lookup(column, record[column]) ?? displayText(record[column]))
+                    (lookup(column, record) ?? displayText(record[column]))
                   )}
                 </td>
               ))}

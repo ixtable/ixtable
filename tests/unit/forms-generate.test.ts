@@ -16,7 +16,7 @@ const col = (name: string, declaredType: string, extra: Partial<DbColumn> = {}):
 const customers: TableSchema = {
   name: "customers",
   columns: [
-    col("id", "INTEGER", { primaryKeyPosition: 1, nullable: false }),
+    col("id", "INTEGER", { primaryKeyPosition: 1, nullable: false, autoIncrement: true }),
     col("name", "TEXT", { nullable: false }),
   ],
   foreignKeys: [],
@@ -25,7 +25,7 @@ const customers: TableSchema = {
 const orders: TableSchema = {
   name: "orders",
   columns: [
-    col("id", "INTEGER", { primaryKeyPosition: 1, nullable: false }),
+    col("id", "INTEGER", { primaryKeyPosition: 1, nullable: false, autoIncrement: true }),
     col("customer_id", "INTEGER", { nullable: false }),
     col("placed_on", "DATE"),
     col("total", "DECIMAL(10,2)"),
@@ -171,7 +171,7 @@ describe("generated CRUD forms", () => {
     expect(kindForColumn(col("a", "INTEGER"))).toBe("number");
   });
 
-  it("treats a PostgreSQL identity key as automatic", () => {
+  it("treats only a key the catalog reports as auto-increment as automatic", () => {
     const pg = (declaredType: string, extra: Partial<DbColumn> = {}): TableSchema => ({
       name: "t",
       columns: [
@@ -183,14 +183,76 @@ describe("generated CRUD forms", () => {
     });
     const idControl = (schema: TableSchema) =>
       generateCrudForms(schema).detail.controls.find((c) => c.binding?.column === "id");
-    expect(idControl(pg("bigint", { logicalType: "integer" }))).toMatchObject({
-      readOnly: true,
-      validation: { required: false },
+    expect(idControl(pg("bigint", { logicalType: "integer", autoIncrement: true }))).toMatchObject(
+      {
+        readOnly: true,
+        validation: { required: false },
+      },
+    );
+    expect(idControl(pg("integer", { logicalType: "integer" }))).toMatchObject({
+      validation: { required: true },
     });
+    expect(idControl(pg("integer", { logicalType: "integer" }))?.readOnly).toBeUndefined();
+    expect(idControl(pg("INTEGER", { logicalType: "integer" }))?.readOnly).toBeUndefined();
     expect(idControl(pg("text", { logicalType: "text" }))?.readOnly).toBeUndefined();
-    expect(
-      idControl(pg("bigint", { logicalType: "integer", defaultValue: "42" }))?.readOnly,
-    ).toBeUndefined();
+  });
+
+  it("targets the parent's primary key when a foreign key names no target columns", () => {
+    const unnamed: TableSchema = {
+      ...counts,
+      foreignKeys: [fk(["product_id", "location_id"], "reorder_thresholds", [])],
+    };
+    const { detail } = generateCrudForms(unnamed, {
+      targets: { reorder_thresholds: thresholds },
+    });
+    expect(detail.controls.find((c) => c.kind === "relationship")?.relationship).toMatchObject({
+      valueColumn: "product_id",
+      keys: [
+        { column: "product_id", target: "product_id" },
+        { column: "location_id", target: "location_id" },
+      ],
+    });
+    const codes: TableSchema = {
+      name: "codes",
+      columns: [col("code", "TEXT", { primaryKeyPosition: 1 }), col("label", "TEXT")],
+      foreignKeys: [],
+      withoutRowid: false,
+    };
+    const uses: TableSchema = {
+      name: "uses",
+      columns: [col("id", "INTEGER", { primaryKeyPosition: 1 }), col("code_ref", "TEXT")],
+      foreignKeys: [fk(["code_ref"], "codes", [])],
+      withoutRowid: false,
+    };
+    const single = generateCrudForms(uses, { targets: { codes } }).detail;
+    expect(single.controls.find((c) => c.kind === "relationship")?.relationship).toEqual({
+      table: "codes",
+      valueColumn: "code",
+      displayColumn: "label",
+    });
+  });
+
+  it("prefers a multi-column selector when its first column also has its own key", () => {
+    const products: TableSchema = {
+      name: "products",
+      columns: [col("id", "INTEGER", { primaryKeyPosition: 1 }), col("name", "TEXT")],
+      foreignKeys: [],
+      withoutRowid: false,
+    };
+    const both: TableSchema = {
+      ...counts,
+      foreignKeys: [
+        fk(["product_id"], "products", ["id"]),
+        fk(["product_id", "location_id"], "reorder_thresholds", ["product_id", "location_id"]),
+      ],
+    };
+    const { detail } = generateCrudForms(both, {
+      targets: { products, reorder_thresholds: thresholds },
+    });
+    const selectors = detail.controls.filter((c) => c.kind === "relationship");
+    expect(selectors).toHaveLength(1);
+    expect(selectors[0].relationship?.table).toBe("reorder_thresholds");
+    expect(detail.controls.some((c) => c.binding?.column === "location_id")).toBe(false);
   });
 
   it("generates one selector that writes every column of a multi-column key", () => {

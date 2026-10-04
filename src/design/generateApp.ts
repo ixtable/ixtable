@@ -3,7 +3,7 @@ import { inspectTable, listDatabaseObjects } from "../lib/api";
 import { useDocumentConfig } from "../lib/config-store";
 import type { TableSchema } from "../lib/types";
 import { newId } from "../lib/utils";
-import { generateCrudForms } from "./generate";
+import { generateCrudForms, humanize } from "./generate";
 import {
   type DesignForm,
   type DesignSchema,
@@ -41,9 +41,20 @@ export function addGeneratedApp(
     }),
   }));
   let forms = [...design.forms, ...generated.flatMap(({ crud }) => [crud.list, crud.detail])];
-  // Related lists add and edit child rows with the child table's own detail form.
-  const childForm = (table: string) =>
-    forms.find((form) => formTable(form) === table && isRecordForm(form))?.id ?? null;
+  // Embedded forms cannot nest related lists, so a nesting (or self) form gets a plain copy.
+  const plain = new Map<string, DesignForm>();
+  const childForm = (table: string, parent: DesignForm) => {
+    const own = forms.find((form) => formTable(form) === table && isRecordForm(form));
+    const nests = own?.controls.some((control) => control.kind === "relatedList");
+    if (own && own.id !== parent.id && !nests) return own.id;
+    const schema = targets[table];
+    if (!schema) return null;
+    if (!plain.has(table)) {
+      const { detail } = generateCrudForms(schema, { targets });
+      plain.set(table, { ...detail, name: `${humanize(table)} (related)` });
+    }
+    return plain.get(table)?.id ?? null;
+  };
   forms = forms.map((form) =>
     generated.some(({ crud }) => crud.detail === form)
       ? {
@@ -52,13 +63,17 @@ export function addGeneratedApp(
             control.related && !control.related.formId
               ? {
                   ...control,
-                  related: { ...control.related, formId: childForm(control.related.table) },
+                  related: {
+                    ...control.related,
+                    formId: childForm(control.related.table, form),
+                  },
                 }
               : control,
           ),
         }
       : form,
   );
+  forms = [...forms, ...plain.values()];
   const navigable = new Set<string>();
   for (const item of flattenNavigation(design.navigation)) {
     if (item.kind === "table" && item.targetId) navigable.add(item.targetId);

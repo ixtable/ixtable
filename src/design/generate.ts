@@ -60,21 +60,29 @@ export function displayColumnFor(target: TableSchema | undefined, fallback: stri
 }
 
 /**
- * True for a single integer primary key the database fills in on insert: SQLite's
- * `INTEGER PRIMARY KEY` (rowid alias), or a PostgreSQL identity column, which reports
- * the lowercase `format_type` name, a logical integer type, and no default expression.
+ * True for a single primary key the database fills in on insert, as the catalog reports
+ * it (`autoIncrement`): SQLite's `INTEGER PRIMARY KEY`, a PostgreSQL identity or serial.
  */
-export const isAutoKey = (table: TableSchema, column: DbColumn) => {
-  if (column.primaryKeyPosition <= 0) return false;
-  if (table.columns.filter((c) => c.primaryKeyPosition > 0).length !== 1) return false;
-  if (column.declaredType.toUpperCase() === "INTEGER") return true;
-  return (
-    !!column.logicalType &&
-    parseLogical(column.logicalType).base === "integer" &&
-    column.defaultValue == null &&
-    /^(integer|bigint|smallint)$/.test(column.declaredType)
-  );
-};
+export const isAutoKey = (table: TableSchema, column: DbColumn) =>
+  !!column.autoIncrement &&
+  column.primaryKeyPosition > 0 &&
+  table.columns.filter((c) => c.primaryKeyPosition > 0).length === 1;
+
+/** The table's primary key columns, in key order. */
+export const primaryKeyOf = (table: TableSchema | undefined) =>
+  (table?.columns ?? [])
+    .filter((column) => column.primaryKeyPosition > 0)
+    .sort((a, b) => a.primaryKeyPosition - b.primaryKeyPosition)
+    .map((column) => column.name);
+
+/** Target column for each source column of a key; an unnamed target is the parent's primary key. */
+export function keyPairs(fk: DbForeignKey, parent: TableSchema | undefined) {
+  const primaryKey = primaryKeyOf(parent);
+  return fk.fromColumns.map((column, i) => ({
+    column,
+    target: fk.targetColumns[i] ?? primaryKey[i] ?? "id",
+  }));
+}
 
 export type GenerateOptions = {
   /** Schemas of tables referenced by foreign keys, used to pick lookup display columns. */
@@ -87,11 +95,14 @@ export type GenerateOptions = {
 
 export type GeneratedCrud = { list: DesignForm; detail: DesignForm; navigation: NavigationItem };
 
-/** The foreign key whose selector edits `column`: a single-column key, else a multi-column one it leads. */
+/**
+ * The foreign key whose selector edits `column`: a multi-column key it leads (that selector
+ * writes every column of the key), else a single-column one.
+ */
 function keyFor(table: TableSchema, column: string): DbForeignKey | undefined {
   return (
-    table.foreignKeys.find((fk) => fk.fromColumns.length === 1 && fk.fromColumns[0] === column) ??
-    table.foreignKeys.find((fk) => fk.fromColumns.length > 1 && fk.fromColumns[0] === column)
+    table.foreignKeys.find((fk) => fk.fromColumns.length > 1 && fk.fromColumns[0] === column) ??
+    table.foreignKeys.find((fk) => fk.fromColumns.length === 1 && fk.fromColumns[0] === column)
   );
 }
 
@@ -100,7 +111,9 @@ function coveredColumns(table: TableSchema): Set<string> {
   const covered = new Set<string>();
   for (const fk of table.foreignKeys)
     if (fk.fromColumns.length > 1 && keyFor(table, fk.fromColumns[0]) === fk)
-      for (const column of fk.fromColumns.slice(1)) if (!keyFor(table, column)) covered.add(column);
+      for (const column of fk.fromColumns.slice(1))
+        if (!keyFor(table, column) || keyFor(table, column)?.fromColumns.length === 1)
+          covered.add(column);
   return covered;
 }
 
@@ -130,17 +143,15 @@ function columnControl(
   };
   if (auto) control.readOnly = true;
   if (foreignKey) {
-    const valueColumn = foreignKey.targetColumns[0] ?? "id";
+    const keys = keyPairs(foreignKey, options.targets?.[foreignKey.targetTable]);
+    const valueColumn = keys[0].target;
     control.relationship = {
       table: foreignKey.targetTable,
       valueColumn,
       displayColumn: displayColumnFor(options.targets?.[foreignKey.targetTable], valueColumn),
     };
     if (composite)
-      control.relationship.keys = foreignKey.fromColumns.map((from, i) => ({
-        column: from,
-        target: foreignKey.targetColumns[i] ?? from,
-      }));
+      control.relationship.keys = keys;
   }
   return control;
 }
@@ -153,14 +164,7 @@ function relatedListControl(
 ): DesignControl | null {
   const link = child.foreignKeys.find((fk) => fk.targetTable === table.name);
   if (!link) return null;
-  const primaryKey = table.columns
-    .filter((column) => column.primaryKeyPosition > 0)
-    .sort((a, b) => a.primaryKeyPosition - b.primaryKeyPosition)
-    .map((column) => column.name);
-  const keys = link.fromColumns.map((column, i) => ({
-    column,
-    target: link.targetColumns[i] ?? primaryKey[i] ?? "id",
-  }));
+  const keys = keyPairs(link, table);
   const related: NonNullable<DesignControl["related"]> = {
     table: child.name,
     foreignKey: keys[0].column,

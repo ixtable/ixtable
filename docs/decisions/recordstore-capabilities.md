@@ -46,6 +46,10 @@ sends it to the schema designer, which labels each staged change by its mode.
 | Script health check | `foreign_key_check` and `integrity_check` | constraint validation |
 | Concurrency | `optimistic`, `lastWriteWins`, or `customAction` per entity, no row locks, single user | the same policies with row locking, multi user |
 
+`inspect_table` reports `autoIncrement` on a column the database fills in on
+insert: the SQLite rowid alias, or a PostgreSQL identity (`attidentity`) or
+`nextval` (serial) default. Generated forms make only those keys read-only.
+
 Native errors map to stable codes: `CONSTRAINT_VIOLATION` with the constraint
 kind, `READ_ONLY`, `CONNECTION`, `BUSY`, `NOT_FOUND`, `CONFLICT`, `STALE_ROW`,
 `VALIDATION_ERROR`, and `DATABASE_ERROR`. The capability object lists the

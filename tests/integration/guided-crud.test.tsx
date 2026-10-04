@@ -1,6 +1,7 @@
 import { screen, waitFor, within } from "@testing-library/react";
 import type { UserEvent } from "@testing-library/user-event";
 import { invoke } from "@tauri-apps/api/core";
+import { join } from "node:path";
 import { expect, it } from "vitest";
 import {
   createTable,
@@ -10,6 +11,7 @@ import {
   renderNewDocument,
   value,
 } from "./helpers";
+import { dialogMock } from "./setup";
 
 const LONG = { timeout: 20_000 };
 
@@ -194,10 +196,96 @@ it("offers to generate the app from a runtime with no table pages", async () => 
   await user.click(screen.getByRole("button", { name: "Runtime" }));
   const page = await screen.findByRole("region", { name: "Application page" }, LONG);
   const hint = await within(page).findByRole("region", { name: "Build your app" }, LONG);
-  expect(hint).toHaveTextContent("No page of this application shows your tables yet.");
+  expect(hint).toHaveTextContent("This application has no pages yet.");
   await user.click(within(hint).getByRole("button", { name: "Generate app from tables" }));
   const nav = screen.getByRole("navigation", { name: "Application navigation" });
   expect(await within(nav).findByRole("button", { name: "Regions" }, LONG)).toBeInTheDocument();
   expect(await within(page).findByRole("button", { name: "New regions" }, LONG)).toBeVisible();
   expect(within(page).queryByRole("region", { name: "Build your app" })).toBeNull();
+});
+
+it("does not offer to build the app when its only page is a dashboard", async () => {
+  const user = await renderNewDocument();
+  await user.click(screen.getByRole("button", { name: "Dashboards" }));
+  const create = await screen.findByRole("button", { name: "New dashboard" }, LONG);
+  await waitFor(() => expect(create).toBeEnabled(), LONG);
+  await user.click(create);
+  await waitFor(async () => {
+    const config = await invoke<{ dashboards: unknown[] }>("read_document_config", {
+      windowLabel: "main",
+    });
+    expect(config.dashboards).toHaveLength(1);
+  }, LONG);
+  const config = await invoke<{
+    dashboards: Array<{ id: string; name: string }>;
+    design: { navigation: unknown[]; startPage: string | null };
+  }>("read_document_config", { windowLabel: "main" });
+  const dashboard = config.dashboards[0];
+  const navId = "0190a0b0-0000-7000-8000-000000000001";
+  config.design.navigation = [
+    { id: navId, label: dashboard.name, kind: "dashboard", targetId: dashboard.id, children: [] },
+  ];
+  config.design.startPage = navId;
+  await invoke("update_document_config", { windowLabel: "main", config });
+  const archive = join(process.env.IXTABLE_STATE_DIR ?? "", "dashboard-only.ixt");
+  dialogMock.save.mockResolvedValueOnce(archive);
+  await user.click(screen.getByRole("button", { name: "Save project" }));
+  await screen.findByText("Saved archive", {}, LONG);
+  await user.click(screen.getByRole("button", { name: "Close project" }));
+  dialogMock.open.mockResolvedValueOnce(archive);
+  await user.click(await screen.findByRole("button", { name: /Open document/i }, LONG));
+  await user.click(await screen.findByRole("button", { name: "Runtime" }, LONG));
+  const nav = await screen.findByRole("navigation", { name: "Application navigation" }, LONG);
+  expect(
+    await within(nav).findByRole("button", { name: dashboard.name }, LONG),
+  ).toBeInTheDocument();
+  const page = screen.getByRole("region", { name: "Application page" });
+  expect(within(page).queryByRole("region", { name: "Build your app" })).toBeNull();
+});
+
+async function createLinkedTable(name: string, link?: { column: string; target: string }) {
+  await invoke("create_database_table", {
+    windowLabel: "main",
+    spec: {
+      name,
+      columns: [
+        { name: "id", declaredType: "INTEGER", primaryKeyPosition: 1, nullable: false },
+        { name: "name", declaredType: "TEXT", primaryKeyPosition: 0, nullable: true },
+        ...(link
+          ? [{ name: link.column, declaredType: "INTEGER", primaryKeyPosition: 0, nullable: true }]
+          : []),
+      ].map((column) => ({
+        unique: false,
+        defaultExpression: null,
+        generatedExpression: null,
+        ...column,
+      })),
+      foreignKeys: link
+        ? [{ columns: [link.column], targetTable: link.target, targetColumns: ["id"] }]
+        : [],
+      checks: [],
+      withoutRowid: false,
+    },
+  });
+}
+
+it("generates an app that passes design validation for nested and self-referencing tables", async () => {
+  const user = await renderNewDocument();
+  await createLinkedTable("customers");
+  await createLinkedTable("orders", { column: "customer_id", target: "customers" });
+  await createLinkedTable("order_lines", { column: "order_id", target: "orders" });
+  await createLinkedTable("employees", { column: "manager_id", target: "employees" });
+  await user.click(screen.getByRole("button", { name: "Runtime" }));
+  const page = await screen.findByRole("region", { name: "Application page" }, LONG);
+  const hint = await within(page).findByRole("region", { name: "Build your app" }, LONG);
+  await user.click(within(hint).getByRole("button", { name: "Generate app from tables" }));
+  const nav = screen.getByRole("navigation", { name: "Application navigation" });
+  expect(await within(nav).findByRole("button", { name: "Employees" }, LONG)).toBeInTheDocument();
+  const issues = await invoke<Array<{ severity: string; message: string }>>("validate_design", {
+    windowLabel: "main",
+  });
+  expect(issues.filter((issue) => issue.severity === "error")).toEqual([]);
+  const forms = (await design()).forms.map((form) => form.name);
+  expect(forms).toContain("Orders (related)");
+  expect(forms).toContain("Employees (related)");
 });

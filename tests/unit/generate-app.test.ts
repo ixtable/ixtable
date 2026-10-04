@@ -99,4 +99,51 @@ describe("generate app from tables", () => {
     expect(design.navigation).toHaveLength(1);
     expect(design.forms).toHaveLength(2);
   });
+
+  const embeddedNestsNothing = (design: DesignSchema) => {
+    const embedded = new Set(
+      design.forms.flatMap((f) => f.controls.map((c) => c.related?.formId).filter(Boolean)),
+    );
+    for (const form of design.forms)
+      if (embedded.has(form.id))
+        expect(form.controls.some((c) => c.kind === "relatedList")).toBe(false);
+  };
+
+  it("embeds a plain child form when the child's own form has related lists", () => {
+    const lines: TableSchema = {
+      name: "order_lines",
+      columns: [col("id", "INTEGER", { primaryKeyPosition: 1 }), col("order_id", "INTEGER")],
+      foreignKeys: [{ ...orders.foreignKeys[0], fromColumns: ["order_id"], targetTable: "orders" }],
+      withoutRowid: false,
+    };
+    const design = addGeneratedApp(empty(), [customers, orders, lines]);
+    embeddedNestsNothing(design);
+    const byName = (name: string) => design.forms.find((f) => f.name === name);
+    const customerList = byName("Customers")?.controls.find((c) => c.kind === "relatedList");
+    expect(customerList?.related?.formId).toBe(byName("Orders (related)")?.id);
+    const orderList = byName("Orders")?.controls.find((c) => c.kind === "relatedList");
+    expect(orderList?.related?.formId).toBe(byName("Order lines")?.id);
+    expect(addGeneratedApp(design, [customers, orders, lines])).toBe(design);
+  });
+
+  it("embeds a plain form for a self-referencing key instead of the form itself", () => {
+    const employees: TableSchema = {
+      name: "employees",
+      columns: [
+        col("id", "INTEGER", { primaryKeyPosition: 1 }),
+        col("name", "TEXT"),
+        col("manager_id", "INTEGER"),
+      ],
+      foreignKeys: [
+        { ...orders.foreignKeys[0], fromColumns: ["manager_id"], targetTable: "employees" },
+      ],
+      withoutRowid: false,
+    };
+    const design = addGeneratedApp(empty(), [employees]);
+    embeddedNestsNothing(design);
+    const own = design.forms.find((f) => f.name === "Employees");
+    const related = own?.controls.find((c) => c.kind === "relatedList")?.related;
+    expect(related?.formId).not.toBe(own?.id);
+    expect(design.forms.find((f) => f.id === related?.formId)?.name).toBe("Employees (related)");
+  });
 });

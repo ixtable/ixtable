@@ -83,6 +83,7 @@ pub fn column_def(c: &CreateColumn) -> Result<ColumnDef, String> {
             .as_deref()
             .map(safe_expression)
             .transpose()?,
+        identity: false,
     })
 }
 pub fn foreign_key_def(f: &CreateForeignKey) -> Result<ForeignKeyDef, String> {

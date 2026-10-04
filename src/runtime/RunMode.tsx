@@ -98,13 +98,9 @@ export function RunMode() {
               {runtime.notice.message}
             </p>
           )}
-          {!runtimeOnly && !hasTablePages(config) && (
+          {!runtimeOnly && !hasPages(config) && (
             <div className="rt-empty" role="region" aria-label="Build your app">
-              <p className="rt-muted">
-                {page
-                  ? "No page of this application shows your tables yet."
-                  : "This application has no pages yet."}
-              </p>
+              <p className="rt-muted">This application has no pages yet.</p>
               <GenerateAppButton
                 onDone={(added) =>
                   !added && runtime.notify("There are no tables to generate from.", "error")
@@ -127,14 +123,17 @@ export function RunMode() {
   );
 }
 
-/** True when some navigation item opens a table, or a form whose source is a table. */
-function hasTablePages(config: DocumentConfig) {
+/**
+ * True when the application has a navigation item of any kind (form, table, dashboard,
+ * report, …) other than a new document's blank form (no source, no controls).
+ */
+function hasPages(config: DocumentConfig) {
   const forms = config.design?.forms ?? [];
-  return flattenNavigation(config.design?.navigation ?? []).some(
-    (item) =>
-      item.kind === "table" ||
-      (item.kind === "form" && !!formTable(forms.find((form) => form.id === item.targetId))),
-  );
+  return flattenNavigation(config.design?.navigation ?? []).some((item) => {
+    if (item.kind !== "form") return true;
+    const form = forms.find((f) => f.id === item.targetId);
+    return !!form && (!!formTable(form) || form.controls.length > 0);
+  });
 }
 
 /** The page trail's back link target, or null at the root of a trail. */

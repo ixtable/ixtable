@@ -1,6 +1,7 @@
 import { Columns3, GitBranch, Plus, Rows3, Search, Table2, Trash2 } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { asTauriError, inspectTable, readTablePage } from "../lib/api";
+import { CreateFormsOffer } from "../design/CreateFormsOffer";
 import { useDocumentConfig } from "../lib/config-store";
 import { deleteRecord, insertRecord, updateRecord } from "../lib/records";
 import type { CreateTableSpec, DbPage, NamedValue, Sort, TableSchema } from "../lib/types";
@@ -78,7 +79,8 @@ export function DatabaseWorkbench() {
   const creating = active?.kind === "new-table";
   const [sorts, setSorts] = useState<Sort[]>([]),
     [filter, setFilter] = useState(""),
-    [designingSelected, setDesigningSelected] = useState(false);
+    [designingSelected, setDesigningSelected] = useState(false),
+    [created, setCreated] = useState<string | null>(null);
   const [draft, setDraft] = useState<Record<number, string>>({}),
     [draftError, setDraftError] = useState("");
   const refresh = () => setRevision((x) => x + 1);
@@ -137,6 +139,7 @@ export function DatabaseWorkbench() {
   const createTable = async (spec: CreateTableSpec) => {
     await createDatabaseTable(spec);
     await afterSchemaChange(spec.name);
+    setCreated(spec.name);
   };
   /** The row as read, sent back as `expected` so optimistic entities detect concurrent edits. */
   const original = (row: number): NamedValue[] =>
@@ -304,6 +307,9 @@ export function DatabaseWorkbench() {
                     )}
                   </div>
                 </div>
+                {created === selected && (
+                  <CreateFormsOffer table={selected} onDismiss={() => setCreated(null)} />
+                )}
                 {error && (
                   <div className="error" role="alert">
                     {error}

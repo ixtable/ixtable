@@ -374,3 +374,9 @@
 .rt-related > .rt-status {
   margin: 0 0 12px;
 }
+.rt-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 8px;
+}

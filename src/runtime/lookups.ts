@@ -44,6 +44,8 @@ export async function columnLookups(
     columns.map(async (column): Promise<[string, Relationship] | null> => {
       const control = controlFor(column);
       const rel = control?.kind === "relationship" ? control.relationship : null;
+      // A multi-column key has no single-column label lookup; the cell shows the raw value.
+      if ((rel?.keys?.length ?? 0) > 1) return null;
       if (rel?.table && rel.valueColumn && rel.displayColumn)
         return rel.displayColumn === rel.valueColumn ? null : [column, rel];
       const fk = schema?.foreignKeys.find(

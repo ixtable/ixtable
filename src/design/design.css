@@ -278,3 +278,14 @@
 .fd-preview {
   padding: 0;
 }
+.create-forms-offer {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin: 8px 12px;
+  padding: 8px 12px;
+  border: 1px solid #d9dce1;
+  border-radius: 6px;
+  font-size: 13px;
+}

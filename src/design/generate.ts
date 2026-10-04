@@ -1,6 +1,7 @@
 import { defaultGridLayout } from "../grid/engine";
-import type { DbColumn, TableSchema } from "../lib/types";
+import type { DbColumn, DbForeignKey, TableSchema } from "../lib/types";
 import { newId } from "../lib/utils";
+import { parseLogical } from "../schema/logical";
 import {
   type ControlKind,
   type DesignControl,
@@ -16,8 +17,29 @@ export const humanize = (name: string) => {
   return text ? text[0].toUpperCase() + text.slice(1) : name;
 };
 
-/** Control kind for a column's declared SQL type (SQLite affinity rules, plus date names). */
-export function kindForColumn(column: Pick<DbColumn, "declaredType">): ControlKind | null {
+const LOGICAL_KINDS: Record<string, ControlKind | null> = {
+  text: "text",
+  uuid: "text",
+  json: "multiline",
+  integer: "number",
+  real: "decimal",
+  decimal: "decimal",
+  boolean: "boolean",
+  date: "date",
+  time: "time",
+  timestamp: "datetime",
+  blob: null,
+};
+
+type TypedColumn = Pick<DbColumn, "declaredType"> & { logicalType?: string | null };
+
+/**
+ * Control kind for a column: its logical type (as `inspect_table` reports it, on any
+ * backend) when known, else the declared SQL type by SQLite affinity rules plus date names.
+ */
+export function kindForColumn(column: TypedColumn): ControlKind | null {
+  const logical = column.logicalType ? parseLogical(column.logicalType).base : null;
+  if (logical && logical in LOGICAL_KINDS) return LOGICAL_KINDS[logical];
   const type = column.declaredType.toUpperCase();
   if (type.includes("BLOB")) return null;
   if (type.includes("BOOL")) return "boolean";
@@ -37,20 +59,50 @@ export function displayColumnFor(target: TableSchema | undefined, fallback: stri
   return text?.name ?? fallback;
 }
 
-/** True for an `INTEGER PRIMARY KEY` that SQLite fills in on insert. */
-export const isAutoKey = (table: TableSchema, column: DbColumn) =>
-  column.primaryKeyPosition > 0 &&
-  column.declaredType.toUpperCase() === "INTEGER" &&
-  table.columns.filter((c) => c.primaryKeyPosition > 0).length === 1;
+/**
+ * True for a single integer primary key the database fills in on insert: SQLite's
+ * `INTEGER PRIMARY KEY` (rowid alias), or a PostgreSQL identity column, which reports
+ * the lowercase `format_type` name, a logical integer type, and no default expression.
+ */
+export const isAutoKey = (table: TableSchema, column: DbColumn) => {
+  if (column.primaryKeyPosition <= 0) return false;
+  if (table.columns.filter((c) => c.primaryKeyPosition > 0).length !== 1) return false;
+  if (column.declaredType.toUpperCase() === "INTEGER") return true;
+  return (
+    !!column.logicalType &&
+    parseLogical(column.logicalType).base === "integer" &&
+    column.defaultValue == null &&
+    /^(integer|bigint|smallint)$/.test(column.declaredType)
+  );
+};
 
 export type GenerateOptions = {
   /** Schemas of tables referenced by foreign keys, used to pick lookup display columns. */
   targets?: Record<string, TableSchema>;
   /** Tables whose foreign keys point at this table; each becomes a related-record list. */
   children?: TableSchema[];
+  /** Child table → form used to add and edit its rows in the related list. */
+  childForms?: Record<string, string>;
 };
 
 export type GeneratedCrud = { list: DesignForm; detail: DesignForm; navigation: NavigationItem };
+
+/** The foreign key whose selector edits `column`: a single-column key, else a multi-column one it leads. */
+function keyFor(table: TableSchema, column: string): DbForeignKey | undefined {
+  return (
+    table.foreignKeys.find((fk) => fk.fromColumns.length === 1 && fk.fromColumns[0] === column) ??
+    table.foreignKeys.find((fk) => fk.fromColumns.length > 1 && fk.fromColumns[0] === column)
+  );
+}
+
+/** Columns written by a multi-column selector led by another column (no control of their own). */
+function coveredColumns(table: TableSchema): Set<string> {
+  const covered = new Set<string>();
+  for (const fk of table.foreignKeys)
+    if (fk.fromColumns.length > 1 && keyFor(table, fk.fromColumns[0]) === fk)
+      for (const column of fk.fromColumns.slice(1)) if (!keyFor(table, column)) covered.add(column);
+  return covered;
+}
 
 function columnControl(
   table: TableSchema,
@@ -58,16 +110,20 @@ function columnControl(
   form: DesignForm,
   options: GenerateOptions,
 ): DesignControl | null {
-  const foreignKey = table.foreignKeys.find(
-    (key) => key.fromColumns.length === 1 && key.fromColumns[0] === column.name,
-  );
+  const foreignKey = keyFor(table, column.name);
   const kind: ControlKind | null = foreignKey ? "relationship" : kindForColumn(column);
   if (!kind) return null;
   const auto = isAutoKey(table, column);
+  const composite = foreignKey && foreignKey.fromColumns.length > 1;
+  const label = composite
+    ? foreignKey.targetTable.replace(/s$/i, "")
+    : foreignKey
+      ? column.name.replace(/_?id$/i, "") || column.name
+      : column.name;
   const control: DesignControl = {
     id: newId(),
     kind,
-    label: humanize(foreignKey ? column.name.replace(/_?id$/i, "") || column.name : column.name),
+    label: humanize(label),
     binding: { column: column.name },
     validation: { required: !column.nullable && !auto && column.defaultValue == null },
     placement: nextPlacement(form, null, { columnSpan: kind === "multiline" ? 12 : 6 }),
@@ -80,8 +136,49 @@ function columnControl(
       valueColumn,
       displayColumn: displayColumnFor(options.targets?.[foreignKey.targetTable], valueColumn),
     };
+    if (composite)
+      control.relationship.keys = foreignKey.fromColumns.map((from, i) => ({
+        column: from,
+        target: foreignKey.targetColumns[i] ?? from,
+      }));
   }
   return control;
+}
+
+function relatedListControl(
+  table: TableSchema,
+  child: TableSchema,
+  detail: DesignForm,
+  options: GenerateOptions,
+): DesignControl | null {
+  const link = child.foreignKeys.find((fk) => fk.targetTable === table.name);
+  if (!link) return null;
+  const primaryKey = table.columns
+    .filter((column) => column.primaryKeyPosition > 0)
+    .sort((a, b) => a.primaryKeyPosition - b.primaryKeyPosition)
+    .map((column) => column.name);
+  const keys = link.fromColumns.map((column, i) => ({
+    column,
+    target: link.targetColumns[i] ?? primaryKey[i] ?? "id",
+  }));
+  const related: NonNullable<DesignControl["related"]> = {
+    table: child.name,
+    foreignKey: keys[0].column,
+    parentColumn: keys[0].target,
+    columns: child.columns
+      .filter((column) => !link.fromColumns.includes(column.name) && kindForColumn(column))
+      .map((column) => column.name),
+    formId: options.childForms?.[child.name] ?? null,
+  };
+  if (keys.length > 1) related.keys = keys;
+  return {
+    id: newId(),
+    kind: "relatedList",
+    label: humanize(child.name),
+    validation: { required: false },
+    placement: nextPlacement(detail, null),
+    related,
+  };
 }
 
 /**
@@ -95,32 +192,15 @@ export function generateCrudForms(
   const title = humanize(table.name);
   const source = { kind: "table" as const, table: table.name };
   const detail: DesignForm = { ...newForm(title, source), modes: ["detail", "create", "edit"] };
+  const covered = coveredColumns(table);
   for (const column of table.columns) {
+    if (covered.has(column.name)) continue;
     const control = columnControl(table, column, detail, options);
     if (control) detail.controls.push(control);
   }
-  const key = table.columns.find((column) => column.primaryKeyPosition > 0)?.name;
   for (const child of options.children ?? []) {
-    const link = child.foreignKeys.find(
-      (fk) => fk.targetTable === table.name && fk.fromColumns.length === 1,
-    );
-    if (!link) continue;
-    detail.controls.push({
-      id: newId(),
-      kind: "relatedList",
-      label: humanize(child.name),
-      validation: { required: false },
-      placement: nextPlacement(detail, null),
-      related: {
-        table: child.name,
-        foreignKey: link.fromColumns[0],
-        parentColumn: link.targetColumns[0] ?? key ?? "id",
-        columns: child.columns
-          .filter((column) => column.name !== link.fromColumns[0] && kindForColumn(column))
-          .map((column) => column.name),
-        formId: null,
-      },
-    });
+    const control = relatedListControl(table, child, detail, options);
+    if (control) detail.controls.push(control);
   }
   const list: DesignForm = {
     ...newForm(`${title} list`, source),

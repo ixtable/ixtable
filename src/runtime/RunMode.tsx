@@ -1,12 +1,13 @@
 import { type ComponentType, createElement, useContext, useEffect, useState } from "react";
 import * as dashboardsModule from "../dashboards";
-import type { NavigationItem } from "../design/schema";
+import { GenerateAppButton } from "../design/GenerateAppButton";
+import { flattenNavigation, formTable, type NavigationItem } from "../design/schema";
 import { useDocumentConfig } from "../lib/config-store";
-import type { TableSchema } from "../lib/types";
+import type { DocumentConfig } from "../lib/types";
 import { ReportPreview } from "../reports";
 import { ShellContext } from "../shell/context";
 import { type BackLink, BackCrumb } from "./BackCrumb";
-import { tableSchema } from "./data";
+import { tableContext } from "./data";
 import { FormRenderer } from "./FormRenderer";
 import {
   canOpen,
@@ -97,6 +98,20 @@ export function RunMode() {
               {runtime.notice.message}
             </p>
           )}
+          {!runtimeOnly && !hasTablePages(config) && (
+            <div className="rt-empty" role="region" aria-label="Build your app">
+              <p className="rt-muted">
+                {page
+                  ? "No page of this application shows your tables yet."
+                  : "This application has no pages yet."}
+              </p>
+              <GenerateAppButton
+                onDone={(added) =>
+                  !added && runtime.notify("There are no tables to generate from.", "error")
+                }
+              />
+            </div>
+          )}
           {page ? (
             <PageView
               key={`${runtime.roleId ?? ""}:${runtime.visit}:${JSON.stringify(page)}`}
@@ -104,11 +119,21 @@ export function RunMode() {
               back={back}
             />
           ) : (
-            <p className="rt-muted">This application has no pages yet.</p>
+            runtimeOnly && <p className="rt-muted">This application has no pages yet.</p>
           )}
         </section>
       </div>
     </RuntimeContext.Provider>
+  );
+}
+
+/** True when some navigation item opens a table, or a form whose source is a table. */
+function hasTablePages(config: DocumentConfig) {
+  const forms = config.design?.forms ?? [];
+  return flattenNavigation(config.design?.navigation ?? []).some(
+    (item) =>
+      item.kind === "table" ||
+      (item.kind === "form" && !!formTable(forms.find((form) => form.id === item.targetId))),
   );
 }
 
@@ -194,13 +219,13 @@ export function PageView({ page, back = null }: { page: RuntimePage; back?: Back
   }
 }
 
-/** A table navigation item: the generated CRUD forms for the table, built in memory. */
+/** A table navigation item: the generated CRUD forms (with lookups and related lists), built in memory. */
 function TablePage({ table, back }: { table: string; back: BackLink | null }) {
-  const [schema, setSchema] = useState<TableSchema | null>(null);
+  const [context, setContext] = useState<Awaited<ReturnType<typeof tableContext>> | null>(null);
   const [error, setError] = useState("");
   useEffect(() => {
-    tableSchema(table)
-      .then(setSchema)
+    tableContext(table)
+      .then(setContext)
       .catch((reason) => setError(reason instanceof Error ? reason.message : String(reason)));
   }, [table]);
   if (error)
@@ -209,6 +234,7 @@ function TablePage({ table, back }: { table: string; back: BackLink | null }) {
         {error}
       </p>
     );
-  if (!schema) return <p className="rt-muted">Loading…</p>;
-  return <FormRenderer formId={tableForms(schema).list.id} mode="list" back={back} />;
+  if (!context) return <p className="rt-muted">Loading…</p>;
+  const { schema, ...options } = context;
+  return <FormRenderer formId={tableForms(schema, options).list.id} mode="list" back={back} />;
 }

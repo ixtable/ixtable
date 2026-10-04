@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import { humanize } from "../design/generate";
-import type { DesignControl, DesignForm, FormMode } from "../design/schema";
+import { type DesignControl, type DesignForm, type FormMode, relatedKeys } from "../design/schema";
 import { readTablePage } from "../lib/api";
 import { useDocumentConfig } from "../lib/config-store";
 import { deleteRecord } from "../lib/records";
@@ -38,7 +38,10 @@ export function RelatedRecords({ ctx, control }: { ctx: BodyContext; control: De
   // Messages of the embedded child form, shown here because that form closes on save.
   const [message, setMessage] = useState("");
   const [dialog, confirm] = useConfirm();
-  const parentValue = related ? ctx.scope.record[related.parentColumn] : null;
+  const keys = related ? relatedKeys(related) : [];
+  // Child column → the parent record's value it must equal.
+  const link = Object.fromEntries(keys.map((key) => [key.column, ctx.scope.record[key.target]]));
+  const linkSignature = JSON.stringify(link);
   const childForm: DesignForm | null = !related
     ? null
     : related.formId
@@ -50,29 +53,27 @@ export function RelatedRecords({ ctx, control }: { ctx: BodyContext; control: De
     ? []
     : related.columns.length
       ? related.columns
-      : (schema?.columns.map((c) => c.name).filter((c) => c !== related.foreignKey) ?? []);
+      : (schema?.columns.map((c) => c.name).filter((c) => !(c in link)) ?? []);
   const lookup = useLookupLabels(
     related?.table ?? null,
     columns,
     (column) => childForm?.controls.find((c) => c.binding?.column === column),
     rows?.records,
   );
-  const saved = !!ctx.identity && parentValue != null;
+  const saved = !!ctx.identity && keys.length > 0 && keys.every((key) => link[key.column] != null);
 
   const load = useCallback(async () => {
     if (!related || !saved) return;
     try {
       const child = await tableSchema(related.table);
-      const fk = child.columns.find((c) => c.name === related.foreignKey);
+      const values = JSON.parse(linkSignature) as Record<string, unknown>;
       const page = await readTablePage(related.table, {
         limit: 200,
-        filters: [
-          {
-            column: related.foreignKey,
-            operator: "eq",
-            value: toColumnValue(parentValue, fk?.declaredType),
-          },
-        ],
+        filters: Object.entries(values).map(([column, value]) => ({
+          column,
+          operator: "eq" as const,
+          value: toColumnValue(value, child.columns.find((c) => c.name === column)?.declaredType),
+        })),
       });
       setSchema(child);
       setRows({
@@ -83,7 +84,7 @@ export function RelatedRecords({ ctx, control }: { ctx: BodyContext; control: De
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : String(reason));
     }
-  }, [related, saved, parentValue]);
+  }, [related, saved, linkSignature]);
   useEffect(() => {
     load().catch(() => undefined);
   }, [load]);
@@ -222,7 +223,7 @@ export function RelatedRecords({ ctx, control }: { ctx: BodyContext; control: De
             formId={childForm.id}
             mode={editing.mode}
             recordId={editing.recordId}
-            link={{ column: related.foreignKey, value: parentValue }}
+            link={link}
             embedded
             onNotify={(text, tone) => {
               if (tone === "error") setError(text);

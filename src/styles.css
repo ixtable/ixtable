@@ -2505,14 +2505,20 @@ fieldset {
 td.tone-positive::before,
 .rt-computed.tone-positive output::before {
   content: "✓ ";
+  /* Empty alt text: the glyph is a visual cue; screen readers skip it. */
+  content: "✓ " / "";
 }
 td.tone-negative::before,
 .rt-computed.tone-negative output::before {
   content: "✕ ";
+  /* Empty alt text: the glyph is a visual cue; screen readers skip it. */
+  content: "✕ " / "";
 }
 td.tone-warning::before,
 .rt-computed.tone-warning output::before {
   content: "! ";
+  /* Empty alt text: the glyph is a visual cue; screen readers skip it. */
+  content: "! " / "";
 }
 .rt-field.tone :is(input, select, textarea) {
   color: inherit;

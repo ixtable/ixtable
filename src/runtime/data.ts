@@ -1,5 +1,7 @@
 import { runQuery } from "../automation/runner";
+import { runSavedQueryPage } from "../query/api";
 import type { DesignForm, Relationship } from "../design/schema";
+import { evaluate } from "../expr";
 import { inspectTable, listDatabaseObjects, readTablePage } from "../lib/api";
 import { registerRecordHook } from "../lib/records";
 import type { DataValue, DocumentConfig, Filter, Sort, TableSchema } from "../lib/types";
@@ -7,6 +9,7 @@ import {
   pagedScan,
   type RowPredicate,
   rowFilter,
+  SCAN_CHUNK,
   type ScanResult,
   scanFiltered,
 } from "./conditions";
@@ -28,9 +31,10 @@ export type PageRequest = { offset: number; limit: number; sorts: Sort[]; filter
 
 const schemas = new Map<string, Promise<TableSchema>>();
 const pages = new Map<string, RecordPage>();
-type Matched = { record: RecordValues; identity: DataValue[] };
-// One filtered scan per (source, sorts, search, filter, inputs); pages slice it locally.
-const scans = new Map<string, Promise<ScanResult<Matched> & { columns: string[] }>>();
+type Matched = { record: RecordValues; identity: DataValue[] | null };
+// One filtered scan per (source, bound params, sorts, search, filter, inputs); pages slice it.
+type Scanned = ScanResult<Matched> & { columns: string[]; keyed: boolean };
+const scans = new Map<string, Promise<Scanned>>();
 const snapshots = new Map<string, { record: RecordValues; identity: DataValue[] }>();
 
 /** Drops cached schemas and pages; runs after every record write and schema change. */
@@ -74,82 +78,55 @@ export async function tableContext(table: string) {
   };
 }
 
-const pageKey = (form: DesignForm, request: PageRequest, scope: Record<string, unknown>) =>
-  JSON.stringify([form.source, form.filter?.trim() ? [form.filter, scope] : null, request]);
+const pageKey = (
+  form: DesignForm,
+  request: PageRequest,
+  scope: Record<string, unknown>,
+  bound: Record<string, unknown>,
+) =>
+  JSON.stringify([form.source, bound, form.filter?.trim() ? [form.filter, scope] : null, request]);
 
 /** A cached page for instant re-navigation (null when not loaded yet). */
 export const cachedPage = (
   form: DesignForm,
   request: PageRequest,
   scope: Record<string, unknown> = {},
-) => pages.get(pageKey(form, request, scope)) ?? null;
+  bound: Record<string, unknown> = {},
+) => pages.get(pageKey(form, request, scope, bound)) ?? null;
 
-const matches = (value: unknown, filter: Filter): boolean => {
-  const target = filter.value ? fromDataValue(filter.value) : null;
-  const text = String(value ?? "").toLowerCase();
-  switch (filter.operator) {
-    case "contains":
-      return text.includes(String(target ?? "").toLowerCase());
-    case "starts_with":
-      return text.startsWith(String(target ?? "").toLowerCase());
-    case "is_null":
-      return value == null;
-    case "is_not_null":
-      return value != null;
-    case "eq":
-      return String(value) === String(target);
-    case "ne":
-      return String(value) !== String(target);
-    default: {
-      const a = Number(value);
-      const b = Number(target);
-      if (filter.operator === "lt") return a < b;
-      if (filter.operator === "lte") return a <= b;
-      if (filter.operator === "gt") return a > b;
-      return a >= b;
-    }
-  }
-};
-
+/** Query sources page in DuckDB (Rust wraps the saved SQL), so totals are exact. */
 async function queryPage(
-  config: DocumentConfig,
   queryId: string,
   request: PageRequest,
-  keep: RowPredicate | null,
-) {
-  const result = await runQuery(config, queryId, {});
-  let rows = result.rows.map((row) =>
-    rowObject(
-      result.columns.map((name) => ({ name })),
-      row,
-    ),
-  );
-  rows = rows.filter(
-    (row) => request.filters.every((f) => matches(row[f.column], f)) && (!keep || keep(row)),
-  );
-  for (const sort of [...request.sorts].reverse()) {
-    rows = [...rows].sort((a, b) => {
-      const x = a[sort.column];
-      const y = b[sort.column];
-      const order = x == null ? -1 : y == null ? 1 : x < y ? -1 : x > y ? 1 : 0;
-      return sort.descending ? -order : order;
-    });
-  }
+  bound: Record<string, unknown>,
+): Promise<RecordPage> {
+  const result = await runSavedQueryPage(queryId, bound, request);
+  const columns = result.columns.map((name) => ({ name }));
   return {
     columns: result.columns,
-    rows: rows.slice(request.offset, request.offset + request.limit),
+    rows: result.rows.map((row) => rowObject(columns, row)),
     identities: null,
-    total: rows.length,
+    total: result.total,
+  };
+}
+
+async function tablePage(table: string, request: PageRequest): Promise<RecordPage> {
+  const result = await readTablePage(table, request);
+  return {
+    columns: result.columns.map((c) => c.name),
+    rows: result.rows.map((row) => rowObject(result.columns, row)),
+    identities: result.identities,
+    total: result.total,
   };
 }
 
 /**
- * A table page with a row filter. The table is scanned once (up to `SCAN_LIMIT` rows) per
- * sort, search, filter and filter inputs; every page is then a slice of the cached matches,
- * so paging never rescans and `total` is the real match count.
+ * A page with a row filter. The source is scanned once (up to `SCAN_LIMIT` rows) per
+ * bound params, sort, search, filter and filter inputs; every page is then a slice of the
+ * cached matches, so paging never rescans and `total` is the real match count.
  */
-async function filteredTablePage(
-  table: string,
+async function filteredPage(
+  read: (request: PageRequest) => Promise<RecordPage>,
   request: PageRequest,
   keep: RowPredicate,
   key: string,
@@ -157,17 +134,19 @@ async function filteredTablePage(
   let scan = scans.get(key);
   if (!scan) {
     let columns: string[] = [];
+    let keyed = false;
     scan = pagedScan(
       async (offset, limit) => {
-        const result = await readTablePage(table, { ...request, offset, limit });
-        columns = result.columns.map((c) => c.name);
-        return result.rows.map((row, i) => ({
-          record: rowObject(result.columns, row),
-          identity: result.identities[i],
+        const chunk = await read({ ...request, offset, limit });
+        columns = chunk.columns;
+        keyed = chunk.identities !== null;
+        return chunk.rows.map((record, i) => ({
+          record,
+          identity: chunk.identities?.[i] ?? null,
         }));
       },
       (row) => keep(row.record),
-    ).then((found) => ({ ...found, columns }));
+    ).then((found) => ({ ...found, columns, keyed }));
     scan.catch(() => scans.delete(key));
     scans.set(key, scan);
   }
@@ -176,43 +155,117 @@ async function filteredTablePage(
   return {
     columns: found.columns,
     rows: shown.map((row) => row.record),
-    identities: shown.map((row) => row.identity),
+    identities: found.keyed ? shown.map((row) => row.identity ?? []) : null,
     total: found.matches.length,
     truncated: found.truncated,
   };
 }
 
+/** The scope a form's row filter sees; each row is added as `record` (see `rowFilter`). */
+const filterScope = (scope: Record<string, unknown>) => ({
+  form: {},
+  params: {},
+  parent: null,
+  ...scope,
+});
+
+/** Reads pages of a form's source (table page or saved query page), or null without one. */
+function sourceReader(form: DesignForm, bound: Record<string, unknown>) {
+  const source = form.source;
+  const queryId = source?.kind === "query" ? source.queryId : null;
+  const table = source?.kind === "table" ? source.table : null;
+  if (queryId) return (request: PageRequest) => queryPage(queryId, request, bound);
+  if (table) return (request: PageRequest) => tablePage(table, request);
+  return null;
+}
+
 /**
- * Reads one page of a form's source through DuckDB (table page or saved query). A form
- * `filter` expression is applied to the fetched rows with `scope` (`app`, `params`).
+ * Reads one page of a form's source through DuckDB (table page or saved query). `bound`
+ * are the query source's bound parameter values (see `sourceParams`). A form `filter`
+ * expression is applied to the fetched rows with `scope` (`app`, `params`).
  */
 export async function loadPage(
-  config: DocumentConfig,
   form: DesignForm,
   request: PageRequest,
   scope: Record<string, unknown> = {},
+  bound: Record<string, unknown> = {},
 ): Promise<RecordPage> {
-  const source = form.source;
-  const keep = rowFilter(form.filter, { form: {}, params: {}, parent: null, ...scope });
+  const keep = rowFilter(form.filter, filterScope(scope));
+  const read = sourceReader(form, bound);
   let page: RecordPage;
-  if (source?.kind === "query" && source.queryId) {
-    page = await queryPage(config, source.queryId, request, keep);
-  } else if (source?.kind === "table" && source.table && keep) {
-    const scanKey = pageKey(form, { ...request, offset: 0, limit: 0 }, scope);
-    page = await filteredTablePage(source.table, request, keep, scanKey);
-  } else if (source?.kind === "table" && source.table) {
-    const result = await readTablePage(source.table, request);
-    page = {
-      columns: result.columns.map((c) => c.name),
-      rows: result.rows.map((row) => rowObject(result.columns, row)),
-      identities: result.identities,
-      total: result.total,
-    };
-  } else {
-    page = { columns: [], rows: [], identities: null, total: 0 };
-  }
-  pages.set(pageKey(form, request, scope), page);
+  if (!read) page = { columns: [], rows: [], identities: null, total: 0 };
+  else if (keep) {
+    const scanKey = pageKey(form, { ...request, offset: 0, limit: 0 }, scope, bound);
+    page = await filteredPage(read, request, keep, scanKey);
+  } else page = await read(request);
+  pages.set(pageKey(form, request, scope, bound), page);
   return page;
+}
+
+/**
+ * Whether `record` passes the form's row filter, evaluated with `scope` as in `loadPage`
+ * (true without a filter). A filter that does not parse throws.
+ */
+export function passesFilter(
+  form: DesignForm,
+  record: RecordValues,
+  scope: Record<string, unknown> = {},
+): boolean {
+  const keep = rowFilter(form.filter, filterScope(scope));
+  return !keep || keep(record);
+}
+
+/** Expression scope for a query source's parameter bindings. */
+export type SourceScope = { app: Record<string, unknown>; params: Record<string, unknown> };
+
+/**
+ * Evaluates a query source's parameter bindings (`source.params`: name to
+ * expression over `app` and `params`). Throws with the parameter name when one fails.
+ */
+export function sourceParams(form: DesignForm, scope: SourceScope): Record<string, unknown> {
+  const out: Record<string, unknown> = {};
+  if (form.source?.kind !== "query") return out;
+  for (const [name, src] of Object.entries(form.source.params ?? {})) {
+    if (!src?.trim()) continue;
+    try {
+      out[name] = evaluate(src, scope);
+    } catch (error) {
+      throw new Error(
+        `Parameter $${name}: ${error instanceof Error ? error.message : String(error)}`,
+        { cause: error },
+      );
+    }
+  }
+  return out;
+}
+
+/**
+ * The record id of the first row of a form's source that passes its row filter (the row
+ * itself for query sources), or null when there is none. `bound` and `scope` are as for
+ * `loadPage`; the scan stops at the first match. Used to open detail/edit views that have
+ * no record of their own (design preview, dashboard-embedded forms).
+ */
+export async function firstRecordId(
+  form: DesignForm,
+  bound: Record<string, unknown> = {},
+  scope: Record<string, unknown> = {},
+): Promise<unknown> {
+  const read = sourceReader(form, bound);
+  if (!read) return null;
+  const keep = rowFilter(form.filter, filterScope(scope));
+  const scan = await scanFiltered(
+    async (offset, limit) => {
+      const chunk = await read({ offset, limit, sorts: [], filters: [] });
+      return chunk.rows.map((record, i) => ({ record, identity: chunk.identities?.[i] ?? null }));
+    },
+    (row) => !keep || keep(row.record),
+    1,
+    keep ? SCAN_CHUNK : 1,
+  );
+  const first = scan.matches[0];
+  if (!first) return null;
+  if (form.source?.kind !== "table" || !form.source.table || !first.identity) return first.record;
+  return recordIdFor(await tableSchema(form.source.table), first.record, first.identity);
 }
 
 /** Primary key columns in key order. */

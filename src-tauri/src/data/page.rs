@@ -1,6 +1,6 @@
 //! Record pages: filtered, sorted, stably ordered reads with typed values.
 use super::{
-    duck_value, q,
+    duck_value, like_pattern, q,
     read::{duck_bind, ReadRuntime, ReadTarget},
     DataValue, Filter, FilterOperator, LogicalType, Page, Sort,
 };
@@ -55,14 +55,11 @@ impl ReadRuntime {
                         Some(DataValue::Text(v)) => v,
                         _ => return Err("Text filter value is required".into()),
                     };
-                    binds.push(duckdb::types::Value::Text(
-                        if matches!(f.operator, FilterOperator::Contains) {
-                            format!("%{text}%")
-                        } else {
-                            format!("{text}%")
-                        },
-                    ));
-                    format!("CAST({col} AS VARCHAR) LIKE ? ESCAPE '\\'")
+                    binds.push(duckdb::types::Value::Text(like_pattern(
+                        text,
+                        matches!(f.operator, FilterOperator::Contains),
+                    )));
+                    format!("CAST({col} AS VARCHAR) ILIKE ? ESCAPE '\\'")
                 }
                 _ => {
                     let value = f.value.as_ref().ok_or("Filter value is required")?;

@@ -6,7 +6,7 @@ import { useDocumentConfig } from "../lib/config-store";
 import { deleteRecord } from "../lib/records";
 import type { DataValue, TableSchema } from "../lib/types";
 import { useConfirm } from "./Confirm";
-import { filterInputsKey, rowFilter, scanFiltered, toneClass, toneFor } from "./conditions";
+import { filterInputsKey, pagedScan, rowFilter, toneClass, toneFor } from "./conditions";
 import { useLookupLabels } from "./lookups";
 import type { BodyContext } from "./FormBody";
 import { FormRenderer } from "./FormRenderer";
@@ -25,9 +25,7 @@ import {
   toColumnValue,
 } from "./values";
 
-type Rows = { records: RecordValues[]; identities: DataValue[][] };
-/** Child rows shown at most; a row filter scans further to fill them. */
-const RELATED_LIMIT = 200;
+type Rows = { records: RecordValues[]; identities: DataValue[][]; total: number };
 type Editing = { mode: FormMode; recordId?: unknown } | null;
 
 /**
@@ -51,6 +49,7 @@ export function RelatedRecords({
   const [rows, setRows] = useState<Rows | null>(null);
   const [editing, setEditing] = useState<Editing>(null);
   const [error, setError] = useState("");
+  const [offset, setOffset] = useState(0);
   // Messages of the embedded child form, shown here because that form closes on save.
   const [message, setMessage] = useState("");
   const section = useRef<HTMLElement>(null);
@@ -86,6 +85,8 @@ export function RelatedRecords({
     rows?.records,
   );
   const saved = !!ctx.identity && keys.length > 0 && keys.every((key) => link[key.column] != null);
+  // Same page size as the child's list form.
+  const limit = Math.max(1, childForm?.pageSize || 25);
   // Keyed on the values the filter reads, and debounced, so typing in the parent form
   // reloads the list only when a referenced field settles on a new value.
   const filterKey = useDebounced(
@@ -113,29 +114,38 @@ export function RelatedRecords({
         value: toColumnValue(value, child.columns.find((c) => c.name === column)?.declaredType),
       }));
       const keep = filterScope && rowFilter(related.filter, filterScope);
-      const read = async (offset: number, limit: number) => {
-        const page = await readTablePage(related.table, { offset, limit, filters });
-        return page.rows.map((row, i) => ({
+      const read = async (from: number, size: number) => {
+        const page = await readTablePage(related.table, { offset: from, limit: size, filters });
+        const found = page.rows.map((row, i) => ({
           record: rowObject(page.columns, row),
           identity: page.identities[i],
         }));
+        return { found, total: page.total };
       };
-      const found = keep
-        ? (await scanFiltered(read, (row) => keep(row.record), RELATED_LIMIT)).matches.slice(
-            0,
-            RELATED_LIMIT,
-          )
-        : await read(0, RELATED_LIMIT);
+      // A row filter scans the parent's children once and pages the matches locally.
+      const { found, total } = keep
+        ? await pagedScan(
+            async (from, size) => (await read(from, size)).found,
+            (row) => keep(row.record),
+          ).then((scan) => ({
+            found: scan.matches.slice(offset, offset + limit),
+            total: scan.matches.length,
+          }))
+        : await read(offset, limit);
       setSchema(child);
       setRows({
         records: found.map((row) => row.record),
         identities: found.map((row) => row.identity),
+        total,
       });
+      // A delete can empty the last page: step back to the new last page.
+      if (offset > 0 && offset >= total)
+        setOffset(Math.max(0, Math.floor((total - 1) / limit) * limit));
       setError("");
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : String(reason));
     }
-  }, [related, saved, linkSignature, filterScope]);
+  }, [related, saved, linkSignature, filterScope, offset, limit]);
   useEffect(() => {
     load().catch(() => undefined);
   }, [load]);
@@ -278,6 +288,29 @@ export function RelatedRecords({
           )}
         </tbody>
       </table>
+      {rows && rows.total > limit && (
+        <div className="rt-pager">
+          <span role="status">
+            {`${offset + 1}–${Math.min(offset + limit, rows.total)} of ${rows.total}`}
+          </span>
+          <button
+            type="button"
+            aria-label={`Previous page of ${label.toLowerCase()}`}
+            disabled={offset === 0}
+            onClick={() => setOffset(Math.max(0, offset - limit))}
+          >
+            Previous page
+          </button>
+          <button
+            type="button"
+            aria-label={`Next page of ${label.toLowerCase()}`}
+            disabled={offset + limit >= rows.total}
+            onClick={() => setOffset(offset + limit)}
+          >
+            Next page
+          </button>
+        </div>
+      )}
       {editing && childForm && !disabled && (
         <div className="rt-embedded" role="group" aria-label={`${label} record`}>
           <FormRenderer

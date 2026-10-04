@@ -1,5 +1,5 @@
 import { call } from "../lib/api";
-import type { DataValue, NamedValue } from "../lib/types";
+import type { DataValue, Filter, NamedValue, Sort } from "../lib/types";
 import type { QueryParameter, QueryRunResult } from "./types";
 
 export interface RunOptions {
@@ -47,6 +47,31 @@ export const runSavedQuery = (
     params: toNamedValues(params),
     limit: options.limit ?? null,
     runId: options.runId ?? null,
+  });
+
+/** One page of a saved query's rows and the exact filtered total (paged in DuckDB). */
+export interface QueryPageResult {
+  columns: string[];
+  rows: DataValue[][];
+  total: number;
+  offset: number;
+  limit: number;
+}
+
+/** Reads one page of a saved query: filter, sort, LIMIT/OFFSET and COUNT run in DuckDB. */
+export const runSavedQueryPage = (
+  queryId: string,
+  params: Record<string, unknown>,
+  page: { offset: number; limit: number; sorts?: Sort[]; filters?: Filter[] },
+) =>
+  call<QueryPageResult>("run_saved_query_page", {
+    id: queryId,
+    params: toNamedValues(params),
+    offset: page.offset,
+    limit: page.limit,
+    sorts: page.sorts ?? [],
+    filters: page.filters ?? [],
+    runId: null,
   });
 
 /**

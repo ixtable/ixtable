@@ -89,6 +89,8 @@ export interface DashboardComponent {
   filterId?: string | null;
   formId?: string | null;
   mode?: FormMode | null;
+  // form (detail, edit): expression over `params` and `app` for the record id; blank opens the first row.
+  recordId?: string | null;
   reportId?: string | null;
   actionId?: string | null;
   label?: string | null;

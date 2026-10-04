@@ -53,13 +53,16 @@ Filters and conditional styles (PRD §17.1) use the same evaluator through
   Rows are still read through DuckDB, and the filter runs on the fetched rows.
   Null, false, and evaluation errors drop the row. A syntax error is shown
   in place of the rows.
-- Paging stays honest. A filtered list form reads its table in chunks of 500
-  rows, once, up to 50,000 rows, and caches the matches per source, sort,
-  search, filter, and filter inputs. Pages are slices of that cache, so paging
-  never rescans and the pager total is the real match count. If the scan
-  stopped at 50,000 rows, the list says "Filter applied to the first 50,000
-  rows; some matches may be missing." A related list and a lookup scan until
-  they fill their 200 or 50 rows. A dashboard table already holds the whole
+- Paging stays honest. A filtered list form reads its source in chunks of 500
+  rows, once, up to 50,000 rows: a table through `read_table_page`, a saved
+  query through `run_saved_query_page` with its bound parameters. It caches
+  the matches per source, bound parameters, sort, search, filter, and filter
+  inputs. Pages are slices of that cache, so paging never rescans and the
+  pager total is the real match count. If the scan stopped at 50,000 rows,
+  the list says "Filter applied to the first 50,000 rows; some matches may be
+  missing." A filtered related list scans its parent's child rows on each
+  load and pages the matches with the child list form's page size. A lookup
+  scans until it fills 50 rows. A dashboard table already holds the whole
   query result, so its page count is exact.
 - A related list or lookup reloads only when a value its filter reads changes
   (`filterInputs` uses `referencedNames` to pick `parent.x`, `form.y`, and so

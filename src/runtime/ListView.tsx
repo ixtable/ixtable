@@ -10,6 +10,7 @@ import {
   type PageRequest,
   type RecordPage,
   recordIdFor,
+  sourceParams,
   tableSchema,
 } from "./data";
 import { pageLabel, TRUNCATED_NOTICE, toneClass, toneFor } from "./conditions";
@@ -25,14 +26,18 @@ type Props = {
   form: DesignForm;
   onOpen: (recordId: unknown) => void;
   onCreate: () => void;
+  /** Page parameters (navigation or dashboard), in scope for query source bindings. */
+  params?: Record<string, unknown>;
 };
+
+const NO_PARAMS: Record<string, unknown> = {};
 
 /**
  * List mode: DuckDB-backed paging with sort and a contains-filter, rows open the detail form.
  * The form's `filter` expression runs on fetched rows (see `loadPage`); cells take the
  * conditional tone of the control bound to their column.
  */
-export function ListView({ form, onOpen, onCreate }: Props) {
+export function ListView({ form, onOpen, onCreate, params = NO_PARAMS }: Props) {
   const { config } = useDocumentConfig();
   const { roleId, app } = useRuntimeNavigation();
   const [sorts, setSorts] = useState<Sort[]>([]);
@@ -62,16 +67,39 @@ export function ListView({ form, onOpen, onCreate }: Props) {
     () => ({ offset, limit, sorts, filters }),
     [offset, limit, sorts, filters],
   );
-  const scope = useMemo(() => ({ app }), [app]);
-  const [page, setPage] = useState<RecordPage | null>(() => cachedPage(form, request, scope));
+  // Bound query parameters; JSON keeps the effect below from rerunning on equal values.
+  const bound = useMemo(() => {
+    try {
+      return { json: JSON.stringify(sourceParams(form, { app, params })), error: "" };
+    } catch (reason) {
+      return { json: "{}", error: reason instanceof Error ? reason.message : String(reason) };
+    }
+  }, [form, app, params]);
+  // New parameter values start again at the first page.
+  const [boundFor, setBoundFor] = useState(bound.json);
+  if (boundFor !== bound.json) {
+    setBoundFor(bound.json);
+    if (offset !== 0) setOffset(0);
+  }
+  // Row filter scope.
+  const scope = useMemo(() => ({ app, params }), [app, params]);
+  const [page, setPage] = useState<RecordPage | null>(() =>
+    cachedPage(form, request, scope, JSON.parse(bound.json)),
+  );
 
   useEffect(() => {
     let live = true;
-    const hit = cachedPage(form, request, scope);
+    if (bound.error) {
+      setError(bound.error);
+      setPage(null);
+      return;
+    }
+    const values = JSON.parse(bound.json) as Record<string, unknown>;
+    const hit = cachedPage(form, request, scope, values);
     if (hit) setPage(hit);
     const timer = setTimeout(
       () => {
-        loadPage(config, form, request, scope)
+        loadPage(form, request, scope, values)
           .then((next) => {
             if (!live) return;
             setPage(next);
@@ -87,7 +115,7 @@ export function ListView({ form, onOpen, onCreate }: Props) {
       live = false;
       clearTimeout(timer);
     };
-  }, [config, form, request, search, scope]);
+  }, [config, form, request, search, bound, scope]);
 
   useEffect(() => {
     if (table)

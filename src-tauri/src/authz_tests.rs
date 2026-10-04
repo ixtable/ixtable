@@ -185,7 +185,7 @@ fn sessions_are_unrestricted_until_a_role_is_previewed_and_guard_every_command_f
         check("table", "secrets", Op::Read).unwrap_err().code,
         "FORBIDDEN"
     );
-    // run_saved_query.
+    // run_saved_query / run_saved_query_page.
     assert!(check("query", "q-open", Op::Read).is_ok());
     assert_eq!(
         check("query", "q-other", Op::Read).unwrap_err().code,

@@ -86,6 +86,19 @@ export interface RecordHook {
 
 const hooks = new Set<RecordHook>();
 
+/** Fired once per tick after record writes commit (narrower than `ixtable:database-changed`). */
+export const RECORDS_CHANGED_EVENT = "ixtable:records-changed";
+let announcing = false;
+
+function announceChange() {
+  if (announcing || typeof window === "undefined") return;
+  announcing = true;
+  setTimeout(() => {
+    announcing = false;
+    window.dispatchEvent(new Event(RECORDS_CHANGED_EVENT));
+  }, 0);
+}
+
 /** Registers a hook on every record write and returns its unregister function. */
 export function registerRecordHook(hook: RecordHook): () => void {
   hooks.add(hook);
@@ -152,6 +165,7 @@ async function write<T>(
   const active = [...hooks];
   for (const hook of active) await hook.before?.(record);
   const outcome = await send(record);
+  announceChange();
   const [result] = await afterCommit([record], [outcome], active);
   return result as T;
 }
@@ -214,5 +228,6 @@ export async function writeRecordBatch(input: RecordWrite[]): Promise<unknown[]>
     ops: writes.map(toOp),
     triggers: writes.map((w) => w.meta?.trigger ?? null),
   });
+  announceChange();
   return afterCommit(writes, outcomes, active);
 }

@@ -438,10 +438,12 @@ async function runStep(step: Step, frame: Frame, path: string): Promise<void> {
       effect(frame, () => ctx.navigate({ kind: "report", id: step.reportId, params }));
       return;
     }
-    case "openDashboard":
+    case "openDashboard": {
       exists(ctx.config, "dashboard", step.dashboardId);
-      effect(frame, () => ctx.navigate({ kind: "dashboard", id: step.dashboardId }));
+      const params = evalMap(step.params, frame);
+      effect(frame, () => ctx.navigate({ kind: "dashboard", id: step.dashboardId, params }));
       return;
+    }
     case "setState": {
       if (!step.key?.trim()) throw new Error("State key is not set");
       const value = expr(step.value, frame, `State ${step.key}`);

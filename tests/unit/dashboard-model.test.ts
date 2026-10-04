@@ -12,6 +12,7 @@ import {
 import {
   dashboardIssues,
   duplicateDashboard,
+  embeddableModes,
   newComponent,
   newDashboard,
   newFilter,
@@ -19,7 +20,7 @@ import {
   withLayout,
 } from "../../src/dashboards/model";
 import type { DashboardComponent, DashboardFilter } from "../../src/dashboards/types";
-import { upgradeDesign } from "../../src/design/schema";
+import { newForm, upgradeDesign } from "../../src/design/schema";
 import { defaultGridLayout, normalizeLayout } from "../../src/grid/engine";
 import type { DocumentConfig } from "../../src/lib/types";
 
@@ -323,5 +324,19 @@ describe("dashboard model", () => {
     expect(dashboardIssues(dashboard, config).map((i) => i.message)).not.toContain(
       '"Orders" has a conditional style with no column',
     );
+  });
+});
+
+describe("embeddableModes", () => {
+  it("drops create and edit for read-only query forms", () => {
+    expect(embeddableModes(newForm("T", { kind: "table", table: "t" }))).toEqual([
+      "list",
+      "detail",
+      "create",
+      "edit",
+    ]);
+    const query = { ...newForm("Q", { kind: "query", queryId: "q" }), modes: ["list", "edit"] };
+    expect(embeddableModes(query as ReturnType<typeof newForm>)).toEqual(["list"]);
+    expect(embeddableModes(null)).toHaveLength(4);
   });
 });

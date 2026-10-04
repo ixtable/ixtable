@@ -2,7 +2,14 @@ import { Code2, Rows3 } from "lucide-react";
 import type { QueryResult } from "../lib/types";
 import { showValue } from "./format";
 
-export function ResultGrid({ result }: { result: QueryResult | null }) {
+export function ResultGrid({
+  result,
+  cellClass,
+}: {
+  result: QueryResult | null;
+  // Optional class per cell (row and column index), e.g. a conditional style tone.
+  cellClass?: (row: number, column: number) => string | undefined;
+}) {
   if (!result)
     return (
       <div className="empty-recent">
@@ -24,7 +31,9 @@ export function ResultGrid({ result }: { result: QueryResult | null }) {
           {result.rows.map((r, i) => (
             <tr key={i}>
               {r.map((v, j) => (
-                <td key={j}>{showValue(v)}</td>
+                <td key={j} className={cellClass?.(i, j)}>
+                  {showValue(v)}
+                </td>
               ))}
             </tr>
           ))}

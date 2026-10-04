@@ -4,7 +4,8 @@ import { ResultGrid } from "../data/ResultGrid";
 import type { QueryResult } from "../lib/types";
 import { runSavedQuery } from "../query/api";
 import { Chart } from "./charts/Chart";
-import { type DateRange, type FilterValue, kpiValue, type Row } from "./data";
+import { rowFilter, toneClass, toneFor } from "../runtime/conditions";
+import { type DateRange, type FilterValue, kpiValue, type Row, resultRows } from "./data";
 import type { DashboardComponent, DashboardFilter } from "./types";
 import type { QueryState } from "./useDashboardData";
 
@@ -76,12 +77,19 @@ export function KpiBody({
   );
 }
 
+/**
+ * Table component. The `filter` expression keeps result rows (`record` is one row); paging
+ * counts only kept rows, which is exact because the whole query result is loaded. Cells take
+ * the tone of the first matching `styles` rule for their column.
+ */
 export function TableBody({
   component,
   result,
+  scope = {},
 }: {
   component: DashboardComponent;
   result: QueryResult;
+  scope?: Record<string, unknown>;
 }) {
   const [page, setPage] = useState(0);
   const size = Math.max(1, component.pageSize ?? 10);
@@ -89,18 +97,37 @@ export function TableBody({
   const indexes = shown.length
     ? shown.map((c) => result.columns.indexOf(c))
     : result.columns.map((_, i) => i);
-  const pages = Math.max(1, Math.ceil(result.rows.length / size));
+  const records = resultRows(result);
+  let keep: ReturnType<typeof rowFilter> = null;
+  try {
+    keep = rowFilter(component.filter, { form: {}, parent: null, ...scope });
+  } catch (reason) {
+    return (
+      <p className="dash-error" role="alert">
+        Filter: {message(reason)}
+      </p>
+    );
+  }
+  const kept = records.flatMap((record, i) => (!keep || keep(record) ? [i] : []));
+  const pages = Math.max(1, Math.ceil(kept.length / size));
   const current = Math.min(page, pages - 1);
+  const rows = kept.slice(current * size, current * size + size);
   const slice: QueryResult = {
     columns: indexes.map((i) => result.columns[i]),
-    rows: result.rows
-      .slice(current * size, current * size + size)
-      .map((row) => indexes.map((i) => row[i])),
+    rows: rows.map((r) => indexes.map((i) => result.rows[r][i])),
   };
+  const cellClass = component.styles?.length
+    ? (row: number, column: number) => {
+        const record = records[rows[row]];
+        const name = slice.columns[column];
+        const tone = toneFor(component.styles, { ...scope, record, value: record[name] }, name);
+        return toneClass(tone) || undefined;
+      }
+    : undefined;
   const name = component.title || "Table";
   return (
     <div className="dash-table">
-      <ResultGrid result={slice} />
+      <ResultGrid result={slice} cellClass={cellClass} />
       {pages > 1 && (
         <div className="dash-pager">
           <button

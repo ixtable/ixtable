@@ -2481,3 +2481,60 @@ fieldset {
   flex: none;
   overflow: visible;
 }
+/* Conditional style tones (src/runtime/conditions.ts). Each tone has a non-color cue
+   (glyph, weight, or border style) so it survives grayscale print and color-blind viewing.
+   Text colors are at least 6:1 on white. */
+.tone-positive {
+  color: #1d6b38;
+}
+.tone-negative {
+  color: #a11d1d;
+  font-weight: 700;
+}
+.tone-warning {
+  color: #8a4600;
+  font-weight: 600;
+}
+.tone-muted {
+  color: #5c6169;
+  font-style: italic;
+}
+.tone-emphasis {
+  font-weight: 700;
+}
+td.tone-positive::before,
+.rt-computed.tone-positive output::before {
+  content: "✓ ";
+  /* Empty alt text: the glyph is a visual cue; screen readers skip it. */
+  content: "✓ " / "";
+}
+td.tone-negative::before,
+.rt-computed.tone-negative output::before {
+  content: "✕ ";
+  /* Empty alt text: the glyph is a visual cue; screen readers skip it. */
+  content: "✕ " / "";
+}
+td.tone-warning::before,
+.rt-computed.tone-warning output::before {
+  content: "! ";
+  /* Empty alt text: the glyph is a visual cue; screen readers skip it. */
+  content: "! " / "";
+}
+.rt-field.tone :is(input, select, textarea) {
+  color: inherit;
+  font-weight: inherit;
+  font-style: inherit;
+  border-left-width: 4px;
+}
+.rt-field.tone-positive :is(input, select, textarea) {
+  border-left-style: solid;
+}
+.rt-field.tone-negative :is(input, select, textarea) {
+  border-left-style: double;
+}
+.rt-field.tone-warning :is(input, select, textarea) {
+  border-left-style: dashed;
+}
+.rt-field.tone-muted :is(input, select, textarea) {
+  border-left-style: dotted;
+}

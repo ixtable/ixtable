@@ -110,6 +110,9 @@ pub struct Form {
     pub detail_form_id: Option<String>,
     #[serde(default)]
     pub rules: Vec<FormRule>,
+    /// List mode row filter expression (evaluated in TypeScript, `src/runtime/conditions.ts`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub filter: Option<String>,
 }
 pub fn default_modes() -> Vec<FormMode> {
     vec![
@@ -203,6 +206,75 @@ pub struct Control {
     /// Presentation variant, e.g. "toggle" for booleans.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub variant: Option<String>,
+    /// Conditional styles; the first rule whose `when` holds sets the tone.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub styles: Vec<ConditionalStyle>,
+}
+
+/// Named tone of a conditional style. The renderer maps it to a class, never to raw CSS.
+/// A tone this build does not know (hand-edited YAML, a newer app) loads as `Other` and
+/// saves back unchanged; the renderer ignores it.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub enum Tone {
+    Positive,
+    Negative,
+    Warning,
+    Muted,
+    #[default]
+    Emphasis,
+    Other(String),
+}
+
+impl Tone {
+    pub fn as_str(&self) -> &str {
+        match self {
+            Tone::Positive => "positive",
+            Tone::Negative => "negative",
+            Tone::Warning => "warning",
+            Tone::Muted => "muted",
+            Tone::Emphasis => "emphasis",
+            Tone::Other(name) => name,
+        }
+    }
+}
+
+impl From<String> for Tone {
+    fn from(name: String) -> Self {
+        match name.as_str() {
+            "positive" => Tone::Positive,
+            "negative" => Tone::Negative,
+            "warning" => Tone::Warning,
+            "muted" => Tone::Muted,
+            "emphasis" => Tone::Emphasis,
+            _ => Tone::Other(name),
+        }
+    }
+}
+
+impl Serialize for Tone {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        serializer.serialize_str(self.as_str())
+    }
+}
+
+impl<'de> Deserialize<'de> for Tone {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        String::deserialize(deserializer).map(Tone::from)
+    }
+}
+
+/// One conditional style rule: `tone` applies when the `when` expression is true.
+/// Shared by form controls and dashboard table columns (`column` names the column there).
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct ConditionalStyle {
+    pub id: String,
+    #[serde(default)]
+    pub when: String,
+    #[serde(default)]
+    pub tone: Tone,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub column: Option<String>,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
@@ -237,6 +309,9 @@ pub struct Relationship {
     pub display_column: String,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub keys: Vec<KeyPair>,
+    /// Row filter over the choices (`record` is a choice row, `parent` the edited record).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub filter: Option<String>,
 }
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
@@ -260,6 +335,9 @@ pub struct RelatedList {
     /// Form used to add and edit child rows (embedded; it may not hold related lists).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub form_id: Option<String>,
+    /// Row filter over the child rows (`record` is a child row, `parent` the parent record).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub filter: Option<String>,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]

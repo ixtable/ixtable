@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { humanize } from "../design/generate";
 import { type DesignControl, type DesignForm, type FormMode, relatedKeys } from "../design/schema";
 import { readTablePage } from "../lib/api";
@@ -6,6 +6,7 @@ import { useDocumentConfig } from "../lib/config-store";
 import { deleteRecord } from "../lib/records";
 import type { DataValue, TableSchema } from "../lib/types";
 import { useConfirm } from "./Confirm";
+import { filterInputsKey, rowFilter, scanFiltered, toneClass, toneFor } from "./conditions";
 import { useLookupLabels } from "./lookups";
 import type { BodyContext } from "./FormBody";
 import { FormRenderer } from "./FormRenderer";
@@ -14,6 +15,7 @@ import { useRuntimeNavigation } from "./navigation";
 import { can } from "./rbac";
 import { isDesignedForm, resolveForm, tableForms } from "./registry";
 import { BooleanCell } from "./BooleanCell";
+import { useDebounced } from "./useDebounced";
 import {
   displayText,
   isBooleanColumn,
@@ -24,10 +26,13 @@ import {
 } from "./values";
 
 type Rows = { records: RecordValues[]; identities: DataValue[][] };
+/** Child rows shown at most; a row filter scans further to fill them. */
+const RELATED_LIMIT = 200;
 type Editing = { mode: FormMode; recordId?: unknown } | null;
 
 /**
- * One-level master/detail: child rows whose foreign key matches the current record.
+ * One-level master/detail: child rows whose key columns match the current record, kept by
+ * the related list's `filter` expression (`record` is the child, `parent` the parent).
  * `disabled` (the control's or a container's `enabledWhen`) makes the list read-only.
  */
 export function RelatedRecords({
@@ -72,30 +77,56 @@ export function RelatedRecords({
     rows?.records,
   );
   const saved = !!ctx.identity && keys.length > 0 && keys.every((key) => link[key.column] != null);
+  // Keyed on the values the filter reads, and debounced, so typing in the parent form
+  // reloads the list only when a referenced field settles on a new value.
+  const filterKey = useDebounced(
+    filterInputsKey(related?.filter, {
+      parent: ctx.scope.record,
+      form: ctx.scope.form,
+      app: ctx.scope.app,
+      params: {},
+    }),
+    250,
+  );
+  const filterScope = useMemo(
+    () => (filterKey ? (JSON.parse(filterKey)[1] as Record<string, unknown>) : null),
+    [filterKey],
+  );
 
   const load = useCallback(async () => {
     if (!related || !saved) return;
     try {
       const child = await tableSchema(related.table);
       const values = JSON.parse(linkSignature) as Record<string, unknown>;
-      const page = await readTablePage(related.table, {
-        limit: 200,
-        filters: Object.entries(values).map(([column, value]) => ({
-          column,
-          operator: "eq" as const,
-          value: toColumnValue(value, child.columns.find((c) => c.name === column)?.declaredType),
-        })),
-      });
+      const filters = Object.entries(values).map(([column, value]) => ({
+        column,
+        operator: "eq" as const,
+        value: toColumnValue(value, child.columns.find((c) => c.name === column)?.declaredType),
+      }));
+      const keep = filterScope && rowFilter(related.filter, filterScope);
+      const read = async (offset: number, limit: number) => {
+        const page = await readTablePage(related.table, { offset, limit, filters });
+        return page.rows.map((row, i) => ({
+          record: rowObject(page.columns, row),
+          identity: page.identities[i],
+        }));
+      };
+      const found = keep
+        ? (await scanFiltered(read, (row) => keep(row.record), RELATED_LIMIT)).matches.slice(
+            0,
+            RELATED_LIMIT,
+          )
+        : await read(0, RELATED_LIMIT);
       setSchema(child);
       setRows({
-        records: page.rows.map((row) => rowObject(page.columns, row)),
-        identities: page.identities,
+        records: found.map((row) => row.record),
+        identities: found.map((row) => row.identity),
       });
       setError("");
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : String(reason));
     }
-  }, [related, saved, linkSignature]);
+  }, [related, saved, linkSignature, filterScope]);
   useEffect(() => {
     load().catch(() => undefined);
   }, [load]);
@@ -120,6 +151,15 @@ export function RelatedRecords({
       childForm?.controls.filter((c) => c.binding?.column === column) ?? [],
       schema?.columns.find((c) => c.name === column),
     );
+  const tone = (record: RecordValues, column: string) =>
+    toneClass(
+      toneFor(childForm?.controls.find((c) => c.binding?.column === column)?.styles, {
+        record,
+        form: {},
+        app: ctx.scope.app,
+        value: record[column],
+      }),
+    ) || undefined;
   const columnLabel = (column: string) =>
     childForm?.controls.find((c) => c.binding?.column === column)?.label ?? humanize(column);
 
@@ -182,7 +222,7 @@ export function RelatedRecords({
           {rows?.records.map((record, index) => (
             <tr key={index}>
               {columns.map((column) => (
-                <td key={column}>
+                <td key={column} className={tone(record, column)}>
                   {booleanColumn(column) ? (
                     <BooleanCell value={record[column]} />
                   ) : (

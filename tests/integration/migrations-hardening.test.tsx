@@ -65,7 +65,6 @@ it("shows health results and times in the log, and problems after a migration dr
   ];
   await openMigrations(user);
   await invoke("update_document_config", { windowLabel: "main", config });
-  // Reload the UI's copy of the config, which predates the invoke above.
   await user.click(screen.getByRole("tab", { name: "Datasource" }));
   await user.click(screen.getByRole("tab", { name: "Migrations" }));
   await screen.findByRole("heading", { name: "Migrations" }, LONG);

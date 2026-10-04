@@ -17,21 +17,13 @@ import { useEffect, useMemo, useState } from "react";
 import "@xyflow/react/dist/style.css";
 import type { DbObject, TableSchema } from "../lib/types";
 import { defaultLayout } from "./layout";
+import { type DrawnRelationship, drawnFrom, handleId, relationshipEdges } from "./relationships";
 
 type SchemaNodeData = { schema: TableSchema; count: number | null; selected: boolean };
 export type NodePositions = Record<string, { x: number; y: number }>;
-/** A relationship drawn on the canvas: `child.column` references `parent.column`. */
-export interface DrawnRelationship {
-  childTable: string;
-  childColumn: string;
-  parentTable: string;
-  parentColumn: string;
-}
+export type { DrawnRelationship };
 
 const NO_POSITIONS: NodePositions = {};
-const handleId = (index: number, direction: "source" | "target") => `c${index}-${direction}`;
-const columnIndex = (handle: string | null | undefined) =>
-  Number(handle?.match(/^c(\d+)-/)?.[1] ?? -1);
 
 function SchemaNode({ data }: NodeProps<Node<SchemaNodeData>>) {
   return (
@@ -61,7 +53,7 @@ function SchemaNode({ data }: NodeProps<Node<SchemaNodeData>>) {
 
 /**
  * Relationship diagram. Node positions persist through `onArrange`; dragging from a referenced
- * column (right handle) to a referencing column (left handle) proposes a foreign key.
+ * column (right handle) to a referencing column (left handle) opens the relationship editor.
  */
 export function RelationshipBrowser({
   objects,
@@ -96,39 +88,10 @@ export function RelationshipBrowser({
   }, [objects, schemas, selected, positions]);
   const [nodes, setNodes] = useState(computed);
   useEffect(() => setNodes(computed), [computed]);
-  const edges = useMemo<Edge[]>(
-    () =>
-      schemas.flatMap((schema) =>
-        schema.foreignKeys.map((key) => {
-          const target = schemas.find((s) => s.name === key.targetTable);
-          return {
-            id: `${schema.name}-${key.id}`,
-            source: key.targetTable,
-            sourceHandle: handleId(
-              Math.max(0, target?.columns.findIndex((c) => c.name === key.targetColumns[0]) ?? 0),
-              "source",
-            ),
-            target: schema.name,
-            targetHandle: handleId(
-              Math.max(
-                0,
-                schema.columns.findIndex((c) => c.name === key.fromColumns[0]),
-              ),
-              "target",
-            ),
-            label: "1 — ∞",
-          };
-        }),
-      ),
-    [schemas],
-  );
+  const edges = useMemo<Edge[]>(() => relationshipEdges(schemas), [schemas]);
   const connect = (c: Connection) => {
-    const parent = schemas.find((s) => s.name === c.source);
-    const child = schemas.find((s) => s.name === c.target);
-    const parentColumn = parent?.columns[columnIndex(c.sourceHandle)]?.name;
-    const childColumn = child?.columns[columnIndex(c.targetHandle)]?.name;
-    if (parent && child && parentColumn && childColumn)
-      onRelate?.({ childTable: child.name, childColumn, parentTable: parent.name, parentColumn });
+    const drawn = drawnFrom(c, schemas);
+    if (drawn) onRelate?.(drawn);
   };
   return (
     <div className="flow-browser">

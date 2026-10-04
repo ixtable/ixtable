@@ -336,3 +336,35 @@ fn parameterized_sql_checks_without_values() {
         check_on(&c, sql).unwrap_or_else(|e| panic!("{sql}: {}", e.message));
     }
 }
+
+#[test]
+fn validate_accepts_outer_join_kinds() {
+    let built = |kind: &str| DocumentConfig {
+        saved_queries: vec![SavedQuery {
+            id: "q".into(),
+            name: "Joined".into(),
+            sql: "SELECT 1".into(),
+            builder: Some(json!({
+                "sources": [{"id":"s1","table":"orders","alias":"o"},{"id":"s2","table":"customers","alias":"c"}],
+                "joins": [{"id":"j","kind":kind,"source":"c","conditions":[
+                    {"leftSource":"o","leftColumn":"customer_id","rightColumn":"id"},
+                    {"leftSource":"o","leftColumn":"region","rightColumn":"region"}
+                ]}],
+                "fields": [],
+                "filters": {"kind":"group","combinator":"and","items":[]},
+                "groupBy": [],
+                "orderBy": []
+            })),
+            ..Default::default()
+        }],
+        ..Default::default()
+    };
+    for kind in ["inner", "left", "right", "full"] {
+        let issues = validate(&built(kind));
+        assert!(issues.is_empty(), "{kind}: {issues:?}");
+    }
+    let issues = validate(&built("cross"));
+    assert!(issues
+        .iter()
+        .any(|i| i.message.contains("join kind \"cross\"")));
+}

@@ -194,6 +194,71 @@ describe("compileBuilder", () => {
     expect(sql).toContain('GROUP BY "o"."customer"');
   });
 
+  it("groups by a column that is not output and groups the output fields with it", () => {
+    const sql = compileBuilder(
+      model({
+        sources: [orders],
+        fields: [{ id: "f", source: "o", column: "status", selected: true }],
+        groupBy: [{ source: "o", column: "region" }],
+      }),
+    );
+    expect(sql).toBe(
+      'SELECT "o"."status" AS "status"\nFROM "orders" AS "o"\nGROUP BY "o"."region", "o"."status"',
+    );
+  });
+
+  it("sorts by a field that is not output", () => {
+    const sql = compileBuilder(
+      model({
+        sources: [orders],
+        fields: [
+          { id: "a", source: "o", column: "id", selected: true },
+          { id: "b", source: "o", column: "placed", selected: false },
+        ],
+        orderBy: [{ id: "s", fieldId: "b", direction: "desc" }],
+      }),
+    );
+    expect(sql).toBe('SELECT "o"."id" AS "id"\nFROM "orders" AS "o"\nORDER BY "o"."placed" DESC');
+  });
+
+  it("asks to group a hidden sort field when the query groups", () => {
+    const { error } = tryCompile(
+      model({
+        sources: [orders],
+        fields: [
+          { id: "a", source: "o", column: "id", aggregate: "count", selected: true },
+          { id: "b", source: "o", column: "placed", selected: false },
+        ],
+        orderBy: [{ id: "s", fieldId: "b", direction: "asc" }],
+      }),
+    );
+    expect(error).toMatch(/placed needs it in Group by/);
+  });
+
+  it("compiles right and full outer joins with several conditions", () => {
+    const joined = (kind: "right" | "full") =>
+      compileBuilder(
+        model({
+          sources: [orders, customers],
+          joins: [
+            {
+              id: "j",
+              kind,
+              source: "c",
+              conditions: [
+                { leftSource: "o", leftColumn: "customer_id", rightColumn: "id" },
+                { leftSource: "o", leftColumn: "region", rightColumn: "region" },
+              ],
+            },
+          ],
+        }),
+      );
+    expect(joined("right")).toContain(
+      'RIGHT JOIN "customers" AS "c" ON "o"."customer_id" = "c"."id" AND "o"."region" = "c"."region"',
+    );
+    expect(joined("full")).toContain('FULL OUTER JOIN "customers" AS "c" ON');
+  });
+
   it("escapes literal injection attempts and rejects unsafe parameter names", () => {
     const base = model({ sources: [orders] });
     const where = (

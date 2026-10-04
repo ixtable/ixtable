@@ -1,4 +1,4 @@
-import { render, screen, waitFor, within } from "@testing-library/react";
+import { act, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { invoke } from "@tauri-apps/api/core";
 import App from "../../src/App";
@@ -67,9 +67,21 @@ export async function readPage(table: string, sorts: unknown[] = [], filters: un
   }>("read_table_page", { windowLabel: "main", table, offset: 0, limit: 100, sorts, filters });
 }
 
+/** Dispatches a database-changed event and waits until the metadata reload it starts finishes. */
 export async function refreshDatabase() {
-  window.dispatchEvent(new Event("ixtable:database-changed"));
-  await waitFor(() => expect(screen.queryByText("Loading database…")).not.toBeInTheDocument());
+  const idle = () =>
+    waitFor(
+      () => {
+        const objects = screen.queryByRole("region", { name: "Database objects" });
+        expect(objects && within(objects).queryByRole("status")).toBeNull();
+      },
+      { timeout: 20_000 },
+    );
+  await idle();
+  act(() => {
+    window.dispatchEvent(new Event("ixtable:database-changed"));
+  });
+  await idle();
 }
 
 export function grid() {

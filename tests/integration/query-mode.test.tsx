@@ -299,3 +299,58 @@ it("shows progress and a Cancel button for a long query, and cancels it", async 
   await user.click(cancel);
   expect(await screen.findByRole("alert", {}, LONG)).toHaveTextContent("Query cancelled.");
 }, 60_000);
+
+it("joins on several conditions with an outer join, groups by and sorts on fields that are not output", async () => {
+  const user = await openQueryMode();
+  await user.click(screen.getByRole("button", { name: "New query" }));
+  await user.selectOptions(await screen.findByRole("combobox", { name: "Source table" }), "orders");
+  await user.click(
+    await screen.findByRole(
+      "button",
+      { name: "Join customers on o.customer_id = customers.id" },
+      LONG,
+    ),
+  );
+  const kind = screen.getByRole("combobox", { name: "Join type for c" });
+  expect(
+    within(kind)
+      .getAllByRole("option")
+      .map((o) => o.textContent),
+  ).toEqual(["Inner join", "Left join", "Right join", "Full outer join"]);
+  await user.selectOptions(kind, "right");
+  await user.click(screen.getByRole("button", { name: "Add condition to c" }));
+  await user.selectOptions(
+    screen.getByRole("combobox", { name: "Join c left column 2" }),
+    "o.customer_id",
+  );
+  await user.selectOptions(screen.getByRole("combobox", { name: "Join c right column 2" }), "id");
+  await user.click(screen.getByRole("button", { name: "Add condition to c" }));
+  await user.click(screen.getByRole("button", { name: "Remove join c condition 3" }));
+  expect(screen.queryByRole("combobox", { name: "Join c left column 3" })).toBeNull();
+
+  await user.click(await screen.findByRole("checkbox", { name: "c.name" }, LONG));
+  await user.click(screen.getByRole("checkbox", { name: "o.amount" }));
+  await user.selectOptions(screen.getByRole("combobox", { name: "Aggregate for o.amount" }), "sum");
+  await user.click(screen.getByRole("checkbox", { name: "c.id" }));
+  await user.click(screen.getByRole("checkbox", { name: "Output c.id" }));
+  await user.selectOptions(screen.getByRole("combobox", { name: "Group by column" }), "c.id");
+  await user.click(screen.getByRole("button", { name: "Add group by" }));
+  expect(screen.getByRole("list", { name: "Group by columns" })).toHaveTextContent("c.id");
+  await user.click(screen.getByRole("button", { name: "Add sort" }));
+  await user.selectOptions(screen.getByRole("combobox", { name: "Sort 1 field" }), "c.id");
+  await user.selectOptions(screen.getByRole("combobox", { name: "Sort 1 direction" }), "desc");
+
+  await gridRows("Preview", [
+    ["Core", "1"],
+    ["Bolt", "55"],
+    ["ACME", "40"],
+  ]);
+  await user.click(screen.getByRole("tab", { name: "SQL" }));
+  const sql = screen.getByLabelText("Generated SQL");
+  expect(sql).toHaveTextContent(
+    'RIGHT JOIN "customers" AS "c" ON "o"."customer_id" = "c"."id" AND "o"."customer_id" = "c"."id"',
+  );
+  expect(sql).toHaveTextContent('GROUP BY "c"."id", "c"."name"');
+  expect(sql).toHaveTextContent('ORDER BY "c"."id" DESC');
+  expect(sql).not.toHaveTextContent('"c"."id" AS');
+});

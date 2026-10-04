@@ -9,6 +9,8 @@ import {
   IndexEditor,
   UniqueEditor,
 } from "../schema/ConstraintEditors";
+import { storeTypes } from "../schema/logical";
+import type { StoreCapabilities } from "../schema/types";
 import "../schema/schema.css";
 
 type Row = ColumnDraft & { pk: boolean };
@@ -18,13 +20,16 @@ export function CreateTableForm({
   onCreate,
   onCancel,
   tables = [],
-  maxPrecision,
+  capabilities = null,
 }: {
   onCreate: (spec: CreateTableSpec) => Promise<void>;
   onCancel: () => void;
   tables?: TableSchema[];
-  maxPrecision?: number;
+  capabilities?: StoreCapabilities | null;
 }) {
+  const maxPrecision = capabilities?.logicalTypes.find((t) =>
+    t.logicalType.startsWith("decimal"),
+  )?.maxPrecision;
   const [tableName, setTableName] = useState("");
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
@@ -99,6 +104,7 @@ export function CreateTableForm({
               draft={c}
               label={`Column ${i + 1}`}
               maxPrecision={maxPrecision}
+              types={storeTypes(capabilities)}
               onChange={(next) => change(i, next)}
             />
             <label className="flex items-center gap-1">
@@ -148,6 +154,7 @@ export function CreateTableForm({
         <ForeignKeyEditor
           columns={names}
           tables={targets}
+          actions={capabilities?.foreignKeyActions}
           onAdd={(fk) =>
             setForeignKeys((x) => [
               ...x,

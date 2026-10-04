@@ -20,11 +20,24 @@ import {
   UniqueEditor,
 } from "../schema/ConstraintEditors";
 import { ImpactDialog } from "../schema/ImpactDialog";
-import { modeLabel } from "../schema/logical";
+import { modeLabel, storeLabel, storeTypes } from "../schema/logical";
 import type { ChangePlan, StoreCapabilities, TableImpact } from "../schema/types";
 import "../schema/schema.css";
 
 const same = (a: string[], b: string[]) => a.length === b.length && a.every((x, i) => x === b[i]);
+const RENAME_ACK =
+  "I understand the definitions listed above still use the old name and must be updated.";
+
+/** Impact preview for dropping an index: in place, no rows removed, the exact statement shown. */
+const dropIndexPlan = (table: string, name: string): ChangePlan => ({
+  table,
+  operations: [{ summary: `Drop index ${name}`, mode: "inPlace", destructive: false }],
+  rebuild: false,
+  destructive: false,
+  statements: [`DROP INDEX "${name.replaceAll('"', '""')}"`],
+  warnings: ["Queries and lookups that relied on this index may run slower."],
+  impact: null,
+});
 
 /**
  * Table designer: changes are staged, previewed by the record store (in place vs table rebuild),
@@ -61,8 +74,13 @@ export function TableSchemaDesigner({
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
   const [dialog, setDialog] = useState<
-    { kind: "apply"; plan: ChangePlan } | { kind: "drop"; impact: TableImpact } | null
+    | { kind: "apply"; plan: ChangePlan }
+    | { kind: "drop"; impact: TableImpact }
+    | { kind: "dropIndex"; name: string }
+    | null
   >(null);
+  const types = storeTypes(capabilities);
+  const store = storeLabel(capabilities);
   const maxPrecision =
     capabilities?.logicalTypes.find((t) => t.logicalType.startsWith("decimal"))?.maxPrecision ?? 38;
   const columns = schema.columns.map((c) => c.name);
@@ -132,7 +150,9 @@ export function TableSchemaDesigner({
   const apply = () =>
     run(async () => {
       const fresh = await previewTableChanges(schema.name, pending);
-      if (fresh.destructive || fresh.rebuild) setDialog({ kind: "apply", plan: fresh });
+      // `impact` is also set when a rename leaves definitions using the old name.
+      if (fresh.destructive || fresh.rebuild || fresh.impact)
+        setDialog({ kind: "apply", plan: fresh });
       else {
         await applyTableChanges(schema.name, pending);
         await onChanged(finalName());
@@ -151,8 +171,8 @@ export function TableSchemaDesigner({
         <div>
           <h2>Design {schema.name}</h2>
           <p className="mt-1 text-slate-600">
-            {capabilities?.store === "postgres" ? "PostgreSQL" : "SQLite"} record store. Changes are
-            staged, previewed, and applied together in one transaction.
+            {store ? `${store} record store.` : "Checking the record store…"} Changes are staged,
+            previewed, and applied together in one transaction.
           </p>
         </div>
         <div className="flex gap-2">
@@ -203,6 +223,7 @@ export function TableSchemaDesigner({
               draft={drafts[column.name]}
               label={`Column ${column.name}`}
               maxPrecision={maxPrecision}
+              types={types}
               onChange={(next) => setDrafts((d) => ({ ...d, [column.name]: next }))}
             />
             <button onClick={() => stageColumn(column.name)}>Stage changes to {column.name}</button>
@@ -220,6 +241,7 @@ export function TableSchemaDesigner({
             draft={newColumn}
             label="New column"
             maxPrecision={maxPrecision}
+            types={types}
             onChange={setNewColumn}
           />
           <button
@@ -267,6 +289,7 @@ export function TableSchemaDesigner({
         <ForeignKeyEditor
           columns={columns}
           tables={tables}
+          actions={capabilities?.foreignKeyActions}
           onAdd={(foreignKey) => stage({ operation: "add_foreign_key", foreignKey })}
         />
       </section>
@@ -298,18 +321,15 @@ export function TableSchemaDesigner({
       </section>
       <section aria-label="Indexes">
         <h3>Indexes</h3>
-        <p className="text-slate-600">Index changes apply immediately and always run in place.</p>
+        <p className="text-slate-600">
+          Index changes are not staged: they apply on their own and always run in place.
+        </p>
         {(schema.indexes ?? []).map((index) => (
           <div key={index.name} className="flex items-center gap-2">
             {index.unique ? "Unique index" : "Index"} {index.name} ({index.columns.join(", ")})
             <button
               disabled={busy}
-              onClick={() =>
-                run(async () => {
-                  await dropIndex(index.name);
-                  await onChanged(schema.name);
-                })
-              }
+              onClick={() => setDialog({ kind: "dropIndex", name: index.name })}
             >
               Drop index {index.name}
             </button>
@@ -374,9 +394,28 @@ export function TableSchemaDesigner({
           title={`Apply ${dialog.plan.operations.length} change${dialog.plan.operations.length === 1 ? "" : "s"} to ${schema.name}?`}
           plan={dialog.plan}
           confirmLabel="Apply changes"
+          acknowledgement={dialog.plan.impact?.dependents.length ? RENAME_ACK : undefined}
           busy={busy}
           error={error}
           onConfirm={confirmApply}
+          onCancel={() => setDialog(null)}
+        />
+      )}
+      {dialog?.kind === "dropIndex" && (
+        <ImpactDialog
+          title={`Drop index ${dialog.name}?`}
+          plan={dropIndexPlan(schema.name, dialog.name)}
+          confirmLabel="Drop index"
+          acknowledgement="I reviewed the statement; the index can be recreated later."
+          busy={busy}
+          error={error}
+          onConfirm={() =>
+            run(async () => {
+              await dropIndex(dialog.name);
+              setDialog(null);
+              await onChanged(schema.name);
+            })
+          }
           onCancel={() => setDialog(null)}
         />
       )}

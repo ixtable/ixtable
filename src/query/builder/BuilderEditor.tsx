@@ -2,6 +2,7 @@ import type { DbObject } from "../../lib/types";
 import type { QueryParameter } from "../types";
 import { FieldsPanel } from "./FieldsPanel";
 import { FiltersPanel } from "./FiltersPanel";
+import { GroupByPanel } from "./GroupByPanel";
 import type { BuilderModel } from "./model";
 import { SortPanel } from "./SortPanel";
 import { SourcesPanel } from "./SourcesPanel";
@@ -35,6 +36,7 @@ export function BuilderEditor({
             parameters={parameters}
             onChange={onChange}
           />
+          <GroupByPanel model={model} schemas={schemas} onChange={onChange} />
           <FiltersPanel
             model={model}
             schemas={schemas}

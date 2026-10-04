@@ -62,6 +62,34 @@ native codes behind each one.
 Logical types and their physical mapping per store are in the
 [type matrix](./recordstore-type-matrix.md).
 
+### Studio reads capabilities, not store names
+
+The table designer, the create-table form, and the relationship editor take
+their logical type list from `logicalTypes` and their referential actions
+from `foreignKeyActions`. While capabilities load, the designer says it is
+checking the record store instead of assuming SQLite, and the default field
+asks for a value or expression, not SQLite syntax. The Datasource tab shows
+every category above as a read-only summary: constraints, relationship
+actions, index kinds, transactions, parameter style, generated values,
+migrations, concurrency, and the error code mapping.
+
+### Every schema change is previewed
+
+Dropping an index opens the same impact dialog as other changes, with the
+`DROP INDEX` statement and an acknowledgement. Renaming a table or column
+does not rewrite saved queries, forms, reports, dashboards, actions, or
+triggers. `preview_table_changes` lists the definitions that use the old
+name (`rename_dependents`: for a column, those that mention both the table
+and the column) and adds a warning, and the designer asks for an
+acknowledgement before it applies the rename. Rewriting bindings
+automatically is not done: a name inside SQL text or an expression cannot be
+rewritten deterministically.
+
+Drawing a relationship on the diagram opens the relationship editor
+prefilled with the drawn columns, so the user picks more columns and the
+actions before the preview. Diagram edges anchor on every column of a
+composite key and read `1 — 1` when the referencing columns are unique.
+
 ### Migrations target SQLite only
 
 Declared migrations (PRD §24) run on the embedded SQLite store only.
@@ -116,7 +144,13 @@ needs an explicit, recorded confirmation (PRD §21.4).
 - `src-tauri/src/recordstore/sqlite_tests.rs` and
   `src-tauri/src/migrations/tests.rs`.
 - `tests/integration/schema-designer.test.tsx`: changes labelled by store
-  capability, rebuild and drop previews.
+  capability, rebuild and drop previews, rename dependents, index drop
+  preview, drafts kept through a metadata reload, and a relationship created
+  through the relationship editor.
+- `src-tauri/src/recordstore/plan_tests.rs`: rename dependents.
+- `tests/unit/store-capabilities-ui.test.tsx` and
+  `tests/unit/relationships.test.ts`: capability-driven pickers, the
+  capability summary, composite edges and cardinality labels.
 - `tests/integration/optimistic-grid.test.tsx`: a stale grid edit is rejected.
 - `tests/integration/migrations.test.tsx`: dry run, apply with checkpoint,
   rollback, a failing migration, a legacy `postgres` target flagged as an

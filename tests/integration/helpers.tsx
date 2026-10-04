@@ -67,27 +67,26 @@ export async function readPage(table: string, sorts: unknown[] = [], filters: un
   }>("read_table_page", { windowLabel: "main", table, offset: 0, limit: 100, sorts, filters });
 }
 
-/** Waits until the object browser has no metadata reload in flight. */
-async function metadataSettled() {
-  await waitFor(
-    () => {
-      const objects = screen.queryByRole("region", { name: "Database objects" });
-      expect(objects && within(objects).queryByRole("status")).toBeFalsy();
-    },
-    { timeout: 20_000 },
-  );
-}
-
-/**
- * Reloads database metadata and waits for that reload to finish. A reload still
- * in flight (say, the initial one) would otherwise land later and remount views.
- */
-export async function refreshDatabase() {
-  await metadataSettled();
+/** Dispatches a database-changed event and waits until the metadata reload it starts finishes. */
+export function announceDatabaseChange() {
   act(() => {
     window.dispatchEvent(new Event("ixtable:database-changed"));
   });
-  await metadataSettled();
+}
+
+export async function refreshDatabase() {
+  const idle = () =>
+    waitFor(
+      () => {
+        const objects = screen.queryByRole("region", { name: "Database objects" });
+        expect(objects && within(objects).queryByRole("status")).toBeNull();
+        expect(screen.queryByText("Refreshing schema…")).toBeNull();
+      },
+      { timeout: 20_000 },
+    );
+  await idle();
+  announceDatabaseChange();
+  await idle();
 }
 
 export function grid() {

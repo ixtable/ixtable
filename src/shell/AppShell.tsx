@@ -20,10 +20,11 @@ import { SaveStatus } from "../persistence";
 import { type Autosave, useAutosave } from "../persistence/useAutosave";
 import { CloudRuntimeBar } from "../cloud";
 import { useIsCloudSession } from "../cloud/session";
-import { RuntimeBar } from "../release";
+import { RuntimeBar, RuntimeDiagnostics } from "../release";
 import type { OpenRequest } from "../lib/launch";
 import { useOpenRequestInShell } from "./openRequests";
 import { UpdateNotice } from "../updates";
+import { useRolePreviewResync } from "../runtime/navigation";
 
 const fromSession = (state: SessionState): Doc => ({
   name: state.name,
@@ -252,6 +253,11 @@ function ShellFrame({
   const mode = findMode(doc.mode);
   const shownError = error ?? (store.error === dismissed ? null : store.error);
   const cloudSession = useIsCloudSession(doc.sessionId);
+  const reportPreview = useCallback(
+    (message: string) => setError({ code: "ROLE_PREVIEW", message }),
+    [setError],
+  );
+  useRolePreviewResync(doc.sessionId, doc.mode === "run", reportPreview);
   const run = (action: () => Promise<unknown>) => {
     action().catch((reason: unknown) => setError(asTauriError(reason)));
   };
@@ -284,11 +290,10 @@ function ShellFrame({
             </div>
           </div>
           {doc.runtimeOnly ? (
-            cloudSession ? (
-              <CloudRuntimeBar />
-            ) : (
-              <RuntimeBar />
-            )
+            <>
+              {cloudSession ? <CloudRuntimeBar /> : <RuntimeBar />}
+              <RuntimeDiagnostics />
+            </>
           ) : (
             <div className="document-label">
               <small>PROJECT</small>

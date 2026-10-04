@@ -2,8 +2,8 @@
 //! object lists, table inspection, record pages, saved queries — runs here,
 //! over the embedded SQLite file or an attached PostgreSQL database. Writes
 //! never enter this connection.
-use super::logical::LogicalType;
 use super::extensions::postgres_extension_path;
+use super::logical::LogicalType;
 use super::support::{logical_from_duckdb, redact};
 use super::{
     ddl::{self, TableDef},
@@ -234,6 +234,7 @@ impl ReadRuntime {
                     .map(ddl::parse_sqlite_create_table)
                     .transpose()?;
                 if let Some(def) = def.as_mut() {
+                    mark_rowid_alias(def);
                     let mut stmt = self
                         .connection
                         .prepare(&format!("SELECT sql FROM {master} WHERE type='index' AND tbl_name=? AND sql IS NOT NULL ORDER BY name"))
@@ -298,6 +299,7 @@ impl ReadRuntime {
                     nullable: r.get::<_, String>(2)? == "YES",
                     default_expression: r.get(3)?,
                     generated_expression: None,
+                    identity: false,
                 })
             })
             .map_err(|e| e.to_string())?
@@ -408,6 +410,19 @@ fn open_locked(
         ))
         .map_err(|e| format!("DuckDB lockdown: {e}"))?;
     Ok((connection, attached))
+}
+
+/// Flags SQLite's `INTEGER PRIMARY KEY` (a rowid alias) as filled in by the database.
+pub(crate) fn mark_rowid_alias(def: &mut TableDef) {
+    if def.without_rowid || def.primary_key.len() != 1 {
+        return;
+    }
+    let key = def.primary_key[0].clone();
+    for c in &mut def.columns {
+        if c.name.eq_ignore_ascii_case(&key) && c.declared_type.eq_ignore_ascii_case("INTEGER") {
+            c.identity = true;
+        }
+    }
 }
 
 /// `<workspace>/data.db`, quoted for a SQL string literal.

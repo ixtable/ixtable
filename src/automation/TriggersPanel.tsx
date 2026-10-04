@@ -119,6 +119,15 @@ export function TriggersPanel() {
             value={trigger.condition}
             onChange={(condition) => edit({ condition: condition || undefined })}
           />
+          <SelectField
+            label="Run as"
+            value={trigger.runAs ?? "app"}
+            onChange={(runAs) => edit({ runAs })}
+            options={[
+              { value: "app", label: "App — the trigger's own steps" },
+              { value: "user", label: "Signed-in user's role" },
+            ]}
+          />
           <div className="ax-row">
             <SelectField
               label="Run"
@@ -156,7 +165,9 @@ export function TriggersPanel() {
           <p>
             Sync triggers run after the record is saved, as part of the same operation; a failing
             action reports an error to whoever saved the record, but the save stays. Async triggers
-            run in the background while the app is open, with retries.
+            run in the background while the app is open, with retries. Run as app lets the
+            trigger make its own writes even when the user's role cannot; run as the signed-in
+            user refuses the save up front when the user's role cannot run the trigger.
           </p>
         </div>
       ) : (

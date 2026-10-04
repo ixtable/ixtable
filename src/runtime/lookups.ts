@@ -2,14 +2,15 @@ import { useEffect, useState } from "react";
 import { kindForColumn } from "../design/generate";
 import type { DesignControl, Relationship } from "../design/schema";
 import { registerRecordHook } from "../lib/records";
-import type { TableSchema } from "../lib/types";
-import { runQuerySql } from "../query/api";
+import type { DataValue, TableSchema } from "../lib/types";
+import { asTauriError, readTablePage } from "../lib/api";
+import { runQuerySql, toDataValue } from "../query/api";
 import { tableSchema } from "./data";
 import { fromDataValue, type RecordValues } from "./values";
 
 /** Column → the relationship whose display value is shown instead of the raw key. */
 export type Lookups = Record<string, Relationship>;
-/** Column → (key text → display text). */
+/** Column → (key text, from `lookupKey`, → display text). */
 export type LookupLabels = Record<string, Map<string, string>>;
 
 const DISPLAY_NAMES = ["name", "title", "label"];
@@ -20,7 +21,21 @@ if (typeof window !== "undefined")
 
 const quote = (name: string) => `"${name.replaceAll('"', '""')}"`;
 const cacheKey = (lookup: Relationship, key: string) =>
-  JSON.stringify([lookup.table, lookup.valueColumn, lookup.displayColumn, key]);
+  JSON.stringify([lookup.table, lookup.valueColumn, lookup.displayColumn, lookup.keys, key]);
+
+/** Key pairs of a multi-column relationship, else null. */
+const compositeKeys = (lookup: Relationship) =>
+  (lookup.keys?.length ?? 0) > 1 ? (lookup.keys ?? null) : null;
+
+/**
+ * The lookup key of `row` for `column`: the cell text, or for a multi-column relationship
+ * every key column's text as JSON. Undefined when any key value is empty.
+ */
+export function lookupKey(lookup: Relationship, column: string, row: RecordValues) {
+  const values = (compositeKeys(lookup) ?? [{ column }]).map((pair) => row[pair.column]);
+  if (values.some((value) => value == null || value === "")) return undefined;
+  return values.length > 1 ? JSON.stringify(values.map(String)) : String(values[0]);
+}
 
 /** Conventional display column: the first text column named name, title, or label. */
 export function guessDisplayColumn(target: TableSchema): string | null {
@@ -61,32 +76,98 @@ export async function columnLookups(
   return Object.fromEntries(entries.filter((e): e is [string, Relationship] => !!e));
 }
 
+/**
+ * The rows `labelQuery` returns (key columns, then display), read with one `in` filtered
+ * `read_table_page` for a runtime role (Rust refuses it ad hoc SQL but authorizes lookup
+ * table reads). Composite keys filter on their first column, then match the rest here.
+ */
+async function labelsByKey(lookup: Relationship, column: string, rows: RecordValues[]) {
+  const pairs = compositeKeys(lookup) ?? [{ column, target: lookup.valueColumn }];
+  const page = await readTablePage(lookup.table, {
+    limit: pairs.length > 1 ? 1000 : rows.length,
+    filters: [
+      {
+        column: pairs[0].target,
+        operator: "in",
+        values: rows.map((row) => toDataValue(row[pairs[0].column])),
+      },
+    ],
+  });
+  const at = (row: DataValue[], name: string) =>
+    row[page.columns.findIndex((c) => c.name === name)];
+  const wanted = new Set(
+    rows.map((row) => JSON.stringify(pairs.map((p) => String(row[p.column])))),
+  );
+  return {
+    rows: page.rows
+      .filter((row) =>
+        wanted.has(JSON.stringify(pairs.map((p) => String(fromDataValue(at(row, p.target)))))),
+      )
+      .map((row) => [...pairs.map((p) => at(row, p.target)), at(row, lookup.displayColumn)]),
+  };
+}
+
+/** Bound query reading display text for the keys of `rows` (one row per distinct key). */
+function labelQuery(
+  lookup: Relationship,
+  column: string,
+  rows: RecordValues[],
+): [string, Record<string, unknown>] {
+  const display = `${quote(lookup.displayColumn)} AS lookup_display`;
+  const pairs = compositeKeys(lookup);
+  if (!pairs) {
+    const params = Object.fromEntries(rows.map((row, i) => [`k${i}`, row[column]]));
+    const placeholders = Object.keys(params).map((name) => `$${name}`);
+    return [
+      `SELECT ${quote(lookup.valueColumn)} AS lookup_key, ${display} ` +
+        `FROM ${quote(lookup.table)} WHERE ${quote(lookup.valueColumn)} IN (${placeholders.join(", ")})`,
+      params,
+    ];
+  }
+  const params: Record<string, unknown> = {};
+  const matches = rows.map(
+    (row, i) =>
+      `(${pairs
+        .map((pair, j) => {
+          params[`k${i}_${j}`] = row[pair.column];
+          return `${quote(pair.target)} = $k${i}_${j}`;
+        })
+        .join(" AND ")})`,
+  );
+  const keys = pairs.map((pair, j) => `${quote(pair.target)} AS lookup_key${j}`).join(", ");
+  return [
+    `SELECT ${keys}, ${display} FROM ${quote(lookup.table)} WHERE ${matches.join(" OR ")}`,
+    params,
+  ];
+}
+
 /** Display labels for the keys in `rows`: one bound `IN (...)` query per lookup, through DuckDB. */
 export async function lookupLabels(lookups: Lookups, rows: RecordValues[]): Promise<LookupLabels> {
   const result: LookupLabels = {};
   await Promise.all(
     Object.entries(lookups).map(async ([column, lookup]) => {
       const labels = new Map<string, string>();
-      const missing = new Map<string, unknown>();
+      const missing = new Map<string, RecordValues>();
+      const pairs = compositeKeys(lookup);
       for (const row of rows) {
-        const value = row[column];
-        if (value == null || value === "") continue;
-        const key = String(value);
+        const key = lookupKey(lookup, column, row);
+        if (key === undefined) continue;
         const hit = labelCache.get(cacheKey(lookup, key));
         if (hit !== undefined) {
           if (hit !== null) labels.set(key, hit);
-        } else missing.set(key, value);
+        } else missing.set(key, row);
       }
       if (missing.size) {
-        const params = Object.fromEntries([...missing.values()].map((v, i) => [`k${i}`, v]));
-        const placeholders = Object.keys(params).map((name) => `$${name}`);
-        const sql =
-          `SELECT ${quote(lookup.valueColumn)} AS lookup_key, ${quote(lookup.displayColumn)} AS lookup_display ` +
-          `FROM ${quote(lookup.table)} WHERE ${quote(lookup.valueColumn)} IN (${placeholders.join(", ")})`;
-        const found = await runQuerySql(sql, params).catch(() => null);
+        const found = await runQuerySql(...labelQuery(lookup, column, [...missing.values()])).catch(
+          (error) =>
+            asTauriError(error).code === "FORBIDDEN"
+              ? labelsByKey(lookup, column, [...missing.values()]).catch(() => null)
+              : null,
+        );
         for (const row of found?.rows ?? []) {
-          const key = String(fromDataValue(row[0]));
-          const display = fromDataValue(row[1]);
+          const values = row.slice(0, pairs?.length ?? 1).map((v) => String(fromDataValue(v)));
+          const key = pairs ? JSON.stringify(values) : values[0];
+          const display = fromDataValue(row[row.length - 1]);
           const text = display == null ? null : String(display);
           labelCache.set(cacheKey(lookup, key), text);
           if (text !== null) labels.set(key, text);
@@ -150,6 +231,9 @@ export function useLookupLabels(
       live = false;
     };
   }, [lookups, rows]);
-  return (column: string, value: unknown): string | undefined =>
-    value == null ? undefined : labels[column]?.get(String(value));
+  return (column: string, row: RecordValues): string | undefined => {
+    const lookup = lookups[column];
+    const key = lookup && lookupKey(lookup, column, row);
+    return key === undefined ? undefined : labels[column]?.get(key);
+  };
 }

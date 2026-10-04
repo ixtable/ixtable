@@ -240,6 +240,22 @@ describe("customAction entities", () => {
     expect(db.rows("audit")).toHaveLength(1);
   });
 
+  it("carry an app-mode trigger's auth into the routed action's reads and writes", async () => {
+    const a = action("caller", [
+      { id: "c1", kind: "updateRecord", table: "orders", match: { id: "1" }, values: {} },
+    ]);
+    config.actions.push(a);
+    const triggerAuth = { triggerId: "t1", grant: "g" };
+    expect(await runAction(a, ctx({ triggerAuth }))).toMatchObject({ ok: true });
+    const steps = (command: string) =>
+      db.calls
+        .filter((c) => c.command === command)
+        .map((c) => (c.args.trigger as { stepId: string; grant: string } | null)?.stepId);
+    expect(steps("read_table_page")).toEqual(["c1", "g3"]);
+    expect(steps("insert_row")).toEqual(["g1"]);
+    expect(steps("update_row")).toEqual(["g3"]);
+  });
+
   it("rejects the write when the action fails", async () => {
     config.actions = [
       action("guard", [{ id: "f", kind: "fail", message: "'Use the approval form'" }]),

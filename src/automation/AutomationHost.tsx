@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { useDocumentConfig } from "../lib/config-store";
+import { authorizer } from "../runtime/rbac";
 import { useShell } from "../shell/context";
 import { browserContext, currentAppState, DATABASE_CHANGED_EVENT } from "./context";
 import { installCustomActions } from "./custom";
@@ -28,7 +29,12 @@ export function AutomationHost() {
     const env: TriggerEnv = {
       getConfig: () => configRef.current,
       app: currentAppState,
-      context: (base) => browserContext(configRef.current, (m, t) => notifyRef.current(m, t), base),
+      // User-mode triggers and custom actions act as the user; app-mode triggers present their grant.
+      context: (base) =>
+        browserContext(configRef.current, (m, t) => notifyRef.current(m, t), {
+          ...base,
+          ...(!base.triggerAuth && { authorize: authorizer(configRef.current) }),
+        }),
     };
     const uninstallTriggers = installTriggers(env);
     const uninstallCustom = installCustomActions(env);

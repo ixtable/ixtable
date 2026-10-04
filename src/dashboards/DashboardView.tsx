@@ -167,6 +167,12 @@ function LiveDashboard({
           <p className="dash-muted">Choose a form.</p>
         );
       case "report":
+        if (c.reportId && !can(config, runtime.roleId, "report", c.reportId, "read"))
+          return (
+            <p className="dash-muted" role="alert">
+              You do not have access to this report.
+            </p>
+          );
         return c.reportId ? (
           <ReportPreview reportId={c.reportId} params={params} />
         ) : (

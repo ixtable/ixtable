@@ -1,5 +1,5 @@
 //! Conformance scenarios (continued): optimistic concurrency, schema changes, migrations.
-use super::conformance::{col, each_store, int, nv, people, rows, text};
+use super::conformance::{col, each_store, int, nv, people, rows, text, Harness};
 use super::{ChangeMode, CreateIndex};
 use crate::data::{AlterTable, CreateColumn, DataValue, LogicalType};
 use crate::migrations::{self, Migration};
@@ -281,5 +281,81 @@ fn migrations_apply_record_and_roll_back_transactionally() {
         h.reader.refresh().unwrap();
         assert!(h.reader.objects().unwrap().is_empty());
         assert_eq!(LogicalType::Integer, "integer".parse().unwrap());
+    });
+}
+
+#[test]
+fn altering_a_column_keeps_replaces_or_removes_its_check() {
+    each_store(|h| {
+        h.store
+            .create_table(&crate::data::CreateTable {
+                name: "stock".into(),
+                columns: vec![
+                    CreateColumn {
+                        primary_key_position: 1,
+                        nullable: false,
+                        ..col("id", "integer")
+                    },
+                    CreateColumn {
+                        check: Some("qty > 0".into()),
+                        ..col("qty", "integer")
+                    },
+                ],
+                ..Default::default()
+            })
+            .unwrap();
+        let mut next_id = 0;
+        let mut accepts = |h: &mut Harness, qty: i64| {
+            next_id += 1;
+            h.store
+                .insert("stock", &[nv("id", int(next_id)), nv("qty", int(qty))])
+                .is_ok()
+        };
+        let alter = |h: &mut Harness, check: Option<String>| {
+            h.store
+                .alter_table(
+                    "stock",
+                    &[AlterTable::AlterColumn {
+                        column: "qty".into(),
+                        definition: CreateColumn {
+                            nullable: false,
+                            check,
+                            ..col("qty", "integer")
+                        },
+                    }],
+                )
+                .unwrap();
+        };
+        // The designer sends the check back exactly as the store reports it.
+        let reported = h.store.table_def("stock").unwrap().checks[0]
+            .expression
+            .clone();
+        alter(h, Some(reported));
+        assert_eq!(h.store.table_def("stock").unwrap().checks.len(), 1);
+        assert!(!accepts(h, 0), "{}: check kept", h.name);
+        assert!(accepts(h, 1), "{}", h.name);
+        alter(h, Some("qty < 100".into()));
+        assert_eq!(h.store.table_def("stock").unwrap().checks.len(), 1);
+        assert!(!accepts(h, 100), "{}: check replaced", h.name);
+        assert!(accepts(h, 0), "{}: old check gone", h.name);
+        alter(h, None);
+        assert!(!accepts(h, 100), "{}: no check given keeps it", h.name);
+        alter(h, Some(String::new()));
+        assert!(h.store.table_def("stock").unwrap().checks.is_empty());
+        assert!(accepts(h, 500), "{}: check removed", h.name);
+        let staged = |check: &str| AlterTable::AlterColumn {
+            column: "qty".into(),
+            definition: CreateColumn {
+                nullable: false,
+                check: Some(check.into()),
+                ..col("qty", "integer")
+            },
+        };
+        h.store
+            .alter_table("stock", &[staged("qty < 1000"), staged("qty < 600")])
+            .unwrap_or_else(|e| panic!("{}: {e:?}", h.name));
+        assert_eq!(h.store.table_def("stock").unwrap().checks.len(), 1);
+        assert!(!accepts(h, 700), "{}: second staged check wins", h.name);
+        assert!(accepts(h, 599), "{}", h.name);
     });
 }

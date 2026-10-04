@@ -38,9 +38,9 @@ impl std::fmt::Display for AppError {
 impl From<archive::ArchiveError> for AppError {
     fn from(e: archive::ArchiveError) -> Self {
         let code = match &e {
-            archive::ArchiveError::Unsupported(_) | archive::ArchiveError::NewerFormat(_) => {
-                "UNSUPPORTED_VERSION"
-            }
+            archive::ArchiveError::Unsupported(_)
+            | archive::ArchiveError::NewerFormat(_)
+            | archive::ArchiveError::NewerConfig(_) => "UNSUPPORTED_VERSION",
             archive::ArchiveError::Corrupt(_) => "CORRUPT_PAYLOAD",
             archive::ArchiveError::Invalid(_) | archive::ArchiveError::Sql(_) => "INVALID_ARCHIVE",
             archive::ArchiveError::Io(x) if x.kind() == std::io::ErrorKind::NotFound => {
@@ -82,6 +82,10 @@ pub struct Session {
     save_lock: Arc<Mutex<()>>,
     /// OS advisory lock on `<workspace>.lock`, held while the session is open so other ixtable processes never treat the workspace as abandoned.
     pub(crate) workspace_lock: Option<crate::recovery::WorkspaceLock>,
+    /// Runtime role enforced at command entry points (see `authz`).
+    pub access: crate::authz::Access,
+    /// Tables the current role may read (see `authz::ReadableCache`).
+    pub(crate) authz_cache: crate::authz::ReadableCache,
 }
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -270,6 +274,8 @@ impl DocumentManager {
             config_revision: 0,
             save_lock: Arc::default(),
             workspace_lock,
+            access: Default::default(),
+            authz_cache: Default::default(),
         };
         let state = s.state();
         // Registered under the sessions lock so recovery listing never sees it as abandoned.
@@ -507,6 +513,7 @@ impl DocumentManager {
         }
         s.doc.config = c;
         s.config_revision += 1;
+        s.authz_cache.clear();
         self.touch(s);
         archive_io::write_config_files(&s.workspace, &s.doc.config)?;
         Ok(s.state())
@@ -574,6 +581,7 @@ impl DocumentManager {
                     .map(|(a, p)| (a, Payload::File(p)))
                     .collect(),
                 preserve_from: snap.origin.as_deref(),
+                preserve_copy: false,
             },
         );
         let _ = fs::remove_file(&data);
@@ -728,6 +736,7 @@ impl DocumentManager {
             .ok_or_else(|| AppError::new("NO_DOCUMENT", "No document is open"))?;
         let extracted = std::mem::replace(&mut s.workspace, installation.to_owned());
         s.reader = reader;
+        s.authz_cache.clear();
         let _ = fs::remove_dir_all(extracted);
         let _ = self.global.remove_recovery(&state.session_id);
         crate::installation::register_runtime(&state.session_id, runtime);
@@ -741,6 +750,8 @@ pub const READ_REFRESH_FAILED: &str = "READ_REFRESH_FAILED";
 /// write: it is surfaced as `lastError` (`READ_REFRESH_FAILED`) and cleared by the
 /// next successful refresh.
 pub(crate) fn refresh_after_write(s: &mut Session) {
+    // A write may have changed the schema (foreign keys feed `readable_tables`).
+    s.authz_cache.clear();
     match s.reader.refresh() {
         Ok(()) => {
             if s.last_error

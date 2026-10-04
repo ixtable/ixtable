@@ -296,7 +296,7 @@ it("Inventory: constraints, transactional transfers, and concurrency policies", 
     });
 
     await journey.step("Last-write-wins policy on movements accepts a stale edit", async () => {
-      const changed = await invoke<number>("update_row", {
+      const { changed } = await invoke<{ changed: number }>("update_row", {
         windowLabel: "main",
         table: "stock_movements",
         values: [{ column: "note", value: { type: "text", value: "Counted" } }],

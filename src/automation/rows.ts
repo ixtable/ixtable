@@ -3,6 +3,7 @@
  * with the identity and original values (`expected`) each write sends.
  */
 import { inspectTable, readTablePage } from "../lib/api";
+import type { TriggerStepAuth } from "../lib/records";
 import type { DataValue, DbColumn, Filter, NamedValue } from "../lib/types";
 import { logicalOf } from "../schema/logical";
 import { fromDataValue, rowToObject, toDataValue } from "./values";
@@ -37,13 +38,14 @@ const comparable = (columns: DbColumn[]) =>
 /**
  * Every row of `table` matching `criteria` (column → value; null matches NULL),
  * read page by page in identity order. Throws when none match or when more than
- * MAX_MATCHED_ROWS do.
+ * MAX_MATCHED_ROWS do. `trigger` authorizes the reads of an app-mode trigger step.
  */
 export async function matchRows(
   table: string,
   criteria: Record<string, unknown>,
+  trigger?: TriggerStepAuth,
 ): Promise<FoundRow[]> {
-  const schema = await inspectTable(table);
+  const schema = await inspectTable(table, trigger);
   const keep = comparable(schema.columns);
   const filters: Filter[] = Object.entries(criteria).map(([column, value]) =>
     value === null || value === undefined
@@ -52,7 +54,7 @@ export async function matchRows(
   );
   const found: FoundRow[] = [];
   for (let offset = 0; ; offset += MATCH_PAGE_SIZE) {
-    const page = await readTablePage(table, { filters, offset, limit: MATCH_PAGE_SIZE });
+    const page = await readTablePage(table, { filters, offset, limit: MATCH_PAGE_SIZE }, trigger);
     if (page.total > MAX_MATCHED_ROWS)
       throw new Error(
         `${page.total} ${table} rows match; one step can change at most ${MAX_MATCHED_ROWS}. Narrow the match.`,
@@ -81,9 +83,10 @@ export async function currentRow(
   table: string,
   record: Record<string, unknown> | null,
   snapshot?: Record<string, unknown> | null,
+  trigger?: TriggerStepAuth,
 ): Promise<FoundRow[]> {
   if (!record) throw new Error("There is no current record");
-  const schema = await inspectTable(table);
+  const schema = await inspectTable(table, trigger);
   const keys = keyColumns(schema.columns);
   if (keys.length)
     return matchRows(
@@ -95,6 +98,7 @@ export async function currentRow(
           return [k, record[k]];
         }),
       ),
+      trigger,
     );
   if (record.rowid === undefined || record.rowid === null)
     throw new Error(`Table ${table} has no primary key and the record has no rowid`);
@@ -116,9 +120,10 @@ export async function withKeys(
   table: string,
   values: Record<string, unknown>,
   identity: DataValue[],
+  trigger?: TriggerStepAuth,
 ) {
   try {
-    const keys = keyColumns((await inspectTable(table)).columns);
+    const keys = keyColumns((await inspectTable(table, trigger)).columns);
     const names = keys.length ? keys : ["rowid"];
     return {
       ...values,

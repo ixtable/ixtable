@@ -212,3 +212,189 @@ it("labels each staged change by store capability and previews rebuilds and drop
   expect(screen.queryByRole("dialog")).toBeNull();
   expect((await readPage("parts")).total).toBe(1);
 });
+
+it("keeps designer drafts through a metadata reload and previews renames and index drops", async () => {
+  const user = await renderNewDocument();
+  await createTable("parts", [
+    { name: "id", declaredType: "INTEGER", nullable: false, primaryKeyPosition: 1 },
+    { name: "label", declaredType: "TEXT" },
+  ]);
+  await invoke("create_index", {
+    windowLabel: "main",
+    spec: { name: "parts_label", table: "parts", columns: ["label"], unique: false },
+  });
+  await invoke("save_query", {
+    windowLabel: "main",
+    id: null,
+    name: "Labels",
+    sql: "SELECT label FROM parts",
+    filterState: null,
+  });
+  await refreshDatabase();
+  await user.click(await screen.findByRole("button", { name: /^parts\b/ }, LONG));
+  await user.click(await screen.findByRole("button", { name: "Design table" }, LONG));
+  await screen.findByRole("heading", { name: "Design parts" }, LONG);
+  expect(await screen.findByText(/SQLite record store\./, {}, LONG)).toBeInTheDocument();
+  const actions = within(screen.getByRole("region", { name: "Relationships" })).getByRole(
+    "combobox",
+    { name: "On delete" },
+  );
+  expect(
+    within(actions)
+      .getAllByRole("option")
+      .map((o) => o.textContent),
+  ).toEqual(["NO ACTION", "RESTRICT", "CASCADE", "SET NULL", "SET DEFAULT"]);
+
+  const heading = screen.getByRole("heading", { name: "Design parts" });
+  await user.type(screen.getByRole("textbox", { name: "Column label default" }), "'none'");
+  await refreshDatabase();
+  expect(screen.getByRole("heading", { name: "Design parts" })).toBe(heading);
+  expect(screen.getByRole("textbox", { name: "Column label default" })).toHaveValue("'none'");
+
+  const tableName = screen.getByRole("textbox", { name: "Table name" });
+  await user.clear(tableName);
+  await user.type(tableName, "items");
+  await user.click(screen.getByRole("button", { name: "Rename table" }));
+  const pending = screen.getByRole("region", { name: "Pending changes" });
+  await within(pending).findByText("Changes in place", {}, LONG);
+  await user.click(within(pending).getByRole("button", { name: "Apply changes" }));
+  const rename = await screen.findByRole("dialog", {}, LONG);
+  expect(within(rename).getByText("query “Labels”")).toBeInTheDocument();
+  expect(within(rename).getByText(/does not update definitions/)).toBeInTheDocument();
+  const confirmRename = within(rename).getByRole("button", { name: "Apply changes" });
+  expect(confirmRename).toBeDisabled();
+  await user.click(within(rename).getByRole("checkbox"));
+  expect(confirmRename).toBeEnabled();
+  await user.click(within(rename).getByRole("button", { name: "Cancel" }));
+  await user.click(within(pending).getByRole("button", { name: "Discard changes" }));
+
+  await user.click(screen.getByRole("button", { name: "Drop index parts_label" }));
+  const drop = await screen.findByRole("dialog", { name: "Drop index parts_label?" }, LONG);
+  expect(within(drop).getByRole("textbox", { name: "Generated SQL" })).toHaveValue(
+    'DROP INDEX "parts_label";',
+  );
+  const confirmDrop = within(drop).getByRole("button", { name: "Drop index" });
+  expect(confirmDrop).toBeDisabled();
+  await user.click(within(drop).getByRole("button", { name: "Cancel" }));
+  expect((await inspect("parts")).indexes).toHaveLength(1);
+  await user.click(screen.getByRole("button", { name: "Drop index parts_label" }));
+  const again = await screen.findByRole("dialog", { name: "Drop index parts_label?" }, LONG);
+  await user.click(within(again).getByRole("checkbox"));
+  await user.click(within(again).getByRole("button", { name: "Drop index" }));
+  await waitFor(async () => expect((await inspect("parts")).indexes).toEqual([]), LONG);
+  expect((await inspect("parts")).columns.map((c) => c.name)).toEqual(["id", "label"]);
+});
+
+it("creates a relationship from the diagram through the prefilled relationship editor", async () => {
+  const user = await renderNewDocument();
+  await createTable("parts", [
+    { name: "id", declaredType: "INTEGER", nullable: false, primaryKeyPosition: 1 },
+  ]);
+  await createTable("bins", [
+    { name: "id", declaredType: "INTEGER", nullable: false, primaryKeyPosition: 1 },
+    { name: "part", declaredType: "INTEGER" },
+  ]);
+  await refreshDatabase();
+  await user.click(await screen.findByRole("button", { name: "New relationship" }, LONG));
+  const editor = await screen.findByRole("dialog", { name: "New relationship" }, LONG);
+  await user.selectOptions(
+    within(editor).getByRole("combobox", { name: "Referencing table" }),
+    "bins",
+  );
+  await user.click(within(editor).getByRole("checkbox", { name: "Relationship columns: part" }));
+  await user.selectOptions(within(editor).getByRole("combobox", { name: "Target table" }), "parts");
+  await user.selectOptions(
+    within(editor).getByRole("combobox", { name: "Target column for part" }),
+    "id",
+  );
+  await user.selectOptions(within(editor).getByRole("combobox", { name: "On delete" }), "CASCADE");
+  await user.click(within(editor).getByRole("button", { name: "Preview relationship" }));
+  const preview = await screen.findByRole("dialog", { name: "Relate bins (part) to parts?" }, LONG);
+  await user.click(within(preview).getByRole("checkbox"));
+  await user.click(within(preview).getByRole("button", { name: "Create relationship" }));
+  await waitFor(async () => {
+    expect((await inspect("bins")).foreignKeys).toMatchObject([
+      { fromColumns: ["part"], targetTable: "parts", targetColumns: ["id"], onDelete: "CASCADE" },
+    ]);
+  }, LONG);
+  await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull(), LONG);
+});
+
+it("returns to the relationship editor with its choices when the preview is cancelled", async () => {
+  const user = await renderNewDocument();
+  await createTable("parts", [
+    { name: "id", declaredType: "INTEGER", nullable: false, primaryKeyPosition: 1 },
+  ]);
+  await createTable("bins", [
+    { name: "id", declaredType: "INTEGER", nullable: false, primaryKeyPosition: 1 },
+    { name: "part", declaredType: "INTEGER" },
+  ]);
+  await refreshDatabase();
+  await user.click(await screen.findByRole("button", { name: "New relationship" }, LONG));
+  let editor = await screen.findByRole("dialog", { name: "New relationship" }, LONG);
+  await user.selectOptions(
+    within(editor).getByRole("combobox", { name: "Referencing table" }),
+    "bins",
+  );
+  await user.click(within(editor).getByRole("checkbox", { name: "Relationship columns: part" }));
+  await user.selectOptions(within(editor).getByRole("combobox", { name: "Target table" }), "parts");
+  await user.selectOptions(
+    within(editor).getByRole("combobox", { name: "Target column for part" }),
+    "id",
+  );
+  await user.selectOptions(within(editor).getByRole("combobox", { name: "On delete" }), "CASCADE");
+  await user.click(within(editor).getByRole("button", { name: "Preview relationship" }));
+  const preview = await screen.findByRole("dialog", { name: "Relate bins (part) to parts?" }, LONG);
+  await user.click(within(preview).getByRole("button", { name: "Cancel" }));
+  editor = await screen.findByRole("dialog", { name: "New relationship" }, LONG);
+  expect(
+    within(editor).getByRole("checkbox", { name: "Relationship columns: part" }),
+  ).toBeChecked();
+  expect(within(editor).getByRole("combobox", { name: "Target table" })).toHaveValue("parts");
+  expect(within(editor).getByRole("combobox", { name: "On delete" })).toHaveValue("CASCADE");
+  await user.click(within(editor).getByRole("button", { name: "Cancel" }));
+  await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull(), LONG);
+});
+
+it("keeps an existing column check when the column is edited in the designer", async () => {
+  const user = await renderNewDocument();
+  await createTable("stock", [
+    { name: "id", declaredType: "INTEGER", nullable: false, primaryKeyPosition: 1 },
+    { name: "qty", declaredType: "INTEGER", check: "qty > 0" },
+  ]);
+  await refreshDatabase();
+  await user.click(await screen.findByRole("button", { name: /^stock\b/ }, LONG));
+  await user.click(await screen.findByRole("button", { name: "Design table" }, LONG));
+  await screen.findByRole("heading", { name: "Design stock" }, LONG);
+  expect(screen.getByRole("textbox", { name: "Column qty check" })).toHaveValue("qty > 0");
+  await user.click(screen.getByRole("checkbox", { name: "Column qty required" }));
+  await user.click(screen.getByRole("button", { name: "Stage changes to qty" }));
+  const pending = screen.getByRole("region", { name: "Pending changes" });
+  await user.click(within(pending).getByRole("button", { name: "Apply changes" }));
+  const dialog = await screen.findByRole("dialog", {}, LONG);
+  await user.click(within(dialog).getByRole("checkbox"));
+  await user.click(within(dialog).getByRole("button", { name: "Apply changes" }));
+  await waitFor(async () => {
+    const schema = await inspect("stock");
+    expect(schema.columns.find((c) => c.name === "qty")?.nullable).toBe(false);
+    expect(schema.checks).toMatchObject([{ expression: "qty > 0" }]);
+  }, LONG);
+
+  await user.click(await screen.findByRole("button", { name: "Design table" }, LONG));
+  const check = await screen.findByRole("textbox", { name: "Column qty check" }, LONG);
+  expect(check).toHaveValue("qty > 0");
+  await user.clear(check);
+  await user.type(check, "qty < 10");
+  await user.click(screen.getByRole("button", { name: "Stage changes to qty" }));
+  await user.click(
+    within(screen.getByRole("region", { name: "Pending changes" })).getByRole("button", {
+      name: "Apply changes",
+    }),
+  );
+  const replace = await screen.findByRole("dialog", {}, LONG);
+  await user.click(within(replace).getByRole("checkbox"));
+  await user.click(within(replace).getByRole("button", { name: "Apply changes" }));
+  await waitFor(async () => {
+    expect((await inspect("stock")).checks).toMatchObject([{ expression: "qty < 10" }]);
+  }, LONG);
+});

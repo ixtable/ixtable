@@ -518,6 +518,32 @@ impl JobStore {
         Ok(rows)
     }
 
+    /// The job `id` of queue `document_id` while it runs under `lease_token`
+    /// with an unexpired lease (trigger writes made on the job's behalf).
+    pub fn active_lease(
+        &self,
+        document_id: &str,
+        id: &str,
+        lease_token: &str,
+        now: DateTime<Utc>,
+    ) -> Result<Job, AppError> {
+        let job = Self::get(&self.connection()?, document_id, id)?;
+        let live = job.status == "running"
+            && job.lease_token.as_deref() == Some(lease_token)
+            && job
+                .lease_until
+                .as_deref()
+                .is_some_and(|until| until > ts(now).as_str());
+        if live {
+            Ok(job)
+        } else {
+            Err(AppError::new(
+                "STALE_LEASE",
+                format!("Job {id} is not running under this lease"),
+            ))
+        }
+    }
+
     /// Crash recovery: running jobs whose lease expired go back to queued (or to
     /// failed when they have no attempts left). Returns how many were recovered.
     pub fn recover_expired(&self, now: DateTime<Utc>) -> Result<usize, AppError> {
@@ -619,7 +645,7 @@ pub fn store_key(session_id: &str, document_id: &str) -> String {
     }
 }
 
-fn document(window: &str) -> Result<String, AppError> {
+pub fn document(window: &str) -> Result<String, AppError> {
     let state = crate::manager()?.state(window)?;
     Ok(store_key(&state.session_id, &state.document_id))
 }
@@ -818,6 +844,28 @@ mod tests {
             .iter()
             .all(|a| a.ok == Some(false) && a.finished_at.is_some()));
         assert_eq!(backoff_delay(1000, 30), MAX_BACKOFF_MS);
+    }
+
+    #[test]
+    fn active_lease_accepts_only_the_current_unexpired_lease() {
+        let s = JobStore::open(&temp()).unwrap();
+        let j = s.enqueue("doc", &req("k"), t0()).unwrap();
+        assert!(s.active_lease("doc", &j.id, "1:x", t0()).is_err());
+        let claimed = s.claim_next("doc", t0(), 60_000).unwrap().unwrap();
+        let token = claimed.lease_token.clone().unwrap();
+        assert_eq!(
+            s.active_lease("doc", &j.id, &token, t0())
+                .unwrap()
+                .trigger_id,
+            "t1"
+        );
+        assert!(s.active_lease("doc", &j.id, "1:forged", t0()).is_err());
+        assert!(s.active_lease("other", &j.id, &token, t0()).is_err());
+        let late = t0() + Duration::milliseconds(61_000);
+        assert!(s.active_lease("doc", &j.id, &token, late).is_err());
+        s.complete("doc", &j.id, &token, &Value::Null, t0())
+            .unwrap();
+        assert!(s.active_lease("doc", &j.id, &token, t0()).is_err());
     }
 
     #[test]

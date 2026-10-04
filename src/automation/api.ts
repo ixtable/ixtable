@@ -38,3 +38,7 @@ export const notifyJobsChanged = () => {
 /** True when the open document's queue has a queued job (due now or waiting for a retry). */
 export const hasQueuedJobs = async () =>
   (await listJobs({ status: "queued", limit: 1 })).length > 0;
+
+/** Ends the single-use grant of a finished app-mode sync trigger run. */
+export const releaseTriggerGrant = (grant: string) =>
+  call<void>("release_trigger_grant", { grant });

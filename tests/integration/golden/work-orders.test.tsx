@@ -405,6 +405,13 @@ it("Work orders: v1 bundle, Runtime record, then update to v2 keeps the record a
       const bar = await screen.findByRole("region", { name: "Runtime bundle" }, LONG);
       dialogMock.open.mockResolvedValueOnce(v2);
       await user.click(within(bar).getByRole("button", { name: "Check for update…" }));
+      const confirm = await screen.findByRole("dialog", { name: /Update .* to 2.0.0\?/ }, LONG);
+      const pending = within(within(confirm).getByRole("list", { name: "Migrations" }));
+      expect(pending.getAllByRole("listitem").map((li) => li.firstChild?.textContent)).toEqual([
+        "002 Add work-order due dates",
+      ]);
+      expect(within(confirm).getByText(/ALTER TABLE work_orders/i)).toBeInTheDocument();
+      await user.click(within(confirm).getByRole("button", { name: "Apply update" }));
       await screen.findByText(/Updated to version 2.0.0. Your records were kept./, {}, LONG);
     });
 

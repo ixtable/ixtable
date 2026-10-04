@@ -126,6 +126,7 @@ fn format_one_archive_opens_and_upgrades_on_save_preserving_unknown_tables() {
             data: Payload::File(&data),
             attachments: vec![(&extracted.attachments[0], Payload::File(&content))],
             preserve_from: Some(&path),
+            preserve_copy: false,
         },
     )
     .unwrap();
@@ -253,6 +254,7 @@ fn interrupted_or_failed_writes_leave_the_last_valid_archive() {
             data: Payload::Bytes(&doc.data),
             attachments: vec![(&doc.attachments[0], Payload::File(&missing))],
             preserve_from: Some(&path),
+            preserve_copy: false,
         },
     );
     assert!(failed.is_err());
@@ -266,6 +268,7 @@ fn interrupted_or_failed_writes_leave_the_last_valid_archive() {
             data: Payload::Bytes(&doc.data),
             attachments: vec![(&tampered, Payload::Bytes(b"original"))],
             preserve_from: None,
+            preserve_copy: false,
         },
     );
     assert!(matches!(corrupt, Err(ArchiveError::Corrupt(_))));
@@ -291,6 +294,7 @@ fn unknown_tables_are_not_copied_from_another_document() {
             data: Payload::Bytes(&mine.data),
             attachments: vec![],
             preserve_from: Some(&other),
+            preserve_copy: false,
         },
     )
     .unwrap();
@@ -382,6 +386,7 @@ fn hostile_schema_sql_of_unknown_tables_is_never_executed() {
             data: Payload::Bytes(&doc.data),
             attachments: vec![],
             preserve_from: Some(&path),
+            preserve_copy: false,
         },
     )
     .unwrap();

@@ -7,12 +7,19 @@
  * rollback-mode actions only undo their own writes.
  * Async triggers enqueue a job on the durable queue (jobs.rs); the worker runs it.
  * Writes carry their trigger depth; a chain deeper than MAX_TRIGGER_DEPTH fails.
+ *
+ * Execution identity (`Trigger.runAs`): app-mode triggers (the default) run with
+ * the grant Rust returned for the initiating write (sync) or their job lease
+ * (async), limited to the writes they declare; user-mode triggers run under the
+ * signed-in user's role, and Rust refuses the initiating write up front when the
+ * role could not run them.
  */
 import { evaluate, evaluateBoolean } from "../expr";
 import { inspectTable, readTablePage } from "../lib/api";
-import { type RecordWrite, registerRecordHook } from "../lib/records";
+import { type RecordWrite, registerRecordHook, type WriteExtra } from "../lib/records";
+import { activeRoleId } from "../runtime/rbac";
 import type { DataValue, DocumentConfig, Filter } from "../lib/types";
-import { enqueueJob, notifyJobsChanged } from "./api";
+import { enqueueJob, notifyJobsChanged, releaseTriggerGrant } from "./api";
 import { type ActionContext, runAction } from "./runner";
 import type { Trigger, TriggerEvent } from "./types";
 import { fromDataValue, namedToObject, rowToObject, stableHash, toDataValue } from "./values";
@@ -27,11 +34,16 @@ export interface JobPayload {
   old: Record<string, unknown> | null;
   identity: unknown[];
   triggerDepth: number;
+  /** Role active when the job was created (null: developer); the worker never exceeds it. */
+  roleId?: string | null;
 }
 
 export interface TriggerEnv {
   getConfig(): DocumentConfig;
-  /** Builds the interactive context sync trigger actions run with. */
+  /**
+   * Builds the interactive context sync trigger and custom actions run with.
+   * `triggerAuth` is set for app-mode triggers: the context must then skip role checks.
+   */
   context(base: Partial<ActionContext>): ActionContext;
   app?(): Record<string, unknown>;
 }
@@ -52,8 +64,8 @@ export function installTriggers(env: TriggerEnv): () => void {
       if (!enabledFor(env.getConfig(), write.table, "updated").length) return;
       previous.set(write, await readRow(write.table, write.identity));
     },
-    after: (write, result) =>
-      dispatchTriggers(write, result, env, previous.get(write) ?? undefined),
+    after: (write, result, extra) =>
+      dispatchTriggers(write, result, env, previous.get(write) ?? undefined, extra),
   });
 }
 
@@ -77,6 +89,23 @@ export async function dispatchTriggers(
   result: unknown,
   env: TriggerEnv,
   oldRow?: Record<string, unknown>,
+  extra?: WriteExtra,
+): Promise<void> {
+  const grant = extra?.triggerGrant;
+  try {
+    await dispatch(write, result, env, oldRow, grant);
+  } finally {
+    // The grant is single use: it ends with this trigger run.
+    if (grant) await releaseTriggerGrant(grant).catch(() => undefined);
+  }
+}
+
+async function dispatch(
+  write: RecordWrite,
+  result: unknown,
+  env: TriggerEnv,
+  oldRow: Record<string, unknown> | undefined,
+  grant: string | undefined,
 ): Promise<void> {
   if (write.operation === "delete") return;
   const event: TriggerEvent = write.operation === "insert" ? "created" : "updated";
@@ -111,6 +140,7 @@ export async function dispatchTriggers(
         old,
         identity: plainIdentity,
         triggerDepth: depth,
+        roleId: activeRoleId(),
       };
       await enqueueJob({
         triggerId: trigger.id,
@@ -123,9 +153,15 @@ export async function dispatchTriggers(
       notifyJobsChanged();
       continue;
     }
+    const asApp = trigger.runAs !== "user";
     const outcome = await runAction(
       trigger.actionId,
-      env.context({ record, old: old ?? undefined, triggerDepth: depth }),
+      env.context({
+        record,
+        old: old ?? undefined,
+        triggerDepth: depth,
+        ...(asApp && { triggerAuth: { triggerId: trigger.id, grant: grant ?? "" } }),
+      }),
     );
     if (!outcome.ok)
       throw new Error(`Trigger "${trigger.name}" failed: ${outcome.error ?? "unknown error"}`);

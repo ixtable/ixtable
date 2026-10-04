@@ -80,7 +80,7 @@ export function createFakeBackend() {
       const problem = t.reject?.(row);
       if (problem) throw { code: "CONSTRAINT_VIOLATION", message: problem };
       t.rows.push(row);
-      return keyOf(t, row).map(toValue);
+      return { changed: 1, identity: keyOf(t, row).map(toValue) };
     },
     update_row: ({ table: name, values, identity, expected }) => {
       const t = table(name as string);
@@ -92,7 +92,7 @@ export function createFakeBackend() {
       const problem = t.reject?.(next);
       if (problem) throw { code: "CONSTRAINT_VIOLATION", message: problem };
       Object.assign(row, next);
-      return 1;
+      return { changed: 1 };
     },
     delete_row: ({ table: name, identity, expected }) => {
       const t = table(name as string);
@@ -100,7 +100,7 @@ export function createFakeBackend() {
       if (!row) throw { code: "STALE_ROW", message: "expected one row" };
       checkExpected(row, expected);
       t.rows.splice(t.rows.indexOf(row), 1);
-      return 1;
+      return { changed: 1 };
     },
     execute_write_batch: ({ ops }) => {
       const snapshot = Object.fromEntries(
@@ -110,10 +110,9 @@ export function createFakeBackend() {
         ]),
       );
       try {
-        return (ops as Array<Record<string, unknown>>).map(({ op, ...args }) => {
-          const result = handlers[`${op}_row`](args);
-          return op === "insert" ? { changed: 1, identity: result } : { changed: result as number };
-        });
+        return (ops as Array<Record<string, unknown>>).map(({ op, ...args }) =>
+          handlers[`${op}_row`](args),
+        );
       } catch (error) {
         for (const [name, saved] of Object.entries(snapshot)) Object.assign(tables[name], saved);
         throw error;

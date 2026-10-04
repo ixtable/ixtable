@@ -1,5 +1,5 @@
 import { createHash, generateKeyPairSync, sign } from "node:crypto";
-import { readFileSync, readdirSync, statSync } from "node:fs";
+import { existsSync, readFileSync, readdirSync, statSync, writeFileSync } from "node:fs";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import type { AddressInfo } from "node:net";
 import { join } from "node:path";
@@ -29,6 +29,7 @@ const cloud = {
   version: "1.0.0",
   versionId: "v1",
   manifestPatch: {} as Json,
+  owner: false,
   signer: privateKey,
   servedBytes: null as Buffer | null,
   grant: null as Json | null,
@@ -52,11 +53,19 @@ function manifestFor(body: Json) {
     userId: USER_ID,
     roleId: ROLE_ID,
     roleName: "Field worker",
-    rolePermissions: { navigation: [], objects: [], actions: [] },
+    rolePermissions: {
+      navigation: [],
+      objects: [
+        { kind: "table", id: "notes", read: true, create: true },
+        { kind: "table", id: "tags", read: true },
+      ],
+      actions: [],
+    },
     installationId: body.installationId,
     fingerprint: "a".repeat(64),
     issuedAt: new Date(now).toISOString(),
     expiresAt: new Date(now + 3_600_000).toISOString(),
+    ...(cloud.owner && { owner: true, roleId: null }),
   };
   const signed = canonical(manifest);
   const signature = sign(null, Buffer.from(signed), cloud.signer).toString("base64");
@@ -227,6 +236,16 @@ it("installs a signed cloud bundle, rejects tampering, and updates keeping recor
     table: "notes",
     values: [{ column: "body", value: value("text", "written at runtime") }],
   });
+  expect(await failure(call("execute_read_query", { sql: "SELECT 1" }))).toMatch(/FORBIDDEN/);
+  expect(
+    await failure(
+      call("delete_row", {
+        table: "notes",
+        identity: [value("integer", 1)],
+        expected: [{ column: "body", value: value("text", "written at runtime") }],
+      }),
+    ),
+  ).toMatch(/FORBIDDEN/);
 
   cloud.archive = v2;
   cloud.version = "1.1.0";
@@ -250,7 +269,14 @@ it("installs a signed cloud bundle, rejects tampering, and updates keeping recor
   expect(updated.bundleVersion).toBe("1.1.0");
   expect(await notes()).toEqual(["written at runtime"]);
   const tables = await call<{ name: string }[]>("list_database_objects");
-  expect(tables.map((t) => t.name)).toContain("tags");
+  expect(tables.map((t) => t.name).sort()).toEqual(["notes", "tags"]);
+  expect(await failure(call("reset_runtime_installation_data", { confirmed: true }))).toMatch(
+    /FORBIDDEN/,
+  );
+  expect(await call<Json>("runtime_installation_info")).toMatchObject({
+    version: "1.1.0",
+    appliedMigrations: ["Add tags"],
+  });
   const [installed] = await call<Json[]>("cloud_installed_apps");
   expect(installed).toMatchObject({ appId: APP_ID, version: "1.1.0", versionId: "v2" });
 
@@ -259,6 +285,38 @@ it("installs a signed cloud bundle, rejects tampering, and updates keeping recor
   expect(offline.bundleVersion).toBe("1.1.0");
   expect(await notes()).toEqual(["written at runtime"]);
   await call("close_document", { force: true });
+
+  const appDir = join(STATE, "data", "cloud-installations", APP_ID);
+  const docDir = readdirSync(appDir).find((d) => existsSync(join(appDir, d, "cloud.json")))!;
+  const recordPath = join(appDir, docDir, "cloud.json");
+  const record = JSON.parse(readFileSync(recordPath, "utf8"));
+  const signed = JSON.parse(record.signedManifest);
+  record.signedManifest = canonical({ ...signed, owner: true, roleId: null });
+  record.manifest = { ...record.manifest, owner: true, roleId: null };
+  writeFileSync(recordPath, JSON.stringify(record));
+  expect(await failure(call("cloud_open_installed", { appId: APP_ID }))).toMatch(
+    /INSTALLATION_TAMPERED/,
+  );
+}, 120_000);
+
+it("keeps the owner's access after resetting installation data", async () => {
+  cloud.archive = await archive("owner.ixt");
+  cloud.version = "1.5.0";
+  cloud.versionId = "v-owner";
+  cloud.owner = true;
+  try {
+    await install();
+    await call("insert_row", {
+      table: "notes",
+      values: [{ column: "body", value: value("text", "before reset") }],
+    });
+    await call("reset_runtime_installation_data", { confirmed: true });
+    expect(await notes()).toEqual([]);
+    expect(await failure(call("execute_read_query", { sql: "SELECT 1" }))).toBe("installed");
+  } finally {
+    cloud.owner = false;
+    await call("close_document", { force: true }).catch(() => undefined);
+  }
 }, 120_000);
 
 it("delivers a PostgreSQL credential by envelope and key grant, memory only", async () => {

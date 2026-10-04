@@ -20,6 +20,10 @@ export type FieldProps = {
   /** Read-only display (detail mode, disabled by `enabledWhen`, or no permission). */
   readOnly: boolean;
   error?: string;
+  /** Multi-column relationship: current value of every key column (by form column). */
+  keyValues?: Record<string, unknown>;
+  /** Multi-column relationship: writes every key column of the chosen record. */
+  onKeys?: (values: Record<string, unknown>) => void;
 };
 
 const dateInput = (value: unknown, kind: string) => {
@@ -33,7 +37,16 @@ const dateInput = (value: unknown, kind: string) => {
 const numberValue = (raw: string) => (raw === "" ? null : Number(raw));
 
 /** Label + described input for one bound control. Keyboard accessible, labelled, with error text. */
-export function Field({ control, value, onChange, onBlur, readOnly, error }: FieldProps) {
+export function Field({
+  control,
+  value,
+  onChange,
+  onBlur,
+  readOnly,
+  error,
+  keyValues,
+  onKeys,
+}: FieldProps) {
   const id = useId();
   const errorId = `${id}-error`;
   const required = control.validation?.required ?? false;
@@ -106,6 +119,8 @@ export function Field({ control, value, onChange, onBlur, readOnly, error }: Fie
           value={value}
           onChange={onChange}
           readOnly={readOnly}
+          keyValues={keyValues}
+          onKeys={onKeys}
         />
       );
       break;
@@ -189,20 +204,34 @@ function SelectInput({ control, value, onChange, ...rest }: InputProps) {
   );
 }
 
-/** Foreign-key lookup: searchable list of the target table's display column, read via DuckDB. */
+/**
+ * Foreign-key lookup: searchable list of the target table's display column, read via DuckDB.
+ * A multi-column key matches and writes every key column of the chosen record.
+ */
 function RelationshipInput({
   control,
   value,
   onChange,
   readOnly,
+  keyValues,
+  onKeys,
   ...rest
-}: InputProps & { readOnly: boolean }) {
+}: InputProps & Pick<FieldProps, "keyValues" | "onKeys"> & { readOnly: boolean }) {
   const relationship = control.relationship;
+  const pairs = relationship?.keys && relationship.keys.length > 1 ? relationship.keys : null;
+  // The stored key: the bound value, or target column -> value for a multi-column key.
+  const key: unknown = pairs
+    ? Object.fromEntries(pairs.map((pair) => [pair.target, keyValues?.[pair.column] ?? null]))
+    : value;
+  const keySignature = pairs ? JSON.stringify(key) : value;
+  const hasValue = pairs
+    ? pairs.every((pair) => keyValues?.[pair.column] != null && keyValues[pair.column] !== "")
+    : value != null && value !== "";
   const [search, setSearch] = useState("");
   const [choices, setChoices] = useState<Choice[]>([]);
   // Starts from the last label shown for this key, so a reload never blanks the field.
   const [current, setCurrent] = useState(() =>
-    relationship ? (cachedRelationshipLabel(relationship, value) ?? "") : "",
+    relationship ? (cachedRelationshipLabel(relationship, key) ?? "") : "",
   );
   useEffect(() => {
     if (!relationship || readOnly) return;
@@ -220,21 +249,33 @@ function RelationshipInput({
       clearTimeout(timer);
     };
   }, [relationship, search, readOnly]);
+  const composite = !!pairs;
   useEffect(() => {
     if (!relationship) return;
     let live = true;
-    const cached = cachedRelationshipLabel(relationship, value);
+    const stored: unknown = composite ? JSON.parse(keySignature as string) : keySignature;
+    const cached = cachedRelationshipLabel(relationship, stored);
     if (cached !== undefined) setCurrent(cached);
-    relationshipLabel(relationship, value)
+    relationshipLabel(relationship, stored)
       .then((label) => live && setCurrent(label))
-      .catch(() => live && setCurrent(String(value ?? "")));
+      .catch(() => live && setCurrent(composite ? "" : String(stored ?? "")));
     return () => {
       live = false;
     };
-  }, [relationship, value]);
+  }, [relationship, composite, keySignature]);
   if (!relationship) return <input {...rest} type="text" value={String(value ?? "")} readOnly />;
   if (readOnly) return <input {...rest} type="text" value={current} readOnly />;
-  const index = choices.findIndex((choice) => sameValue(choice.value, value));
+  const index = pairs
+    ? choices.findIndex((choice) =>
+        pairs.every((pair) => sameValue(choice.record?.[pair.target], keyValues?.[pair.column])),
+      )
+    : choices.findIndex((choice) => sameValue(choice.value, value));
+  const choose = (choice: Choice | undefined) => {
+    if (!pairs) return onChange(choice ? choice.value : null);
+    onKeys?.(
+      Object.fromEntries(pairs.map((pair) => [pair.column, choice?.record?.[pair.target] ?? null])),
+    );
+  };
   return (
     <div className="rt-lookup">
       <input
@@ -246,13 +287,13 @@ function RelationshipInput({
       />
       <select
         {...rest}
-        value={index >= 0 ? String(index) : value == null || value === "" ? "" : "__current"}
+        value={index >= 0 ? String(index) : hasValue ? "__current" : ""}
         onChange={(e) =>
-          onChange(e.target.value === "" ? null : choices[Number(e.target.value)]?.value)
+          choose(e.target.value === "" ? undefined : choices[Number(e.target.value)])
         }
       >
         <option value="">—</option>
-        {index < 0 && value != null && value !== "" && <option value="__current">{current}</option>}
+        {index < 0 && hasValue && <option value="__current">{current}</option>}
         {choices.map((choice, i) => (
           <option key={i} value={String(i)}>
             {choice.label}

@@ -34,6 +34,8 @@ import {
   insertRecord,
   type RecordWrite,
   type RecordWriteMeta,
+  type TriggerAuth,
+  type TriggerStepAuth,
   updateRecord,
   writeRecordBatch,
 } from "../lib/records";
@@ -68,6 +70,11 @@ export interface ActionContext {
   refresh?(): void;
   /** Previous values of `record` (update triggers). */
   old?: Record<string, unknown>;
+  /**
+   * Set when an app-mode trigger runs this action: record steps present it to Rust
+   * (with their step id) instead of the user's role.
+   */
+  triggerAuth?: TriggerAuth;
   /** Trigger nesting depth of this run; writes carry it so triggers can stop recursion. */
   triggerDepth?: number;
   /** Clock for today()/now(); defaults to the current time. */
@@ -249,11 +256,18 @@ function evalMap(map: ValueMap | undefined, frame: Frame): Record<string, unknow
 function authorize(frame: Frame, kind: string, id: string, op: string) {
   if (frame.ctx.authorize && !frame.ctx.authorize(kind, id, op)) throw new Error("Not permitted");
 }
-const writeMeta = (frame: Frame, extra: RecordWriteMeta = {}): RecordWriteMeta => ({
-  triggerDepth: frame.ctx.triggerDepth ?? 0,
-  ...(frame.ctx.directWrites && { direct: true }),
-  ...extra,
-});
+/** An app-mode trigger's proof for one step's writes and lookups (src-tauri/src/trigger_auth.rs). */
+const stepAuth = (frame: Frame, step: Step): TriggerStepAuth | undefined =>
+  frame.ctx.triggerAuth && { ...frame.ctx.triggerAuth, stepId: step.id };
+const writeMeta = (frame: Frame, step: Step, extra: RecordWriteMeta = {}): RecordWriteMeta => {
+  const trigger = stepAuth(frame, step);
+  return {
+    triggerDepth: frame.ctx.triggerDepth ?? 0,
+    ...(frame.ctx.directWrites && { direct: true }),
+    ...extra,
+    ...(trigger && { trigger }),
+  };
+};
 const lowerFirst = (text: string) => text.charAt(0).toLowerCase() + text.slice(1);
 /** Runs a direct (non-transactional) write; a committed write counts even if a trigger failed. */
 async function direct(frame: Frame, run: () => Promise<unknown>) {
@@ -306,25 +320,31 @@ async function runStep(step: Step, frame: Frame, path: string): Promise<void> {
       const values = evalMap(step.values, frame);
       const named = toNamedValues(values);
       if (frame.tx) {
-        frame.tx.writes.push(write("insert", step.table, named, null, writeMeta(frame)));
+        frame.tx.writes.push(write("insert", step.table, named, null, writeMeta(frame, step)));
         if (step.storeAs) scope.results[step.storeAs] = values;
         return;
       }
       let identity: DataValue[] = [];
       await direct(frame, async () => {
-        identity = await insertRecord(step.table, named, writeMeta(frame));
+        identity = await insertRecord(step.table, named, writeMeta(frame, step));
       });
-      if (step.storeAs) scope.results[step.storeAs] = await withKeys(step.table, values, identity);
+      if (step.storeAs)
+        scope.results[step.storeAs] = await withKeys(
+          step.table,
+          values,
+          identity,
+          stepAuth(frame, step),
+        );
       return;
     }
     case "updateRecord": {
       authorize(frame, "table", step.table, "update");
-      const rows = await findRows(step.table, step.match, frame);
+      const rows = await findRows(step.table, step.match, frame, stepAuth(frame, step));
       const values = evalMap(step.values, frame);
       const named = toNamedValues(values);
       const custom = routedTo(frame, step.table);
       for (const row of rows) {
-        const meta = writeMeta(frame, { old: row.object, expected: row.expected });
+        const meta = writeMeta(frame, step, { old: row.object, expected: row.expected });
         if (custom)
           await runCustom(
             custom,
@@ -352,10 +372,10 @@ async function runStep(step: Step, frame: Frame, path: string): Promise<void> {
     }
     case "deleteRecord": {
       authorize(frame, "table", step.table, "delete");
-      const rows = await findRows(step.table, step.match, frame);
+      const rows = await findRows(step.table, step.match, frame, stepAuth(frame, step));
       const custom = routedTo(frame, step.table);
       for (const row of rows) {
-        const meta = writeMeta(frame, { old: row.object, expected: row.expected });
+        const meta = writeMeta(frame, step, { old: row.object, expected: row.expected });
         if (custom)
           await runCustom(
             custom,
@@ -485,18 +505,24 @@ function exists(config: DocumentConfig, kind: string, id: string) {
     throw new Error(`The ${kind} ${id} does not exist`);
 }
 
-async function findRows(table: string, match: MatchSpec, frame: Frame): Promise<FoundRow[]> {
+async function findRows(
+  table: string,
+  match: MatchSpec,
+  frame: Frame,
+  trigger?: TriggerStepAuth,
+): Promise<FoundRow[]> {
   let rows: FoundRow[];
   if (match === "current")
     rows = await currentRow(
       table,
       frame.scope.record as Record<string, unknown> | null,
       frame.ctx.snapshot,
+      trigger,
     );
   else {
     const criteria = evalMap(match, frame);
     if (!Object.keys(criteria).length) throw new Error("Match has no columns");
-    rows = await matchRows(table, criteria);
+    rows = await matchRows(table, criteria, trigger);
   }
   return rows.map((row) => {
     const known = frame.seen.get(rowKey(table, row.identity));

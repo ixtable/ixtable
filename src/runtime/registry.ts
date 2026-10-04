@@ -1,5 +1,5 @@
 import type { DesignForm } from "../design/schema";
-import { generateCrudForms } from "../design/generate";
+import { type GenerateOptions, generateCrudForms } from "../design/generate";
 import type { DocumentConfig, TableSchema } from "../lib/types";
 
 /** Forms generated in memory (table pages, related lists without a form). Never persisted. */
@@ -18,11 +18,11 @@ export const isDesignedForm = (config: DocumentConfig, form: DesignForm) =>
  * Generated list + detail forms for a table, built with the same generator as
  * "Generate form from table" and cached per table schema.
  */
-export function tableForms(schema: TableSchema, children: TableSchema[] = []) {
-  const signature = JSON.stringify([schema, children.map((c) => c.name)]);
+export function tableForms(schema: TableSchema, options: GenerateOptions = {}) {
+  const signature = JSON.stringify([schema, options.children ?? [], options.targets ?? {}]);
   const hit = byTable.get(schema.name);
   if (hit && hit.signature === signature) return hit;
-  const { list, detail } = generateCrudForms(schema, { children });
+  const { list, detail } = generateCrudForms(schema, options);
   ephemeral.set(list.id, list);
   ephemeral.set(detail.id, detail);
   const entry = { list, detail, signature };

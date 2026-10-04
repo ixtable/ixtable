@@ -4,7 +4,7 @@ use super::{visit, Visitor};
 use crate::archive::{ArchiveDocument, ArchiveError, ArchiveMetadata, Attachment, DocumentConfig};
 use std::{
     fs::{self, File},
-    io,
+    io::{self, Write},
     path::{Path, PathBuf},
 };
 
@@ -35,32 +35,59 @@ pub fn asset_content(work: &Path, id: &str) -> PathBuf {
     asset_dir(work, id).join("content")
 }
 
-/// Writes `document.json` and `config.yaml` for a working session.
+/// Replaces `path` atomically: writes a sibling temp file, fsyncs it, renames it
+/// over `path`, then fsyncs the directory (where supported). A crash leaves
+/// either the old or the new content, never a truncated file.
+pub fn write_atomic(path: &Path, bytes: &[u8]) -> io::Result<()> {
+    let dir = path.parent().unwrap_or(Path::new("."));
+    let name = path.file_name().unwrap_or_default().to_string_lossy();
+    let tmp = dir.join(format!(".{name}.{}.tmp", uuid::Uuid::new_v4()));
+    let result = (|| {
+        let mut f = File::create(&tmp)?;
+        f.write_all(bytes)?;
+        f.sync_all()?;
+        drop(f);
+        fs::rename(&tmp, path)
+    })();
+    if result.is_err() {
+        let _ = fs::remove_file(&tmp);
+    }
+    result?;
+    // Directory fsync makes the rename durable; Windows cannot open directories.
+    #[cfg(unix)]
+    if let Ok(d) = File::open(dir) {
+        let _ = d.sync_all();
+    }
+    Ok(())
+}
+
+/// Writes `document.json` and `config.yaml` for a working session, each atomically.
+/// Recovery reads `document.json` and falls back to `config.yaml`.
 pub fn write_config_files(work: &Path, config: &DocumentConfig) -> Result<(), ArchiveError> {
-    fs::write(
-        work.join("document.json"),
-        serde_json::to_vec_pretty(config).map_err(|e| ArchiveError::Invalid(e.to_string()))?,
+    write_atomic(
+        &work.join("document.json"),
+        &serde_json::to_vec_pretty(config).map_err(|e| ArchiveError::Invalid(e.to_string()))?,
     )?;
-    fs::write(
-        work.join("config.yaml"),
-        crate::archive::document_config_yaml(config)?,
+    write_atomic(
+        &work.join("config.yaml"),
+        crate::archive::document_config_yaml(config)?.as_bytes(),
     )?;
     Ok(())
 }
 pub fn write_asset_metadata(work: &Path, a: &Attachment) -> Result<(), ArchiveError> {
     let dir = asset_dir(work, &a.id);
     fs::create_dir_all(&dir)?;
-    fs::write(
-        dir.join("metadata.json"),
-        serde_json::to_vec_pretty(a).map_err(|e| ArchiveError::Invalid(e.to_string()))?,
+    write_atomic(
+        &dir.join("metadata.json"),
+        &serde_json::to_vec_pretty(a).map_err(|e| ArchiveError::Invalid(e.to_string()))?,
     )?;
     Ok(())
 }
 /// Writes the session's archive metadata (`archive.json`) used by crash recovery.
 pub fn write_session_metadata(work: &Path, m: &ArchiveMetadata) -> Result<(), ArchiveError> {
-    fs::write(
-        work.join("archive.json"),
-        serde_json::to_vec_pretty(m).map_err(|e| ArchiveError::Invalid(e.to_string()))?,
+    write_atomic(
+        &work.join("archive.json"),
+        &serde_json::to_vec_pretty(m).map_err(|e| ArchiveError::Invalid(e.to_string()))?,
     )?;
     Ok(())
 }

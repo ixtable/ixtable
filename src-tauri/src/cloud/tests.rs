@@ -535,27 +535,226 @@ fn cloud_ids_and_auth_storage_keys_are_restricted() {
 #[test]
 fn a_cloud_archive_with_a_traversal_document_id_is_refused_before_any_path_is_built() {
     use crate::bundle::{archive_bytes, sha256_hex};
-    let root = std::env::temp_dir().join(format!("ixtable-cloud-traversal-{}", uuid::Uuid::new_v4()));
+    let root =
+        std::env::temp_dir().join(format!("ixtable-cloud-traversal-{}", uuid::Uuid::new_v4()));
     std::fs::create_dir_all(&root).unwrap();
     let doc = crate::archive::create_document("CRM").unwrap();
     let archive = root.join("hostile.ixt");
     std::fs::write(&archive, archive_bytes(&doc, &root.join(".tmp")).unwrap()).unwrap();
     // A hostile archive: its header names a directory outside the app root.
     let conn = rusqlite::Connection::open(&archive).unwrap();
-    conn.execute("UPDATE archive_metadata SET document_id='../../escaped'", [])
-        .unwrap();
+    conn.execute(
+        "UPDATE archive_metadata SET document_id='../../escaped'",
+        [],
+    )
+    .unwrap();
     drop(conn);
     let bytes = std::fs::read(&archive).unwrap();
     let key_b64 = config::base64_key(&SigningKey::generate(&mut OsRng).verifying_key());
     let mut m: manifest::Manifest = serde_json::from_value(manifest_json(Utc::now())).unwrap();
     m.archive_sha256 = sha256_hex(&bytes);
     m.archive_size = bytes.len() as u64;
-    let err = install::install_verified("main", &m, "sig", "a@example.com", &archive, &key_b64)
-        .unwrap_err();
+    let err = install::install_verified(
+        "main",
+        &m,
+        &Value::Null,
+        "sig",
+        "a@example.com",
+        &archive,
+        &key_b64,
+    )
+    .unwrap_err();
     assert!(
-        ["VALIDATION", "INVALID_ARCHIVE"].contains(&err.code.as_str()) || err.message.contains("document id"),
+        ["VALIDATION", "INVALID_ARCHIVE"].contains(&err.code.as_str())
+            || err.message.contains("document id"),
         "{err:?}"
     );
     assert!(!root.join("escaped").exists() && !std::env::temp_dir().join("escaped").exists());
     let _ = std::fs::remove_dir_all(root);
+}
+
+fn record_for(m: &Value, sig: &str, signed: bool) -> install::CloudRecord {
+    install::CloudRecord {
+        manifest: serde_json::from_value(m.clone()).unwrap(),
+        signature: sig.into(),
+        email: "rep@example.com".into(),
+        public_key_fingerprint: "fp".into(),
+        recorded_at: Utc::now().to_rfc3339(),
+        signed_manifest: signed.then(|| m.clone()),
+    }
+}
+
+#[test]
+fn a_tampered_cloud_record_never_grants_a_role_or_owner_access() {
+    let key = SigningKey::generate(&mut OsRng);
+    let vk = key.verifying_key();
+    let mut m = manifest_json(Utc::now() - Duration::days(30));
+    // Every field present, as bundle-manifest issues it (older records are re-serialized).
+    m["roleName"] = json!("Sales rep");
+    m["owner"] = json!(false);
+    let sig = sign(&key, &m);
+    // Verified even when expired (offline use), with and without the signed copy.
+    for signed in [true, false] {
+        let verified = install::verify_record(&record_for(&m, &sig, signed), &vk).unwrap();
+        let role = install::manifest_role(&verified).unwrap();
+        assert_eq!(role.id, "role-sales");
+        assert_eq!(role.permissions.navigation, vec!["n1".to_string()]);
+    }
+    // Editing the parsed copy is ignored: only the signed manifest counts.
+    let mut record = record_for(&m, &sig, true);
+    record.manifest.owner = true;
+    record.manifest.role_id = None;
+    let verified = install::verify_record(&record, &vk).unwrap();
+    assert_eq!(verified.role_id.as_deref(), Some("role-sales"));
+    assert!(!verified.owner);
+    // Editing what is verified (owner flag, role, permissions) fails closed.
+    for (field, value) in [
+        ("owner", json!(true)),
+        ("roleId", json!(null)),
+        (
+            "rolePermissions",
+            json!({"objects": [{"kind": "table", "id": "t", "read": true}]}),
+        ),
+    ] {
+        let mut edited = m.clone();
+        edited[field] = value;
+        for signed in [true, false] {
+            let e = install::verify_record(&record_for(&edited, &sig, signed), &vk).unwrap_err();
+            assert_eq!(e.code, "INSTALLATION_TAMPERED", "{field} signed={signed}");
+        }
+    }
+    let other = SigningKey::generate(&mut OsRng).verifying_key();
+    assert!(install::verify_record(&record_for(&m, &sig, true), &other).is_err());
+}
+
+#[test]
+fn manifest_roles_map_like_the_frontend() {
+    let mut m: manifest::Manifest = serde_json::from_value(manifest_json(Utc::now())).unwrap();
+    m.owner = true;
+    m.role_id = None;
+    assert_eq!(install::manifest_role(&m), None);
+    m.owner = false;
+    assert_eq!(
+        install::manifest_role(&m).unwrap().id,
+        crate::authz::NO_ROLE
+    );
+    m.role_permissions = json!("garbage");
+    assert_eq!(
+        install::manifest_role(&m).unwrap().permissions,
+        crate::roles::Permissions::default()
+    );
+    // An owner with an assigned role is held to that role.
+    m.owner = true;
+    m.role_id = Some("role-sales".into());
+    assert_eq!(install::manifest_role(&m).unwrap().id, "role-sales");
+}
+
+// Serves one canned status per connection and records each request body.
+type Bodies = std::sync::Arc<std::sync::Mutex<Vec<Vec<u8>>>>;
+fn mock_storage(statuses: Vec<u16>) -> (String, Bodies) {
+    use std::io::{Read, Write};
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let url = format!("http://{}", listener.local_addr().unwrap());
+    let bodies: Bodies = Default::default();
+    let seen = bodies.clone();
+    std::thread::spawn(move || {
+        for status in statuses {
+            let Ok((mut s, _)) = listener.accept() else {
+                return;
+            };
+            let mut buf = Vec::new();
+            let mut chunk = [0u8; 4096];
+            let (head_end, len) = loop {
+                let n = s.read(&mut chunk).unwrap_or(0);
+                if n == 0 {
+                    return;
+                }
+                buf.extend_from_slice(&chunk[..n]);
+                if let Some(i) = buf.windows(4).position(|w| w == b"\r\n\r\n") {
+                    let head = String::from_utf8_lossy(&buf[..i]).to_lowercase();
+                    let len = head
+                        .lines()
+                        .find_map(|l| l.strip_prefix("content-length:"))
+                        .map(|v| v.trim().parse::<usize>().unwrap())
+                        .unwrap_or(0);
+                    break (i + 4, len);
+                }
+            };
+            while buf.len() < head_end + len {
+                let n = s.read(&mut chunk).unwrap_or(0);
+                if n == 0 {
+                    break;
+                }
+                buf.extend_from_slice(&chunk[..n]);
+            }
+            seen.lock().unwrap().push(buf[head_end..].to_vec());
+            let _ = write!(
+                s,
+                "HTTP/1.1 {status} X\r\ncontent-length: 2\r\nconnection: close\r\n\r\n{{}}"
+            );
+        }
+    });
+    (url, bodies)
+}
+
+fn upload_with(statuses: Vec<u16>) -> (Result<(), crate::manager::AppError>, usize) {
+    let (url, bodies) = mock_storage(statuses);
+    let file = std::env::temp_dir().join(format!("ixt-upload-{}.ixt", uuid::Uuid::new_v4()));
+    std::fs::write(&file, b"archive-bytes").unwrap();
+    let cfg = config::CloudConfig {
+        url: url.clone(),
+        anon_key: "anon".into(),
+        site_url: String::new(),
+        configured: true,
+        public_key_fingerprint: None,
+    };
+    let result = http::upload_file_with(
+        &cfg,
+        &format!("{url}/storage/v1/object/upload/sign/x"),
+        &file,
+        "",
+        4,
+        std::time::Duration::from_millis(1),
+    );
+    let _ = std::fs::remove_file(&file);
+    let bodies = bodies.lock().unwrap();
+    assert!(bodies.iter().all(|b| b == b"archive-bytes"));
+    (result, bodies.len())
+}
+
+#[test]
+fn uploads_retry_transient_failures_with_the_full_body_each_time() {
+    let (result, attempts) = upload_with(vec![503, 429, 200]);
+    assert!(result.is_ok(), "{result:?}");
+    assert_eq!(attempts, 3);
+}
+
+#[test]
+fn uploads_never_retry_auth_or_precondition_failures() {
+    for status in [401, 403, 409, 412, 413] {
+        let (result, attempts) = upload_with(vec![status, 200]);
+        assert!(result.is_err(), "{status}");
+        assert_eq!(attempts, 1, "{status} must not be retried");
+    }
+}
+
+#[test]
+fn uploads_give_up_after_the_bounded_number_of_attempts() {
+    let (result, attempts) = upload_with(vec![500, 502, 503, 504, 200]);
+    assert_eq!(result.unwrap_err().code, "CLOUD_UNAVAILABLE");
+    assert_eq!(attempts, 4);
+}
+
+#[test]
+fn retry_backs_off_exponentially_and_retries_connect_errors() {
+    let mut calls = 0;
+    let start = std::time::Instant::now();
+    let out = http::with_retry(3, std::time::Duration::from_millis(10), |_| {
+        calls += 1;
+        Err::<(), _>(err("CLOUD_OFFLINE", "down"))
+    });
+    assert_eq!(out.unwrap_err().code, "CLOUD_OFFLINE");
+    assert_eq!(calls, 3);
+    // 10 ms + 20 ms between the three attempts.
+    assert!(start.elapsed() >= std::time::Duration::from_millis(30));
 }

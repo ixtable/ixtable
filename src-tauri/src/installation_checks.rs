@@ -9,11 +9,67 @@ use std::{
 
 /// Applies the definition's pending SQLite migrations to `db` via
 /// `migrations::apply_sqlite` (one transaction per migration, tracked in `_ixtable_migrations`).
-pub fn apply_migrations(db: &Path, config: &DocumentConfig) -> Result<(), String> {
+/// Returns the names of the migrations that ran.
+pub fn apply_migrations(db: &Path, config: &DocumentConfig) -> Result<Vec<String>, String> {
     if config.migrations.is_empty() {
-        return Ok(());
+        return Ok(vec![]);
     }
-    crate::migrations::apply_sqlite(db, &config.migrations).map(|_| ())
+    crate::migrations::apply_sqlite(db, &config.migrations)
+        .map(|logs| logs.into_iter().map(|l| l.name).collect())
+}
+
+/// A migration an update would run on this installation's records (PRD §22.3 step 7).
+#[derive(Debug, Clone, PartialEq, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PendingMigration {
+    pub id: String,
+    pub name: String,
+    /// The `up` SQL, shown before the update is applied.
+    pub sql: String,
+}
+
+/// Migrations of `config` not yet recorded in `db`, in apply order. Reads `db`
+/// read-only; a missing database or tracking table means none are applied.
+pub fn pending_migrations(
+    db: &Path,
+    config: &DocumentConfig,
+) -> Result<Vec<PendingMigration>, String> {
+    let mut done = HashSet::new();
+    if db.exists() {
+        let conn = Connection::open_with_flags(db, OpenFlags::SQLITE_OPEN_READ_ONLY)
+            .map_err(|e| format!("Cannot open installation data: {e}"))?;
+        let tracked: i64 = conn
+            .query_row(
+                "SELECT count(*) FROM sqlite_master WHERE type='table' AND name=?1",
+                [crate::migrations::STATE_TABLE],
+                |r| r.get(0),
+            )
+            .map_err(|e| e.to_string())?;
+        if tracked > 0 {
+            let mut stmt = conn
+                .prepare("SELECT id FROM _ixtable_migrations")
+                .map_err(|e| e.to_string())?;
+            done = stmt
+                .query_map([], |r| r.get::<_, String>(0))
+                .map_err(|e| e.to_string())?
+                .collect::<Result<_, _>>()
+                .map_err(|e| e.to_string())?;
+        }
+    }
+    let mut out: Vec<_> = config
+        .migrations
+        .iter()
+        .filter(|m| m.supported() && !done.contains(&m.id))
+        .collect();
+    out.sort_by_key(|m| m.order);
+    Ok(out
+        .into_iter()
+        .map(|m| PendingMigration {
+            id: m.id.clone(),
+            name: m.name.clone(),
+            sql: m.up.clone(),
+        })
+        .collect())
 }
 
 fn table_columns(conn: &Connection) -> Result<HashMap<String, HashSet<String>>, String> {

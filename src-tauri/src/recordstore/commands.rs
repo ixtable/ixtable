@@ -6,7 +6,7 @@ use super::{
     StoreCapabilities, TableImpact, WriteOp, WriteOutcome,
 };
 use crate::archive::DocumentConfig;
-use crate::data::{AlterTable, CreateTable, DataValue, IndexDef, NamedValue};
+use crate::data::{AlterTable, CreateTable, IndexDef, NamedValue};
 use crate::manager::{AppError, SessionState};
 use serde::Serialize;
 use serde_json::Value;
@@ -41,41 +41,6 @@ fn effective_expected(
             _ => expected.filter(|e| !e.is_empty()),
         },
     )
-}
-
-pub fn insert_row(
-    window: &str,
-    table: &str,
-    values: &[NamedValue],
-) -> Result<Vec<DataValue>, AppError> {
-    let r = with_store(window, |s| s.insert(table, values))?;
-    after_write(window)?;
-    Ok(r)
-}
-pub fn update_row(
-    window: &str,
-    table: &str,
-    values: &[NamedValue],
-    identity: &[DataValue],
-    expected: Option<Vec<NamedValue>>,
-) -> Result<u64, AppError> {
-    let expected = effective_expected(window, table, expected)?;
-    let r = with_store(window, |s| {
-        s.update(table, values, identity, expected.as_deref())
-    })?;
-    after_write(window)?;
-    Ok(r)
-}
-pub fn delete_row(
-    window: &str,
-    table: &str,
-    identity: &[DataValue],
-    expected: Option<Vec<NamedValue>>,
-) -> Result<u64, AppError> {
-    let expected = effective_expected(window, table, expected)?;
-    let r = with_store(window, |s| s.delete(table, identity, expected.as_deref()))?;
-    after_write(window)?;
-    Ok(r)
 }
 
 fn update_entities(window: &str, f: impl FnOnce(&mut Vec<EntitySettings>)) -> Result<(), AppError> {
@@ -134,10 +99,30 @@ pub fn config_dependents(config: &DocumentConfig, table: &str) -> Vec<Dependent>
                     || (s.contains(char::is_whitespace) && super::plan::mentions(s, table))
             }
             Value::Array(a) => a.iter().any(|x| hit(x, table)),
-            Value::Object(o) => o.values().any(|x| hit(x, table)),
+            Value::Object(o) => o
+                .iter()
+                .any(|(k, x)| !DESCRIPTIVE_KEYS.contains(&k.as_str()) && hit(x, table)),
             _ => false,
         }
     }
+    /// Enum-like keys (control kinds, types) that never hold a table or column reference.
+    const DESCRIPTIVE_KEYS: &[&str] = &[
+        "kind",
+        "type",
+        "logicalType",
+        "declaredType",
+        "physicalType",
+        "format",
+        "direction",
+        "aggregate",
+        "mode",
+        "objectKind",
+        "objectType",
+        "status",
+        "align",
+        "variant",
+        "label",
+    ];
     /// Reports the shallowest objects with an id and a name whose subtree mentions the table.
     fn walk(kind: &str, v: &Value, table: &str, out: &mut Vec<Dependent>) {
         match v {
@@ -174,6 +159,53 @@ pub fn config_dependents(config: &DocumentConfig, table: &str) -> Vec<Dependent>
         }
     }
     out
+}
+
+/// Definitions that refer to the names a batch of operations renames, with one
+/// warning per rename. Renames do not rewrite these definitions, so the impact
+/// preview lists them before the change is applied (PRD §11).
+pub fn rename_dependents(
+    config: &DocumentConfig,
+    table: &str,
+    operations: &[AlterTable],
+) -> (Vec<Dependent>, Vec<String>) {
+    let of_table = config_dependents(config, table);
+    let mut dependents: Vec<Dependent> = vec![];
+    let mut warnings = vec![];
+    let list = |deps: &[Dependent]| {
+        deps.iter()
+            .map(|d| format!("{} \u{201c}{}\u{201d}", d.kind, d.name))
+            .collect::<Vec<_>>()
+            .join(", ")
+    };
+    for op in operations {
+        let (old, new, found) = match op {
+            AlterTable::RenameTable { new_name } => (table, new_name, of_table.clone()),
+            AlterTable::RenameColumn { column, new_name } => {
+                let of_column = config_dependents(config, column);
+                let found = of_table
+                    .iter()
+                    .filter(|d| of_column.iter().any(|c| c.id == d.id))
+                    .cloned()
+                    .collect();
+                (column.as_str(), new_name, found)
+            }
+            _ => continue,
+        };
+        if found.is_empty() {
+            continue;
+        }
+        warnings.push(format!(
+            "Renaming {old} to {new} does not update definitions that use the old name: {}. Update them after applying, or they will fail to load their data.",
+            list(&found)
+        ));
+        for d in found {
+            if !dependents.iter().any(|x| x.id == d.id) {
+                dependents.push(d);
+            }
+        }
+    }
+    (dependents, warnings)
 }
 
 #[tauri::command]
@@ -218,8 +250,23 @@ pub fn preview_table_changes(
         };
         Ok((plan, impact))
     })?;
+    let config = crate::manager()?.config(&window_label)?;
+    let (renamed, warnings) = rename_dependents(&config, &table, &operations);
+    plan.warnings.extend(warnings);
+    let impact = match impact {
+        Some(mut impact) => {
+            impact.dependents = config_dependents(&config, &table);
+            Some(impact)
+        }
+        // A rename that leaves definitions pointing at the old name is reviewed like a destructive change.
+        None if !renamed.is_empty() => {
+            let mut impact = with_store(&window_label, |s| s.impact(&table))?;
+            impact.dependents = renamed;
+            Some(impact)
+        }
+        None => None,
+    };
     if let Some(mut impact) = impact {
-        impact.dependents = config_dependents(&crate::manager()?.config(&window_label)?, &table);
         impact.statements = plan.statements.clone();
         plan.impact = Some(impact);
     }
@@ -260,11 +307,71 @@ pub fn list_indexes(
     with_store(&window_label, |s| s.list_indexes(table.as_deref()))
 }
 
-#[tauri::command]
-pub fn execute_write_batch(
-    window_label: String,
-    ops: Vec<crate::recordstore::WriteOp>,
-) -> Result<Vec<WriteOutcome>, AppError> {
+fn op_kind(op: &WriteOp) -> crate::authz::Op {
+    match op {
+        WriteOp::Insert { .. } => crate::authz::Op::Create,
+        WriteOp::Update { .. } => crate::authz::Op::Update,
+        WriteOp::Delete { .. } => crate::authz::Op::Delete,
+    }
+}
+fn trigger_event(op: &WriteOp) -> Option<crate::automation::TriggerEvent> {
+    match op {
+        WriteOp::Insert { .. } => Some(crate::automation::TriggerEvent::Created),
+        WriteOp::Update { .. } => Some(crate::automation::TriggerEvent::Updated),
+        WriteOp::Delete { .. } => None,
+    }
+}
+
+/// A committed write's outcome plus the sync trigger grant it issued.
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TriggeredOutcome {
+    #[serde(flatten)]
+    pub outcome: WriteOutcome,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub trigger_grant: Option<String>,
+}
+
+/// Authorizes each op (role, or a verified trigger step) and refuses writes
+/// whose user-mode triggers the role could not run.
+fn authorize_ops(
+    window: &str,
+    ops: &[WriteOp],
+    triggers: &[Option<crate::trigger_auth::TriggerWrite>],
+) -> Result<(), AppError> {
+    for (i, op) in ops.iter().enumerate() {
+        let auth = triggers.get(i).and_then(Option::as_ref);
+        crate::trigger_auth::authorize(window, op.table(), op_kind(op), auth)?;
+        if let Some(event) = trigger_event(op) {
+            crate::trigger_auth::precheck(window, op.table(), event)?;
+        }
+    }
+    Ok(())
+}
+
+fn with_grants(
+    window: &str,
+    ops: &[WriteOp],
+    outcomes: Vec<WriteOutcome>,
+) -> Result<Vec<TriggeredOutcome>, AppError> {
+    let config = crate::manager()?.config(window)?;
+    let now = std::time::Instant::now();
+    Ok(ops
+        .iter()
+        .zip(outcomes)
+        .map(|(op, outcome)| {
+            let trigger_grant = trigger_event(op).and_then(|event| {
+                crate::trigger_auth::issue(window, &config, op.table(), event, now)
+            });
+            TriggeredOutcome {
+                outcome,
+                trigger_grant,
+            }
+        })
+        .collect())
+}
+
+fn resolve_expected(window: &str, ops: Vec<WriteOp>) -> Result<Vec<WriteOp>, AppError> {
     let mut resolved = Vec::with_capacity(ops.len());
     for op in ops {
         resolved.push(match op {
@@ -274,7 +381,7 @@ pub fn execute_write_batch(
                 identity,
                 expected,
             } => {
-                let expected = effective_expected(&window_label, &table, expected)?;
+                let expected = effective_expected(window, &table, expected)?;
                 WriteOp::Update {
                     table,
                     values,
@@ -287,7 +394,7 @@ pub fn execute_write_batch(
                 identity,
                 expected,
             } => {
-                let expected = effective_expected(&window_label, &table, expected)?;
+                let expected = effective_expected(window, &table, expected)?;
                 WriteOp::Delete {
                     table,
                     identity,
@@ -297,11 +404,82 @@ pub fn execute_write_batch(
             other => other,
         });
     }
-    let out = with_store(&window_label, |s| s.execute_batch(&resolved))?;
-    after_write(&window_label)?;
-    Ok(out)
+    Ok(resolved)
 }
 
+/// Applies `ops` as one transaction. `triggers[i]` marks op i as a trigger
+/// step (see trigger_auth.rs); each insert/update returns the grant for its
+/// app-mode sync triggers.
+#[tauri::command]
+pub fn execute_write_batch(
+    window_label: String,
+    ops: Vec<crate::recordstore::WriteOp>,
+    triggers: Option<Vec<Option<crate::trigger_auth::TriggerWrite>>>,
+) -> Result<Vec<TriggeredOutcome>, AppError> {
+    authorize_ops(&window_label, &ops, &triggers.unwrap_or_default())?;
+    let resolved = resolve_expected(&window_label, ops)?;
+    let out = with_store(&window_label, |s| s.execute_batch(&resolved))?;
+    after_write(&window_label)?;
+    with_grants(&window_label, &resolved, out)
+}
+
+/// One record write (`insert_row`, `update_row`, `delete_row`):
+/// `execute_write_batch` with one op.
+pub fn write_one(
+    window_label: String,
+    op: crate::recordstore::WriteOp,
+    trigger: Option<crate::trigger_auth::TriggerWrite>,
+) -> Result<TriggeredOutcome, AppError> {
+    let mut out = execute_write_batch(window_label, vec![op], Some(vec![trigger]))?;
+    out.pop()
+        .ok_or_else(|| AppError::new("INTERNAL", "The write returned no outcome"))
+}
+
+/// Record writes return `{changed, identity?, triggerGrant?}` (see
+/// `write_one`); `trigger` marks an app-mode trigger step.
+#[tauri::command]
+pub fn insert_row(
+    window_label: String,
+    table: String,
+    values: Vec<crate::data::NamedValue>,
+    trigger: Option<crate::trigger_auth::TriggerWrite>,
+) -> Result<TriggeredOutcome, AppError> {
+    write_one(window_label, WriteOp::Insert { table, values }, trigger)
+}
+/// `expected` carries the values the user started from; entities with the
+/// optimistic policy reject the update with CONFLICT when they changed.
+#[tauri::command]
+pub fn update_row(
+    window_label: String,
+    table: String,
+    values: Vec<crate::data::NamedValue>,
+    identity: Vec<crate::data::DataValue>,
+    expected: Option<Vec<crate::data::NamedValue>>,
+    trigger: Option<crate::trigger_auth::TriggerWrite>,
+) -> Result<TriggeredOutcome, AppError> {
+    let op = WriteOp::Update {
+        table,
+        values,
+        identity,
+        expected,
+    };
+    write_one(window_label, op, trigger)
+}
+#[tauri::command]
+pub fn delete_row(
+    window_label: String,
+    table: String,
+    identity: Vec<crate::data::DataValue>,
+    expected: Option<Vec<crate::data::NamedValue>>,
+    trigger: Option<crate::trigger_auth::TriggerWrite>,
+) -> Result<TriggeredOutcome, AppError> {
+    let op = WriteOp::Delete {
+        table,
+        identity,
+        expected,
+    };
+    write_one(window_label, op, trigger)
+}
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ConnectionReport {

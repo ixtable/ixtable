@@ -458,6 +458,7 @@ fn logical_types_round_trip_identically_through_duckdb() {
                     column: "dt".into(),
                     operator: crate::data::FilterOperator::Eq,
                     value: Some(DataValue::Date("2024-02-29".into())),
+                    values: None,
                 }],
             )
             .unwrap();

@@ -4,12 +4,14 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 mod checks;
+mod grid;
 pub mod upgrade;
 pub use checks::{table_issues, validate, validate_tables};
 /// Grid rules shared with dashboards (PRD §13: one grid system for forms and dashboards).
 pub(crate) use checks::{
     validate_layout as validate_grid_layout, validate_span as validate_grid_span,
 };
+pub use grid::{Breakpoint, GridAlign, GridLayout, GridTrack, NamedRegion, Placement, TrackKind};
 
 pub const DESIGN_SCHEMA_VERSION: u32 = 3;
 
@@ -75,8 +77,7 @@ pub struct FormSource {
     pub table: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub query_id: Option<String>,
-    /// Query sources: parameter name to an expression over `app` and `params`,
-    /// evaluated in TypeScript and bound to the saved query's `$name`.
+    /// Query sources: `$name` to a TypeScript expression over `app` and `params`.
     #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
     pub params: std::collections::BTreeMap<String, String>,
 }
@@ -114,6 +115,9 @@ pub struct Form {
     pub detail_form_id: Option<String>,
     #[serde(default)]
     pub rules: Vec<FormRule>,
+    /// List mode row filter expression (evaluated in TypeScript, `src/runtime/conditions.ts`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub filter: Option<String>,
 }
 pub fn default_modes() -> Vec<FormMode> {
     vec![
@@ -207,6 +211,75 @@ pub struct Control {
     /// Presentation variant, e.g. "toggle" for booleans.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub variant: Option<String>,
+    /// Conditional styles; the first rule whose `when` holds sets the tone.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub styles: Vec<ConditionalStyle>,
+}
+
+/// Named tone of a conditional style. The renderer maps it to a class, never to raw CSS.
+/// A tone this build does not know (hand-edited YAML, a newer app) loads as `Other` and
+/// saves back unchanged; the renderer ignores it.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub enum Tone {
+    Positive,
+    Negative,
+    Warning,
+    Muted,
+    #[default]
+    Emphasis,
+    Other(String),
+}
+
+impl Tone {
+    pub fn as_str(&self) -> &str {
+        match self {
+            Tone::Positive => "positive",
+            Tone::Negative => "negative",
+            Tone::Warning => "warning",
+            Tone::Muted => "muted",
+            Tone::Emphasis => "emphasis",
+            Tone::Other(name) => name,
+        }
+    }
+}
+
+impl From<String> for Tone {
+    fn from(name: String) -> Self {
+        match name.as_str() {
+            "positive" => Tone::Positive,
+            "negative" => Tone::Negative,
+            "warning" => Tone::Warning,
+            "muted" => Tone::Muted,
+            "emphasis" => Tone::Emphasis,
+            _ => Tone::Other(name),
+        }
+    }
+}
+
+impl Serialize for Tone {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        serializer.serialize_str(self.as_str())
+    }
+}
+
+impl<'de> Deserialize<'de> for Tone {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        String::deserialize(deserializer).map(Tone::from)
+    }
+}
+
+/// One conditional style rule: `tone` applies when the `when` expression is true.
+/// Shared by form controls and dashboard table columns (`column` names the column there).
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct ConditionalStyle {
+    pub id: String,
+    #[serde(default)]
+    pub when: String,
+    #[serde(default)]
+    pub tone: Tone,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub column: Option<String>,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
@@ -223,13 +296,27 @@ pub struct SelectOption {
     #[serde(default)]
     pub label: String,
 }
+/// One column of a multi-column key: `column` on this side, `target` on the other table.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct KeyPair {
+    pub column: String,
+    pub target: String,
+}
 /// Foreign-key lookup: stores `value_column` of `table`, shows `display_column`.
+/// A multi-column key lists every pair in `keys` (bound column first); choosing a
+/// record writes all of them.
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct Relationship {
     pub table: String,
     pub value_column: String,
     pub display_column: String,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub keys: Vec<KeyPair>,
+    /// Row filter over the choices (`record` is a choice row, `parent` the edited record).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub filter: Option<String>,
 }
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
@@ -238,17 +325,24 @@ pub struct TabPage {
     pub label: String,
 }
 /// Child rows of `table` whose `foreign_key` equals the parent record's `parent_column`.
+/// A multi-column key lists every pair in `keys` (`column` on the child, `target` on
+/// the parent); rows match on all of them.
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct RelatedList {
     pub table: String,
     pub foreign_key: String,
     pub parent_column: String,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub keys: Vec<KeyPair>,
     #[serde(default)]
     pub columns: Vec<String>,
     /// Form used to add and edit child rows (embedded; it may not hold related lists).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub form_id: Option<String>,
+    /// Row filter over the child rows (`record` is a child row, `parent` the parent record).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub filter: Option<String>,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
@@ -274,129 +368,6 @@ pub struct Validation {
     pub expression: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub message: Option<String>,
-}
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-#[serde(rename_all = "camelCase")]
-pub struct GridLayout {
-    #[serde(default = "default_columns")]
-    pub columns: Vec<GridTrack>,
-    #[serde(default)]
-    pub rows: Vec<GridTrack>,
-    #[serde(default = "default_gap")]
-    pub column_gap: u16,
-    #[serde(default = "default_gap")]
-    pub row_gap: u16,
-    #[serde(default)]
-    pub padding: u16,
-    #[serde(default)]
-    pub justify_items: GridAlign,
-    #[serde(default)]
-    pub align_items: GridAlign,
-    #[serde(default)]
-    pub named_regions: Vec<NamedRegion>,
-    #[serde(default)]
-    pub breakpoints: Vec<Breakpoint>,
-}
-fn default_columns() -> Vec<GridTrack> {
-    vec![GridTrack::fr(1.0); 12]
-}
-fn default_gap() -> u16 {
-    16
-}
-impl Default for GridLayout {
-    fn default() -> Self {
-        Self {
-            columns: default_columns(),
-            rows: vec![],
-            column_gap: default_gap(),
-            row_gap: default_gap(),
-            padding: 0,
-            justify_items: GridAlign::Stretch,
-            align_items: GridAlign::Stretch,
-            named_regions: vec![],
-            breakpoints: vec![],
-        }
-    }
-}
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-#[serde(rename_all = "camelCase")]
-pub struct GridTrack {
-    pub kind: TrackKind,
-    #[serde(default)]
-    pub value: Option<f64>,
-    #[serde(default)]
-    pub min: Option<f64>,
-    #[serde(default)]
-    pub max: Option<f64>,
-}
-impl GridTrack {
-    pub fn fr(value: f64) -> Self {
-        Self {
-            kind: TrackKind::Fr,
-            value: Some(value),
-            min: None,
-            max: None,
-        }
-    }
-}
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-#[serde(rename_all = "camelCase")]
-pub enum TrackKind {
-    Fixed,
-    Content,
-    Fr,
-}
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
-#[serde(rename_all = "camelCase")]
-pub enum GridAlign {
-    #[default]
-    Stretch,
-    Start,
-    Center,
-    End,
-}
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-#[serde(rename_all = "camelCase")]
-pub struct NamedRegion {
-    pub name: String,
-    pub column: u16,
-    pub row: u16,
-    pub column_span: u16,
-    pub row_span: u16,
-}
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-#[serde(rename_all = "camelCase")]
-pub struct Breakpoint {
-    pub min_width: u32,
-    pub columns: Vec<GridTrack>,
-}
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-#[serde(rename_all = "camelCase")]
-pub struct Placement {
-    #[serde(default = "one")]
-    pub column: u16,
-    #[serde(default = "one")]
-    pub row: u16,
-    #[serde(default = "one")]
-    pub column_span: u16,
-    #[serde(default = "one")]
-    pub row_span: u16,
-    #[serde(default)]
-    pub region: Option<String>,
-}
-fn one() -> u16 {
-    1
-}
-impl Default for Placement {
-    fn default() -> Self {
-        Self {
-            column: 1,
-            row: 1,
-            column_span: 1,
-            row_span: 1,
-            region: None,
-        }
-    }
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]

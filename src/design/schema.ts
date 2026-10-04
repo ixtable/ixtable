@@ -9,6 +9,7 @@ import {
 } from "../grid/engine";
 import type { GridLayout, Placement } from "../grid/types";
 import { newId } from "../lib/utils";
+import type { ConditionalStyle } from "../runtime/conditions";
 
 /** TypeScript mirror of `src-tauri/src/design.rs` (serde camelCase). */
 export const DESIGN_SCHEMA_VERSION = 3;
@@ -62,14 +63,34 @@ export type ControlValidation = {
   message?: string | null;
 };
 export type SelectOption = { value: string; label: string };
-export type Relationship = { table: string; valueColumn: string; displayColumn: string };
+/** One column of a multi-column key: `column` on this side, `target` on the other table. */
+export type KeyPair = { column: string; target: string };
+/**
+ * Foreign-key lookup. `valueColumn` is the target column stored in the bound column. For a
+ * multi-column key, `keys` lists every pair (bound column first) and choosing writes them all.
+ */
+export type Relationship = {
+  table: string;
+  valueColumn: string;
+  displayColumn: string;
+  keys?: KeyPair[];
+  /** Row filter over the choices: `record` is a choice row, `parent` the edited record. */
+  filter?: string | null;
+};
 export type TabPage = { id: string; label: string };
+/**
+ * Child rows of `table` whose `foreignKey` equals the parent's `parentColumn`. For a
+ * multi-column key, `keys` lists every pair (`column` on the child, `target` on the parent).
+ */
 export type RelatedList = {
   table: string;
   foreignKey: string;
   parentColumn: string;
+  keys?: KeyPair[];
   columns: string[];
   formId?: string | null;
+  /** Row filter: `record` is a child row, `parent` the parent record. */
+  filter?: string | null;
 };
 export type ControlParent = { id: string; tab?: string | null };
 
@@ -97,6 +118,8 @@ export type DesignControl = {
   assetId?: string | null;
   readOnly?: boolean;
   variant?: string | null;
+  /** Conditional styles; the first rule whose `when` holds sets the tone. */
+  styles?: ConditionalStyle[];
 };
 export type FormRule = { id: string; expression: string; message: string };
 export type DesignForm = {
@@ -110,6 +133,8 @@ export type DesignForm = {
   pageSize: number;
   detailFormId?: string | null;
   rules: FormRule[];
+  /** List mode row filter: an expression over `record`, `app` and `params`. */
+  filter?: string | null;
 };
 export type NavKind = "form" | "report" | "dashboard" | "table" | "group";
 export type NavigationItem = {
@@ -186,6 +211,9 @@ const LABELS: Record<ControlKind, string> = {
 };
 export const controlKindLabel = (kind: ControlKind) => LABELS[kind];
 export const CONTROL_KINDS = Object.keys(LABELS) as ControlKind[];
+
+/** Static kinds have nothing to enable or disable, so `enabledWhen` does not apply to them. */
+export const hasEnabledState = (kind: ControlKind) => kind !== "label" && kind !== "image";
 
 /** Kinds that hold a record value bound to a column. */
 export const isInputKind = (kind: ControlKind) =>
@@ -288,6 +316,7 @@ function upgradeForm(raw: unknown): DesignForm {
     pageSize: typeof form.pageSize === "number" ? form.pageSize : 25,
     detailFormId: (form.detailFormId as string | null | undefined) ?? null,
     rules: arr(form.rules).map((r) => ({ id: "", expression: "", message: "", ...rec(r) })),
+    ...(typeof form.filter === "string" ? { filter: form.filter } : {}),
   };
 }
 
@@ -330,3 +359,9 @@ export const flattenNavigation = (items: NavigationItem[]): NavigationItem[] =>
 
 export const formTable = (form?: DesignForm | null) =>
   form?.source?.kind === "table" ? (form.source.table ?? null) : null;
+
+/** Key pairs of a related list: `keys` when set, else `foreignKey` → `parentColumn`. */
+export const relatedKeys = (related: RelatedList): KeyPair[] =>
+  related.keys?.length
+    ? related.keys
+    : [{ column: related.foreignKey, target: related.parentColumn }];

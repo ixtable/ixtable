@@ -1,5 +1,6 @@
 //! Carrying unknown tables (from newer builds or tools) over from the previous
-//! archive of the same document. Their schema text is untrusted.
+//! archive of the same document (or the source of a Restore as copy). Their
+//! schema text is untrusted.
 use super::{read_header, KNOWN_TABLES};
 use crate::archive::{ArchiveError, ArchiveMetadata};
 use crate::logging;
@@ -11,9 +12,10 @@ pub(super) fn preserve_unknown_tables(
     conn: &Connection,
     prev: &Path,
     metadata: &ArchiveMetadata,
+    copy: bool,
 ) -> Result<Vec<String>, ArchiveError> {
     match read_header(prev) {
-        Ok(h) if h.metadata.document_id == metadata.document_id => {}
+        Ok(h) if copy || h.metadata.document_id == metadata.document_id => {}
         _ => return Ok(vec![]),
     }
     conn.execute(

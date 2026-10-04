@@ -1,9 +1,11 @@
 import { type KeyboardEvent, useState } from "react";
+import { controlConstraints } from "../design/constraints";
 import type { DesignControl, DesignForm, TabPage } from "../design/schema";
 import { isInputKind } from "../design/schema";
 import { GridCanvas, GridItem } from "../grid";
 import { ComputedValue, Field, ImageView } from "./controls";
-import { compute, condition, type FormScope } from "./formState";
+import { toneFor } from "./conditions";
+import { compute, type FormScope } from "./formState";
 import { RelatedRecords } from "./RelatedList";
 import type { DataValue } from "../lib/types";
 
@@ -12,6 +14,8 @@ export type BodyContext = {
   form: DesignForm;
   scope: FormScope;
   visible: Set<string>;
+  /** Controls whose own and every ancestor container's `enabledWhen` holds. */
+  enabled: Set<string>;
   errors: Record<string, string>;
   /** True in detail mode or when the form is read-only. */
   readOnly: boolean;
@@ -54,6 +58,7 @@ export function ControlGrid({
           id={control.id}
           placement={control.placement}
           label={control.label}
+          constraints={controlConstraints(control.kind, layout.columns.length)}
         >
           <ControlView ctx={ctx} control={control} />
         </GridItem>
@@ -79,14 +84,21 @@ function ControlView({ ctx, control }: { ctx: BodyContext; control: DesignContro
       return <TabGroup ctx={ctx} control={control} />;
     case "computed": {
       const result = compute(control.computed, scope);
-      return <ComputedValue control={control} value={result.value} error={result.error} />;
+      return (
+        <ComputedValue
+          control={control}
+          value={result.value}
+          error={result.error}
+          tone={toneFor(control.styles, { ...scope, value: result.value })}
+        />
+      );
     }
     case "button":
       return (
         <button
           type="button"
           className="rt-button"
-          disabled={!condition(control.enabledWhen, scope) || !ctx.canRunButton(control)}
+          disabled={!ctx.enabled.has(control.id) || !ctx.canRunButton(control)}
           onClick={() => ctx.runButton(control)}
         >
           {control.label}
@@ -96,7 +108,7 @@ function ControlView({ ctx, control }: { ctx: BodyContext; control: DesignContro
       return <ImageView control={control} />;
     case "relatedList":
       if (ctx.embedded) return null;
-      return <RelatedRecords ctx={ctx} control={control} />;
+      return <RelatedRecords ctx={ctx} control={control} disabled={!ctx.enabled.has(control.id)} />;
     default:
       break;
   }
@@ -108,9 +120,10 @@ function ControlView({ ctx, control }: { ctx: BodyContext; control: DesignContro
     !!derived ||
     !!control.readOnly ||
     (column ? ctx.locked.has(column) : true) ||
-    !condition(control.enabledWhen, scope);
+    !ctx.enabled.has(control.id);
+  const tone = toneFor(control.styles, { ...scope, value });
   if (ctx.readOnly && control.format && value != null && control.kind !== "relationship") {
-    return <ComputedValue control={control} value={value} />;
+    return <ComputedValue control={control} value={value} tone={tone} />;
   }
   return (
     <Field
@@ -118,8 +131,18 @@ function ControlView({ ctx, control }: { ctx: BodyContext; control: DesignContro
       value={value}
       readOnly={readOnly}
       error={ctx.errors[control.id]}
+      tone={tone}
+      filterScope={
+        control.relationship?.filter
+          ? { parent: scope.record, form: scope.form, app: scope.app, params: {} }
+          : undefined
+      }
       onChange={(next) => column && ctx.setField(column, next)}
       onBlur={() => ctx.blur(control)}
+      keyValues={scope.record}
+      onKeys={(values) => {
+        for (const [key, next] of Object.entries(values)) ctx.setField(key, next);
+      }}
     />
   );
 }

@@ -39,6 +39,17 @@ impl ReadRuntime {
             let predicate = match f.operator {
                 FilterOperator::IsNull => format!("{col} IS NULL"),
                 FilterOperator::IsNotNull => format!("{col} IS NOT NULL"),
+                FilterOperator::In => {
+                    let values = f.values.as_deref().unwrap_or_default();
+                    if values.is_empty() {
+                        "FALSE".to_string()
+                    } else {
+                        for v in values {
+                            binds.push(duck_bind(v)?);
+                        }
+                        format!("{col} IN ({})", vec!["?"; values.len()].join(", "))
+                    }
+                }
                 FilterOperator::Contains | FilterOperator::StartsWith => {
                     let text = match &f.value {
                         Some(DataValue::Text(v)) => v,

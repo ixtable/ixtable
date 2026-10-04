@@ -111,6 +111,18 @@ pub fn verify(
     now: DateTime<Utc>,
     expect: &Expect<'_>,
 ) -> Result<Manifest, AppError> {
+    let m = verify_signature(manifest, signature, key)?;
+    check_current(&m, now, expect)?;
+    Ok(m)
+}
+
+/// Verifies only the signature and format of a manifest. A stored `cloud.json`
+/// is re-checked this way whenever it is used (it may be expired: offline use).
+pub fn verify_signature(
+    manifest: &Value,
+    signature: &str,
+    key: &VerifyingKey,
+) -> Result<Manifest, AppError> {
     let sig_bytes =
         b64_any(signature).map_err(|_| sig_err("The bundle signature is not readable"))?;
     let sig = Signature::from_slice(&sig_bytes)
@@ -148,6 +160,11 @@ pub fn verify(
             format!("Unsupported bundle manifest format {}", m.format),
         ));
     }
+    Ok(m)
+}
+
+/// Timing and identity checks for a freshly delivered manifest.
+fn check_current(m: &Manifest, now: DateTime<Utc>, expect: &Expect<'_>) -> Result<(), AppError> {
     let time = |field: &str, v: &str| {
         DateTime::parse_from_rfc3339(v)
             .map(|t| t.with_timezone(&Utc))
@@ -194,7 +211,7 @@ pub fn verify(
         ));
     }
     crate::bundle::parse_version("Published version", &m.version)?;
-    Ok(m)
+    Ok(())
 }
 
 pub fn is_sha256_hex(v: &str) -> bool {

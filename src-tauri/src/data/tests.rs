@@ -205,10 +205,42 @@ fn table_page_search_is_case_insensitive_and_literal() {
             column: "v".into(),
             operator: FilterOperator::Contains,
             value: Some(DataValue::Text(text.into())),
+            values: None,
         }];
         reader.page("t", 0, 10, &[], &filters).unwrap().total
     };
     assert_eq!(search("50%"), 1);
     assert_eq!(search("a_b"), 1);
     assert_eq!(search("acme"), 1);
+}
+
+#[test]
+fn in_filters_match_any_listed_value_and_nothing_when_empty() {
+    let dir = std::env::temp_dir().join(format!("ixtable-in-{}", uuid::Uuid::new_v4()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let c = rusqlite::Connection::open(dir.join("data.db")).unwrap();
+    c.execute_batch(
+        "CREATE TABLE t(id INTEGER PRIMARY KEY, v TEXT); INSERT INTO t VALUES (1,'a'),(2,'b'),(3,'c');",
+    )
+    .unwrap();
+    let reader = ReadRuntime::for_test(&dir).unwrap();
+    let filter = |values: Vec<DataValue>| Filter {
+        column: "id".into(),
+        operator: FilterOperator::In,
+        value: None,
+        values: Some(values),
+    };
+    let page = reader
+        .page(
+            "t",
+            0,
+            10,
+            &[],
+            &[filter(vec![DataValue::Integer(1), DataValue::Integer(3)])],
+        )
+        .unwrap();
+    assert_eq!(page.total, 2);
+    let none = reader.page("t", 0, 10, &[], &[filter(vec![])]).unwrap();
+    assert_eq!(none.total, 0);
+    let _ = std::fs::remove_dir_all(dir);
 }

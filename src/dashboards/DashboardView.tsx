@@ -9,8 +9,10 @@ import { RECORDS_CHANGED_EVENT } from "../lib/records";
 import { ReportPreview } from "../reports";
 import { useConfirm } from "../runtime/Confirm";
 import { type PageKind, useRuntimeNavigation } from "../runtime/navigation";
+import { conditionResult } from "../runtime/formState";
 import { can } from "../runtime/rbac";
 import { EmbeddedForm } from "./EmbeddedForm";
+import { useDebounced } from "../runtime/useDebounced";
 import { dashboardParams, defaultFilterValues, type FilterValue, resultRows } from "./data";
 import { KIND_LABELS, normalizeDashboard } from "./model";
 import type { Dashboard, DashboardComponent } from "./types";
@@ -40,15 +42,6 @@ export function DashboardView({ dashboardId, params }: DashboardViewProps) {
       </p>
     );
   return <LiveDashboard key={dashboard.id} dashboard={dashboard} initial={params} />;
-}
-
-function useDebounced<T>(value: T, ms: number): T {
-  const [current, setCurrent] = useState(value);
-  useEffect(() => {
-    const timer = setTimeout(() => setCurrent(value), ms);
-    return () => clearTimeout(timer);
-  }, [value, ms]);
-  return current;
 }
 
 function LiveDashboard({
@@ -117,7 +110,7 @@ function LiveDashboard({
           );
       },
       setState: (where, key, value) => {
-        // Validation rejects form-scope state on dashboard buttons: there is no form here.
+        // Validation warns about form-scope state on dashboard buttons: there is no form here.
         if (where === "app") runtime.setAppState(key, value);
         else throw new Error("A dashboard button cannot set form state.");
       },
@@ -153,7 +146,7 @@ function LiveDashboard({
       case "table":
         return (
           <QueryGate component={c} state={stateOf(c)}>
-            {(result) => <TableBody component={c} result={result} />}
+            {(result) => <TableBody component={c} result={result} scope={scope} />}
           </QueryGate>
         );
       case "filter": {
@@ -175,6 +168,12 @@ function LiveDashboard({
           <p className="dash-muted">Choose a form.</p>
         );
       case "report":
+        if (c.reportId && !can(config, runtime.roleId, "report", c.reportId, "read"))
+          return (
+            <p className="dash-muted" role="alert">
+              You do not have access to this report.
+            </p>
+          );
         return c.reportId ? (
           <ReportPreview reportId={c.reportId} params={params} />
         ) : (
@@ -201,6 +200,13 @@ function LiveDashboard({
         return null;
     }
   };
+
+  // Hidden components are not rendered; the others keep their authored placement, as on forms.
+  // A condition that fails to evaluate keeps its component on screen with the error.
+  const shown = dashboard.components.flatMap((c) => {
+    const visible = conditionResult(c.visibleWhen, scope);
+    return visible.value || visible.error ? [{ c, visible }] : [];
+  });
 
   const minHeight = (c: DashboardComponent): CSSProperties => ({
     minHeight:
@@ -248,18 +254,40 @@ function LiveDashboard({
       )}
       {dashboard.components.length ? (
         <GridCanvas layout={dashboard.layout} label={dashboard.name}>
-          {dashboard.components.map((c) => (
-            <GridItem key={c.id} id={c.id} placement={c.placement} label={c.title}>
-              <section
-                className={`dash-widget dash-${c.kind}`}
-                aria-label={c.title || KIND_LABELS[c.kind]}
-                style={minHeight(c)}
-              >
-                {c.title && c.kind !== "button" && c.kind !== "filter" && <h3>{c.title}</h3>}
-                {body(c)}
-              </section>
-            </GridItem>
-          ))}
+          {shown.map(({ c, visible }) => {
+            const enabledWhen = conditionResult(c.enabledWhen, scope);
+            const enabled = enabledWhen.value;
+            const problems = [
+              visible.error && `Visible when: ${visible.error}`,
+              enabledWhen.error && `Enabled when: ${enabledWhen.error}`,
+            ].filter(Boolean);
+            return (
+              <GridItem key={c.id} id={c.id} placement={c.placement} label={c.title}>
+                <section
+                  className={`dash-widget dash-${c.kind}${enabled ? "" : " dash-disabled"}`}
+                  aria-label={c.title || KIND_LABELS[c.kind]}
+                  aria-disabled={enabled ? undefined : true}
+                  style={minHeight(c)}
+                >
+                  {c.title && c.kind !== "button" && c.kind !== "filter" && <h3>{c.title}</h3>}
+                  {problems.map((problem) => (
+                    <p key={problem} className="dash-error" role="alert">
+                      {problem}
+                    </p>
+                  ))}
+                  {visible.error ? null : enabled ? (
+                    body(c)
+                  ) : (
+                    // Presentation only, not access control (use roles for that): the fieldset
+                    // disables native controls and `inert` blocks clicks and focus on the rest.
+                    <fieldset disabled inert className="dash-disabled-body">
+                      {body(c)}
+                    </fieldset>
+                  )}
+                </section>
+              </GridItem>
+            );
+          })}
         </GridCanvas>
       ) : (
         <p className="dash-muted">This dashboard has no components yet.</p>

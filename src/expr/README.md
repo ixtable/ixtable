@@ -43,6 +43,24 @@ with spaces or symbols in square brackets: `record.[Unit Price]`,
   as null.
 - Keywords and function names ignore case (`AND`, `If`). Field names don't.
 
+Where each kind of expression runs, and what it can read:
+
+| Expression | Roots |
+|---|---|
+| Form validation, show, enable, computed, default | `record`, `form`, `app`, `value` |
+| Form conditional style | `record`, `form`, `app`, `value` (the control's value) |
+| List form filter | `record` (the row), `app`, `params`, `form` |
+| Related list filter | `record` (the child row), `parent` (the record on screen), `form`, `app` |
+| Lookup choice filter | `record` (the choice row), `parent` (the record being edited), `form`, `app` |
+| Dashboard KPI | `rows`, `params`, `app` |
+| Dashboard show and enable | `params`, `app` |
+| Dashboard table filter | `record` (the row), `params`, `app` |
+| Dashboard table style | `record`, `value` (the cell), `params`, `app` |
+
+A filter keeps a row only when it gives true. Null, false, and an error all
+drop the row. A conditional style rule applies when its condition gives true,
+and the first such rule wins.
+
 ## Operators
 
 From loosest to tightest binding:

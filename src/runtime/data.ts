@@ -2,27 +2,44 @@ import { runQuery } from "../automation/runner";
 import { runSavedQueryPage } from "../query/api";
 import type { DesignForm, Relationship } from "../design/schema";
 import { evaluate } from "../expr";
-import { inspectTable, readTablePage } from "../lib/api";
+import { inspectTable, listDatabaseObjects, readTablePage } from "../lib/api";
 import { registerRecordHook } from "../lib/records";
 import type { DataValue, DocumentConfig, Filter, Sort, TableSchema } from "../lib/types";
+import {
+  pagedScan,
+  type RowPredicate,
+  rowFilter,
+  type ScanResult,
+  scanFiltered,
+} from "./conditions";
 import { fromDataValue, type RecordValues, rowObject } from "./values";
 
-/** One page of records for a list. `identities` is null for read-only (query) sources. */
+/**
+ * One page of records for a list. `identities` is null for read-only (query) sources.
+ * `truncated` is true when a row filter stopped at `SCAN_LIMIT` rows: matches past that
+ * point are missing and `total` counts only the rows scanned.
+ */
 export type RecordPage = {
   columns: string[];
   rows: RecordValues[];
   identities: DataValue[][] | null;
   total: number;
+  truncated?: boolean;
 };
 export type PageRequest = { offset: number; limit: number; sorts: Sort[]; filters: Filter[] };
 
 const schemas = new Map<string, Promise<TableSchema>>();
 const pages = new Map<string, RecordPage>();
+type Matched = { record: RecordValues; identity: DataValue[] | null };
+// One filtered scan per (source, bound params, sorts, search, filter, inputs); pages slice it.
+type Scanned = ScanResult<Matched> & { columns: string[]; keyed: boolean };
+const scans = new Map<string, Promise<Scanned>>();
 const snapshots = new Map<string, { record: RecordValues; identity: DataValue[] }>();
 
 /** Drops cached schemas and pages; runs after every record write and schema change. */
 export function invalidateRuntimeCache(schemaToo = false) {
   pages.clear();
+  scans.clear();
   if (schemaToo) schemas.clear();
 }
 registerRecordHook({ after: () => invalidateRuntimeCache() });
@@ -39,19 +56,50 @@ export function tableSchema(table: string): Promise<TableSchema> {
   return hit;
 }
 
-const pageKey = (source: unknown, request: PageRequest, params: Record<string, unknown>) =>
-  JSON.stringify([source, request, params]);
+/**
+ * A table with what generated forms need around it: the tables its foreign keys point at
+ * (lookup display columns) and the tables pointing at it (one-level related lists).
+ */
+export async function tableContext(table: string) {
+  const schema = await tableSchema(table);
+  const objects = await listDatabaseObjects();
+  const known = (
+    await Promise.all(
+      objects
+        .filter((object) => object.objectType === "table")
+        .map((object) => tableSchema(object.name).catch(() => null)),
+    )
+  ).filter((other): other is TableSchema => !!other);
+  return {
+    schema,
+    targets: Object.fromEntries(known.map((other) => [other.name, other])),
+    children: known.filter((other) => other.foreignKeys.some((fk) => fk.targetTable === table)),
+  };
+}
+
+const pageKey = (
+  form: DesignForm,
+  request: PageRequest,
+  scope: Record<string, unknown>,
+  bound: Record<string, unknown>,
+) =>
+  JSON.stringify([form.source, bound, form.filter?.trim() ? [form.filter, scope] : null, request]);
 
 /** A cached page for instant re-navigation (null when not loaded yet). */
 export const cachedPage = (
   form: DesignForm,
   request: PageRequest,
-  params: Record<string, unknown> = {},
-) => pages.get(pageKey(form.source, request, params)) ?? null;
+  scope: Record<string, unknown> = {},
+  bound: Record<string, unknown> = {},
+) => pages.get(pageKey(form, request, scope, bound)) ?? null;
 
 /** Query sources page in DuckDB (Rust wraps the saved SQL), so totals are exact. */
-async function queryPage(queryId: string, request: PageRequest, params: Record<string, unknown>) {
-  const result = await runSavedQueryPage(queryId, params, request);
+async function queryPage(
+  queryId: string,
+  request: PageRequest,
+  bound: Record<string, unknown>,
+): Promise<RecordPage> {
+  const result = await runSavedQueryPage(queryId, bound, request);
   const columns = result.columns.map((name) => ({ name }));
   return {
     columns: result.columns,
@@ -61,31 +109,84 @@ async function queryPage(queryId: string, request: PageRequest, params: Record<s
   };
 }
 
+async function tablePage(table: string, request: PageRequest): Promise<RecordPage> {
+  const result = await readTablePage(table, request);
+  return {
+    columns: result.columns.map((c) => c.name),
+    rows: result.rows.map((row) => rowObject(result.columns, row)),
+    identities: result.identities,
+    total: result.total,
+  };
+}
+
 /**
- * Reads one page of a form's source through DuckDB (table page or saved query).
- * `params` are the query source's bound parameter values (see `sourceParams`).
+ * A page with a row filter. The source is scanned once (up to `SCAN_LIMIT` rows) per
+ * bound params, sort, search, filter and filter inputs; every page is then a slice of the
+ * cached matches, so paging never rescans and `total` is the real match count.
+ */
+async function filteredPage(
+  read: (request: PageRequest) => Promise<RecordPage>,
+  request: PageRequest,
+  keep: RowPredicate,
+  key: string,
+): Promise<RecordPage> {
+  let scan = scans.get(key);
+  if (!scan) {
+    let columns: string[] = [];
+    let keyed = false;
+    scan = pagedScan(
+      async (offset, limit) => {
+        const chunk = await read({ ...request, offset, limit });
+        columns = chunk.columns;
+        keyed = chunk.identities !== null;
+        return chunk.rows.map((record, i) => ({
+          record,
+          identity: chunk.identities?.[i] ?? null,
+        }));
+      },
+      (row) => keep(row.record),
+    ).then((found) => ({ ...found, columns, keyed }));
+    scan.catch(() => scans.delete(key));
+    scans.set(key, scan);
+  }
+  const found = await scan;
+  const shown = found.matches.slice(request.offset, request.offset + request.limit);
+  return {
+    columns: found.columns,
+    rows: shown.map((row) => row.record),
+    identities: found.keyed ? shown.map((row) => row.identity ?? []) : null,
+    total: found.matches.length,
+    truncated: found.truncated,
+  };
+}
+
+/**
+ * Reads one page of a form's source through DuckDB (table page or saved query). `bound`
+ * are the query source's bound parameter values (see `sourceParams`). A form `filter`
+ * expression is applied to the fetched rows with `scope` (`app`, `params`).
  */
 export async function loadPage(
   form: DesignForm,
   request: PageRequest,
-  params: Record<string, unknown> = {},
+  scope: Record<string, unknown> = {},
+  bound: Record<string, unknown> = {},
 ): Promise<RecordPage> {
   const source = form.source;
+  const keep = rowFilter(form.filter, { form: {}, params: {}, parent: null, ...scope });
+  const queryId = source?.kind === "query" ? source.queryId : null;
+  const table = source?.kind === "table" ? source.table : null;
+  const read = queryId
+    ? (r: PageRequest) => queryPage(queryId, r, bound)
+    : table
+      ? (r: PageRequest) => tablePage(table, r)
+      : null;
   let page: RecordPage;
-  if (source?.kind === "query" && source.queryId) {
-    page = await queryPage(source.queryId, request, params);
-  } else if (source?.kind === "table" && source.table) {
-    const result = await readTablePage(source.table, request);
-    page = {
-      columns: result.columns.map((c) => c.name),
-      rows: result.rows.map((row) => rowObject(result.columns, row)),
-      identities: result.identities,
-      total: result.total,
-    };
-  } else {
-    page = { columns: [], rows: [], identities: null, total: 0 };
-  }
-  pages.set(pageKey(source, request, params), page);
+  if (!read) page = { columns: [], rows: [], identities: null, total: 0 };
+  else if (keep) {
+    const scanKey = pageKey(form, { ...request, offset: 0, limit: 0 }, scope, bound);
+    page = await filteredPage(read, request, keep, scanKey);
+  } else page = await read(request);
+  pages.set(pageKey(form, request, scope, bound), page);
   return page;
 }
 
@@ -120,9 +221,9 @@ export function sourceParams(form: DesignForm, scope: SourceScope): Record<strin
  */
 export async function firstRecordId(
   form: DesignForm,
-  params: Record<string, unknown> = {},
+  bound: Record<string, unknown> = {},
 ): Promise<unknown> {
-  const page = await loadPage(form, { offset: 0, limit: 1, sorts: [], filters: [] }, params);
+  const page = await loadPage(form, { offset: 0, limit: 1, sorts: [], filters: [] }, {}, bound);
   const record = page.rows[0];
   if (!record) return null;
   if (form.source?.kind !== "table" || !form.source.table || !page.identities) return record;
@@ -180,13 +281,32 @@ export async function loadRecord(table: string, recordId: unknown): Promise<Load
   return { record: rowObject(page.columns, page.rows[0]), identity: page.identities[0] };
 }
 
-export type Choice = { value: unknown; label: string };
+/** A choice; relationship choices also carry the target record (multi-column keys). */
+export type Choice = { value: unknown; label: string; record?: RecordValues };
 
-/** Lookup choices for a relationship selector, searched on the display column (DuckDB). */
+/**
+ * A relationship key: the stored value of a single-column key, or target column → value
+ * for a multi-column key. Empty when any part is missing.
+ */
+export type RelationshipKey = unknown;
+const emptyKey = (value: RelationshipKey) =>
+  value == null ||
+  value === "" ||
+  (typeof value === "object" &&
+    Object.values(value as RecordValues).some((part) => part == null || part === ""));
+const keyText = (value: RelationshipKey) =>
+  typeof value === "object" ? JSON.stringify(value) : String(value);
+
+/**
+ * Lookup choices for a relationship selector, searched on the display column (DuckDB).
+ * A relationship `filter` keeps only choice rows it accepts (`record` is the choice row;
+ * `scope` supplies `parent`, `form` and `app`); rows are scanned until `limit` match.
+ */
 export async function relationshipChoices(
   relationship: Relationship,
   search = "",
   limit = 50,
+  scope: Record<string, unknown> = {},
 ): Promise<Choice[]> {
   const { table, valueColumn, displayColumn } = relationship;
   const filters: Filter[] = search.trim()
@@ -198,50 +318,59 @@ export async function relationshipChoices(
         },
       ]
     : [];
-  const page = await readTablePage(table, {
+  const sorts: Sort[] = [{ column: displayColumn, descending: false }];
+  const keep = rowFilter(relationship.filter, { form: {}, app: {}, params: {}, ...scope });
+  const toChoice = (record: RecordValues): Choice => ({
+    value: record[valueColumn],
+    label: String(record[displayColumn] ?? record[valueColumn] ?? ""),
+    record,
+  });
+  if (!keep) {
+    const page = await readTablePage(table, { limit, filters, sorts });
+    return page.rows.map((row) => toChoice(rowObject(page.columns, row)));
+  }
+  const scan = await scanFiltered(
+    async (offset, size) => {
+      const page = await readTablePage(table, { offset, limit: size, filters, sorts });
+      return page.rows.map((row) => rowObject(page.columns, row));
+    },
+    keep,
     limit,
-    filters,
-    sorts: [{ column: displayColumn, descending: false }],
-  });
-  return page.rows.map((row) => {
-    const record = rowObject(page.columns, row);
-    return {
-      value: record[valueColumn],
-      label: String(record[displayColumn] ?? record[valueColumn] ?? ""),
-    };
-  });
+  );
+  return scan.matches.slice(0, limit).map(toChoice);
 }
 
-/** Display label for one stored relationship value. */
+/** Display label for one stored relationship key. */
 export async function relationshipLabel(
   relationship: Relationship,
-  value: unknown,
+  value: RelationshipKey,
 ): Promise<string> {
-  if (value == null || value === "") return "";
-  const hit = await loadRecord(relationship.table, { [relationship.valueColumn]: value }).catch(
-    () => null,
-  );
-  const label = hit ? String(hit.record[relationship.displayColumn] ?? value) : String(value);
+  if (emptyKey(value)) return "";
+  const keys =
+    typeof value === "object" ? (value as RecordValues) : { [relationship.valueColumn]: value };
+  const hit = await loadRecord(relationship.table, keys).catch(() => null);
+  const shown = hit?.record[relationship.displayColumn];
+  const label = shown != null ? String(shown) : typeof value === "object" ? "" : String(value);
   shownLabels.set(labelKey(relationship, value), label);
   return label;
 }
 
 /** Last label shown per relationship key, so a reloaded field shows it while it revalidates. */
 const shownLabels = new Map<string, string>();
-const labelKey = (relationship: Relationship, value: unknown) =>
+const labelKey = (relationship: Relationship, value: RelationshipKey) =>
   JSON.stringify([
     relationship.table,
     relationship.valueColumn,
     relationship.displayColumn,
-    String(value),
+    keyText(value),
   ]);
 
 /** The label `relationshipLabel` last returned for this key, if any (stale-while-revalidate). */
 export function cachedRelationshipLabel(
   relationship: Relationship,
-  value: unknown,
+  value: RelationshipKey,
 ): string | undefined {
-  if (value == null || value === "") return "";
+  if (emptyKey(value)) return "";
   return shownLabels.get(labelKey(relationship, value));
 }
 

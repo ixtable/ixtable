@@ -18,7 +18,7 @@ pub fn table_def_query(schema: &str, table: &str) -> String {
  'name', c.relname,\
  'columns', COALESCE((SELECT json_agg(json_build_object('name', a.attname, 'declaredType', format_type(a.atttypid, a.atttypmod), 'logicalType', 'text', 'nullable', NOT a.attnotnull,\
    'defaultExpression', CASE WHEN a.attgenerated = '' AND a.attidentity = '' THEN pg_get_expr(d.adbin, d.adrelid) END,\
-   'generatedExpression', CASE WHEN a.attgenerated <> '' THEN pg_get_expr(d.adbin, d.adrelid) END) ORDER BY a.attnum)\
+   'generatedExpression', CASE WHEN a.attgenerated <> '' THEN pg_get_expr(d.adbin, d.adrelid) END, 'identity', a.attidentity <> '') ORDER BY a.attnum)\
    FROM pg_attribute a LEFT JOIN pg_attrdef d ON d.adrelid = a.attrelid AND d.adnum = a.attnum WHERE a.attrelid = c.oid AND a.attnum > 0 AND NOT a.attisdropped), '[]'::json),\
  'primaryKey', COALESCE((SELECT {pk} FROM pg_constraint p WHERE p.conrelid = c.oid AND p.contype = 'p'), '[]'::json),\
  'primaryKeyName', (SELECT p.conname FROM pg_constraint p WHERE p.conrelid = c.oid AND p.contype = 'p'),\
@@ -38,4 +38,44 @@ pub fn table_def_query(schema: &str, table: &str) -> String {
         schema = lit(schema),
         table = lit(table),
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::data::TableSchema;
+
+    #[test]
+    fn query_reports_identity_columns() {
+        assert!(table_def_query("s", "t").contains("'identity', a.attidentity <> ''"));
+    }
+
+    #[test]
+    fn auto_increment_covers_identity_and_serial_but_not_plain_keys() {
+        let Ok(url) = std::env::var("IXTABLE_TEST_POSTGRES_URL") else {
+            eprintln!("skipping: set IXTABLE_TEST_POSTGRES_URL");
+            return;
+        };
+        let schema = format!("ixt_{}", uuid::Uuid::new_v4().simple());
+        let mut c = postgres::Client::connect(&url, postgres::NoTls).unwrap();
+        c.batch_execute(&format!(
+            "CREATE SCHEMA {schema};\
+             CREATE TABLE {schema}.plain (id integer PRIMARY KEY);\
+             CREATE TABLE {schema}.ident (id integer GENERATED ALWAYS AS IDENTITY PRIMARY KEY);\
+             CREATE TABLE {schema}.ser (id serial PRIMARY KEY);"
+        ))
+        .unwrap();
+        let auto = |c: &mut postgres::Client, table: &str| {
+            let def = crate::postgres::load_def(c, &schema, table).unwrap();
+            TableSchema::from_def(def, "table".into()).columns[0].auto_increment
+        };
+        let result = (
+            auto(&mut c, "plain"),
+            auto(&mut c, "ident"),
+            auto(&mut c, "ser"),
+        );
+        c.batch_execute(&format!("DROP SCHEMA {schema} CASCADE"))
+            .unwrap();
+        assert_eq!(result, (false, true, true));
+    }
 }

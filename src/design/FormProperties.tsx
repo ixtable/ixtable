@@ -2,6 +2,7 @@ import { Plus, Trash2 } from "lucide-react";
 import type { ReactNode } from "react";
 import type { DbObject } from "../lib/types";
 import { newId } from "../lib/utils";
+import { filterNames } from "../runtime/conditions";
 import { ExpressionField } from "./ExpressionField";
 import { type DesignForm, FORM_MODES, type FormMode } from "./schema";
 import { useDesignEditor } from "./useDesignEditor";
@@ -188,6 +189,13 @@ export function FormProperties({
                 ))}
             </select>
           </label>
+          <ExpressionField
+            label="Row filter"
+            value={form.filter}
+            names={filterNames(columns)}
+            placeholder="record.status = 'open'"
+            onChange={(filter) => change({ filter }, "Edit list filter")}
+          />
           {columns.map((column) => (
             <label key={column} className="fd-check">
               <input

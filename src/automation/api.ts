@@ -35,3 +35,7 @@ export const JOBS_CHANGED_EVENT = "ixtable:jobs-changed";
 export const notifyJobsChanged = () => {
   if (typeof window !== "undefined") window.dispatchEvent(new Event(JOBS_CHANGED_EVENT));
 };
+
+/** Ends the single-use grant of a finished app-mode sync trigger run. */
+export const releaseTriggerGrant = (grant: string) =>
+  call<void>("release_trigger_grant", { grant });

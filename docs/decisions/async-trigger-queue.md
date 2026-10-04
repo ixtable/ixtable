@@ -28,6 +28,34 @@ forms, grids, dashboards, and actions passes through trigger matching in
 - Each write carries its trigger depth. A chain deeper than 5 fails, which
   stops trigger loops.
 
+### Execution identity
+
+Each trigger has `runAs`: `app` (the default when absent) or `user`.
+
+- **app** (definer context): the trigger's steps may write tables the user's
+  role cannot, but only the writes its action declares. When Rust commits an
+  insert or update (`insert_row`, `update_row`, `execute_write_batch`) on a table with
+  enabled sync app-mode triggers for that event, it returns a grant: a random
+  token bound to the window, the trigger ids, the table and the event,
+  valid for 2 minutes. The runner passes the grant, trigger id and
+  step id with each step write and with the lookups the step makes
+  (`read_table_page`, `inspect_table`). Rust (`src-tauri/src/trigger_auth.rs`)
+  accepts it without role checks only when the grant is live for that
+  window, the trigger is enabled and runs as the app, and the action
+  declares a step with that id, table and operation (condition branches and
+  called actions included). The runner releases the grant when the trigger
+  finishes (`release_trigger_grant`), so it is single use. Async app-mode
+  jobs present their job id and current lease token instead; Rust checks the
+  lease is live (`JobStore::active_lease`) and belongs to that trigger.
+  Validation and concurrency rules still apply.
+- **user**: steps run under the user's role, as before. Rust refuses the
+  initiating insert or update before it commits when the role lacks a
+  permission the trigger's steps need (action execute, table operations,
+  saved query reads), naming the trigger and the missing grants. The
+  trigger's condition is not evaluated in Rust, so the check applies even
+  when the condition would skip the trigger. The Roles settings tab warns
+  about user-mode triggers a role cannot run.
+
 ### The queue
 
 `src-tauri/src/jobs.rs` keeps jobs in `<state>/data/jobs.db`, a SQLite file
@@ -82,6 +110,11 @@ clear message. It reports `complete_job` or `fail_job` with the step log.
   not repeat need an idempotent design or a key that a second run detects.
 - Sync trigger failures surface to the user, but they do not undo the
   initiating write.
+- App-mode trigger values are computed by TypeScript expressions. A modified
+  client can write arbitrary values, but only to the tables and operations
+  the trigger declares, and only while it holds a live grant or job lease.
+  `runQuery` steps in app mode still need the role's read access to the
+  query.
 - Actions run in TypeScript, so the queue needs the app's frontend. A Rust-only
   worker would need a second action runner, which this design avoids.
 
@@ -95,6 +128,12 @@ clear message. It reports `complete_job` or `fail_job` with the step log.
   old values on update, failure propagation, recursion depth limit.
 - `tests/unit/automation-runner.test.ts`: step behavior, stop, continue, and
   rollback failure modes, headless contexts.
+- `src-tauri/src/trigger_auth_tests.rs`: grant issue, verify, expiry,
+  single use, wrong table, operation, step or trigger, user mode, forged
+  tokens, job leases, and the up-front refusal for user-mode triggers.
+- `tests/integration/runtime-rbac-triggers.test.tsx`: a restricted role whose
+  app-mode trigger updates tables it cannot write, a user-mode trigger that
+  refuses the save with no row committed, and forged trigger writes refused.
 - `tests/integration/automation.test.tsx`: sync triggers, async triggers with
   retry after failure and cancel, deduplication by idempotency key, and
   rollback-mode actions as one RecordStore transaction.

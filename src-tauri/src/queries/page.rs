@@ -39,6 +39,19 @@ fn predicates(filters: &[Filter], first: usize) -> Result<(String, Vec<DuckValue
         parts.push(match f.operator {
             FilterOperator::IsNull => format!("{col} IS NULL"),
             FilterOperator::IsNotNull => format!("{col} IS NOT NULL"),
+            FilterOperator::In => {
+                let values = f.values.as_deref().unwrap_or_default();
+                if values.is_empty() {
+                    "FALSE".to_string()
+                } else {
+                    let mut slots = vec![];
+                    for v in values {
+                        slots.push(format!("${}", first + binds.len()));
+                        binds.push(bind_value(&f.column, None, v).map_err(|e| invalid(&e))?);
+                    }
+                    format!("{col} IN ({})", slots.join(", "))
+                }
+            }
             FilterOperator::Contains | FilterOperator::StartsWith => {
                 let text = match &f.value {
                     Some(DataValue::Text(v)) => v,

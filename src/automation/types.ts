@@ -72,6 +72,13 @@ export interface Trigger {
   idempotencyKey?: Expr;
   maxAttempts: number;
   backoffMs: number;
+  /**
+   * Execution identity. "app" (default when absent): steps run as the app, limited
+   * to the writes the trigger's action declares. "user": steps run under the
+   * signed-in user's role, and a save whose trigger the role could not run is
+   * refused before it commits.
+   */
+  runAs?: "app" | "user";
 }
 
 export interface StepLog {

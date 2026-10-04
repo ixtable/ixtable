@@ -82,6 +82,8 @@ the page, so the saved query runs once per page (a separate count runs only
 for an empty page past the first). There is no row cap, and the total counts
 every matching row. Sort and filter columns must be result columns of the
 query and are quoted; an unknown name is reported after a `LIMIT 0` probe.
+An `in` filter binds each candidate (`col IN ($n, …)`) and an empty list
+matches nothing, as on table pages.
 Text search on tables and saved queries is the same case-insensitive `ILIKE`,
 with `\`, `%` and `_` in the typed text escaped so they match literally. Filter values, limit and offset bind as
 further positional parameters after the query's own, so the same guard and

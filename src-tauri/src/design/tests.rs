@@ -184,6 +184,8 @@ fn related_list_nesting_is_one_level() {
             parent_column: "id".into(),
             columns: vec![],
             form_id: form.map(Into::into),
+            keys: vec![],
+            filter: None,
         }),
         ..control("lines", ControlKind::RelatedList)
     };
@@ -224,6 +226,8 @@ fn table_references_are_checked_against_schema() {
                     table: "regions".into(),
                     value_column: "id".into(),
                     display_column: "label".into(),
+                    keys: vec![],
+                    filter: None,
                 }),
                 ..control("region", ControlKind::Relationship)
             },
@@ -337,4 +341,156 @@ fn query_source_parameter_bindings_are_checked() {
     assert!(!errs.contains("$who"), "{errs}");
     let json = serde_json::to_value(&config.design.forms.last().unwrap().source).unwrap();
     assert_eq!(json["params"]["who"], "app.user.name");
+}
+
+#[test]
+fn filters_and_conditional_styles_round_trip_and_flag_blanks() {
+    use serde_json::json;
+    let raw = json!({
+        "id": "f", "name": "Orders", "filter": "record.total > 0",
+        "controls": [
+            {"id": "a", "kind": "decimal", "label": "Total", "binding": {"column": "total"},
+             "styles": [{"id": "s1", "when": "value < 0", "tone": "negative"}]},
+            {"id": "r", "kind": "relationship", "label": "Region",
+             "relationship": {"table": "regions", "valueColumn": "id", "displayColumn": "name",
+                              "filter": "record.active"}},
+            {"id": "l", "kind": "relatedList", "label": "Lines",
+             "related": {"table": "lines", "foreignKey": "order_id", "parentColumn": "id",
+                         "filter": "record.qty > 0"}}
+        ]
+    });
+    let form: Form = serde_json::from_value(raw.clone()).unwrap();
+    assert_eq!(form.filter.as_deref(), Some("record.total > 0"));
+    assert_eq!(form.controls[0].styles[0].tone, Tone::Negative);
+    let back = serde_json::to_value(&form).unwrap();
+    assert_eq!(back["filter"], raw["filter"]);
+    assert_eq!(back["controls"][0]["styles"], raw["controls"][0]["styles"]);
+    assert_eq!(
+        back["controls"][1]["relationship"]["filter"],
+        json!("record.active")
+    );
+    assert_eq!(
+        back["controls"][2]["related"]["filter"],
+        json!("record.qty > 0")
+    );
+    // Unset fields stay out of the serialized control.
+    let plain = serde_json::to_value(control("x", ControlKind::Text)).unwrap();
+    assert!(plain.get("styles").is_none());
+
+    let mut blank = form.clone();
+    blank.filter = Some(" ".into());
+    blank.controls[0].styles[0].when = String::new();
+    if let Some(r) = blank.controls[1].relationship.as_mut() {
+        r.filter = Some(String::new());
+    }
+    if let Some(r) = blank.controls[2].related.as_mut() {
+        r.filter = Some(String::new());
+    }
+    let found = errors(&validate(&config_with(blank)));
+    for needle in [
+        "empty list filter",
+        "conditional style with an empty condition",
+        "empty lookup filter expression",
+        "empty related list filter expression",
+    ] {
+        assert!(
+            found.iter().any(|e| e.contains(needle)),
+            "{needle}: {found:?}"
+        );
+    }
+}
+
+#[test]
+fn unknown_tone_loads_and_saves_unchanged() {
+    let yaml = "id: s1
+when: value < 0
+tone: info
+";
+    let style: ConditionalStyle = serde_yaml::from_str(yaml).unwrap();
+    assert_eq!(style.tone, Tone::Other("info".into()));
+    let back = serde_yaml::to_string(&style).unwrap();
+    assert!(back.contains("tone: info"), "{back}");
+    let known: ConditionalStyle =
+        serde_json::from_value(serde_json::json!({"id": "s", "tone": "muted"})).unwrap();
+    assert_eq!(known.tone, Tone::Muted);
+    assert_eq!(serde_json::to_value(&known).unwrap()["tone"], "muted");
+}
+
+#[test]
+fn multi_column_keys_round_trip_and_are_checked() {
+    let pair = |column: &str, target: &str| KeyPair {
+        column: column.into(),
+        target: target.into(),
+    };
+    // Single-column relationships keep their serialized shape (no `keys`).
+    let single = Relationship {
+        table: "regions".into(),
+        value_column: "id".into(),
+        display_column: "name".into(),
+        keys: vec![],
+        filter: None,
+    };
+    assert!(serde_json::to_value(&single).unwrap().get("keys").is_none());
+    let parsed: RelatedList = serde_json::from_value(serde_json::json!({
+        "table": "counts", "foreignKey": "product_id", "parentColumn": "product_id",
+        "keys": [{"column": "product_id", "target": "product_id"},
+                 {"column": "location_id", "target": "location_id"}]
+    }))
+    .unwrap();
+    assert_eq!(parsed.keys.len(), 2);
+
+    let config = config_with(Form {
+        id: "c".into(),
+        name: "Counts".into(),
+        source: Some(FormSource {
+            kind: SourceKind::Table,
+            table: Some("counts".into()),
+            ..Default::default()
+        }),
+        controls: vec![Control {
+            relationship: Some(Relationship {
+                table: "thresholds".into(),
+                value_column: "product_id".into(),
+                display_column: "label".into(),
+                keys: vec![pair("product_id", "product_id"), pair("loc", "location_id")],
+                filter: None,
+            }),
+            ..control("product_id", ControlKind::Relationship)
+        }],
+        ..Default::default()
+    });
+    let names = |list: &[&str]| list.iter().map(|c| c.to_string()).collect::<Vec<_>>();
+    let tables = HashMap::from([
+        ("counts".to_string(), names(&["product_id", "loc"])),
+        (
+            "thresholds".to_string(),
+            names(&["product_id", "location_id", "label"]),
+        ),
+    ]);
+    assert!(errors(&validate_tables(&config, &tables)).is_empty());
+    let missing = HashMap::from([
+        ("counts".to_string(), names(&["product_id"])),
+        ("thresholds".to_string(), names(&["product_id", "label"])),
+    ]);
+    let errs = errors(&validate_tables(&config, &missing));
+    assert!(
+        errs.iter().any(|e| e.contains("thresholds.location_id")),
+        "{errs:?}"
+    );
+    assert!(
+        errs.iter().any(|e| e.contains("writes counts.loc")),
+        "{errs:?}"
+    );
+
+    let mut incomplete = config.clone();
+    let form = incomplete
+        .design
+        .forms
+        .iter_mut()
+        .find(|f| f.id == "c")
+        .unwrap();
+    form.controls[0].relationship.as_mut().unwrap().keys[1].target = String::new();
+    assert!(errors(&validate(&incomplete))
+        .iter()
+        .any(|e| e.contains("key column without a target")));
 }

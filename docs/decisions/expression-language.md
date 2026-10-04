@@ -40,8 +40,60 @@ Semantics chosen for determinism:
   pattern and input length.
 
 Scope roots follow one convention across features: `record`, `form`, `app`,
-`params`, `rows`, and `value`. `check(src, knownNames)` reports unknown names
-with character positions, so editors can flag them as the user types.
+`params`, `rows`, `value`, and `parent`. `check(src, knownNames)` reports
+unknown names with character positions, so editors can flag them as the user
+types. The table of roots per expression kind is in `src/expr/README.md`.
+
+Filters and conditional styles (PRD §17.1) use the same evaluator through
+`src/runtime/conditions.ts`:
+
+- A filter is a boolean expression over one row as `record`. List forms,
+  related lists, lookup selectors, and dashboard tables each store an optional
+  `filter`. In a related list or lookup, `parent` is the record on screen.
+  Rows are still read through DuckDB, and the filter runs on the fetched rows.
+  Null, false, and evaluation errors drop the row. A syntax error is shown
+  in place of the rows.
+- Paging stays honest. A filtered list form reads its source in chunks of 500
+  rows, once, up to 50,000 rows: a table through `read_table_page`, a saved
+  query through `run_saved_query_page` with its bound parameters. It caches
+  the matches per source, bound parameters, sort, search, filter, and filter
+  inputs. Pages are slices of that cache, so paging never rescans and the
+  pager total is the real match count. If the scan stopped at 50,000 rows,
+  the list says "Filter applied to the first 50,000 rows; some matches may be
+  missing." A filtered related list scans its parent's child rows on each
+  load and pages the matches with the child list form's page size. A lookup
+  scans until it fills 50 rows. A dashboard table already holds the whole
+  query result, so its page count is exact.
+- A related list or lookup reloads only when a value its filter reads changes
+  (`filterInputs` uses `referencedNames` to pick `parent.x`, `form.y`, and so
+  on), debounced by 250 ms, so typing in other fields does not rescan.
+- A conditional style is an ordered list of `{ id, when, tone }` rules on a
+  form's input and computed controls, and `{ id, column, when, tone }` rules
+  on a dashboard table. The first rule whose `when` is true sets the tone.
+  List and related-list cells use the rules of the control bound to their
+  column. Tones are names (`positive`, `negative`, `warning`, `muted`,
+  `emphasis`) that map to `tone-*` classes, never raw CSS (PRD §6.3). Each tone
+  has a non-color cue (a glyph, bold or italic text, or a border style), so it
+  still reads in grayscale print and for color-blind users (PRD §27.4).
+- Dashboard components have `visibleWhen` and `enabledWhen`, evaluated with
+  the KPI scope (`params`, `app`) by the form helper `conditionResult()`. A
+  condition that fails to evaluate keeps the component on screen with the
+  error. A lookup whose filter does not parse shows the error under the
+  selector. There is no dashboard-only state engine.
+- `enabledWhen` is presentation, not access control (use roles for that). A
+  disabled component is wrapped in a disabled, `inert` fieldset, and list rows
+  ignore clicks and keys inside an inert container.
+- Form controls have their own `enabledWhen`, evaluated per record by
+  `enabledControls()` in `src/runtime/formState.ts`. It is separate from the
+  dashboard one: a disabled control or container makes its fields read-only,
+  keeps their stored values, and makes a related list read-only.
+- A related list with a multi-column key reads the rows that match every key
+  column, then applies its `filter` to them. Lookup choices carry their whole
+  row, so a multi-column lookup with a filter still writes every key column.
+
+Rust stores these fields in `design` and `dashboards` and only flags empty
+ones, and dashboard table style rules with no column, in validation. A tone
+it does not know loads as `Tone::Other` and saves back unchanged.
 
 ## Consequences
 
@@ -57,6 +109,13 @@ with character positions, so editors can flag them as the user types.
 
 ## Evidence
 
+- `tests/unit/conditions.test.ts`: first-match tones, row filters and their
+  names, chunked scanning, cached full scans with truncation, pager text,
+  filter inputs.
+  `tests/unit/dashboard-conditions.test.tsx`: dashboard show/enable and table
+  filter and styles. `tests/integration/expressions.test.tsx`: designer
+  authoring and runtime results for list form, related list, lookup, and
+  dashboard table filters and styles.
 - `tests/unit/expr.test.ts`: literals and arithmetic, names, null semantics,
   comparisons, functions, aggregates, dates, formatting, errors, injection
   attempts, `check`, and `referencedNames`.

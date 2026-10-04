@@ -1,7 +1,10 @@
 import { useId } from "react";
 import { expressionProblem } from "../runtime/formState";
 
-/** Expression input with live `check()` diagnostics against the form's columns. */
+/**
+ * Expression input with live `check()` diagnostics against the form's columns, or against
+ * `names` (the scope roots and fields this expression may use) when given.
+ */
 export function ExpressionField({
   label,
   value,
@@ -14,7 +17,6 @@ export function ExpressionField({
   value: string | null | undefined;
   onChange: (value: string | null) => void;
   columns?: string[];
-  /** Root names the expression may use, instead of the form scope. */
   names?: string[];
   placeholder?: string;
 }) {

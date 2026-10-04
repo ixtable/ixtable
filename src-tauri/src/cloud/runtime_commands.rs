@@ -85,6 +85,7 @@ pub async fn cloud_install_app(
         install::install_verified(
             &window_label,
             &verified,
+            &reply.manifest,
             &signature,
             &email,
             &download.path,
@@ -157,13 +158,8 @@ fn info_from(record: CloudRecord, window: &str) -> Result<CloudRuntimeInfo, AppE
 #[tauri::command]
 pub fn cloud_runtime_info(window_label: String) -> Result<CloudRuntimeInfo, AppError> {
     let dir = install::session_dir(&window_label)?;
-    let record = install::read_record(&dir).ok_or_else(|| {
-        err(
-            "INSTALLATION_CORRUPT",
-            "The cloud installation record is missing",
-        )
-    })?;
-    info_from(record, &window_label)
+    // Owner flag and role come only from the re-verified signed manifest.
+    info_from(install::verified_record(&dir)?, &window_label)
 }
 
 #[derive(Debug, Serialize)]
@@ -189,8 +185,7 @@ pub async fn cloud_key_grant(
 ) -> Result<GrantResult, AppError> {
     http::offload(move || {
         let dir = install::session_dir(&window_label)?;
-        let record = install::read_record(&dir)
-            .ok_or_else(|| err("INSTALLATION_CORRUPT", "The cloud installation record is missing"))?;
+        let record = install::verified_record(&dir)?;
         let ds = crate::manager()?.config(&window_label)?.datasource;
         if !ds.is_postgres() {
             return Ok(GrantResult { needed: false, expires_at: None, attached: true, error: None });

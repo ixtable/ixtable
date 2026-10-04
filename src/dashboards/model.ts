@@ -9,6 +9,7 @@ import {
   validateLayout,
 } from "../grid/engine";
 import { type DesignForm, FORM_MODES, type FormMode } from "../design/schema";
+import { clampRegions, type RegionRenames, remapRegion } from "../grid/regions";
 import type { GridIssue, GridLayout, SpanConstraints } from "../grid/types";
 import type { DocumentConfig } from "../lib/types";
 import { newId } from "../lib/utils";
@@ -124,14 +125,19 @@ export function duplicateDashboard(dashboard: Dashboard, name: string): Dashboar
 }
 
 /** Clamps every placement into the layout's base columns (after a column-count change). */
-export function withLayout(dashboard: Dashboard, layout: GridLayout): Dashboard {
+export function withLayout(
+  dashboard: Dashboard,
+  next: GridLayout,
+  renames: RegionRenames = {},
+): Dashboard {
+  const layout = { ...next, namedRegions: clampRegions(next.namedRegions, next.columns.length) };
   return {
     ...dashboard,
     layout,
     components: dashboard.components.map((c) => ({
       ...c,
       placement: resizePlacement(
-        movePlacement(c.placement, {}, layout),
+        movePlacement(remapRegion(c.placement, layout.namedRegions, renames), {}, layout),
         {},
         layout,
         constraintsFor(c.kind),
@@ -206,6 +212,8 @@ export function dashboardIssues(dashboard: Dashboard, config: DocumentConfig): G
       error(c.id, `button "${title}" runs an action that does not exist`);
     if (c.kind === "filter" && !dashboard.filters.some((f) => f.id === c.filterId))
       error(c.id, `"${title}" shows a filter that does not exist`);
+    if (c.kind === "table" && (c.styles ?? []).some((s) => !s.column?.trim()))
+      error(c.id, `"${title}" has a conditional style with no column`);
   }
   return issues;
 }

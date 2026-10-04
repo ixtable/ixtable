@@ -96,8 +96,11 @@ fn check_builder(query: &SavedQuery, builder: &serde_json::Value) -> Vec<String>
         .map(|s| s.alias.as_str())
         .unwrap_or("");
     for j in &model.joins {
-        if !matches!(j.kind.as_str(), "inner" | "left") {
-            problems.push(format!("join kind {:?} must be inner or left", j.kind));
+        if !matches!(j.kind.as_str(), "inner" | "left" | "right" | "full") {
+            problems.push(format!(
+                "join kind {:?} must be inner, left, right, or full",
+                j.kind
+            ));
         }
         if !known(&j.source) || j.source == base {
             problems.push(format!("join refers to unknown source {:?}", j.source));

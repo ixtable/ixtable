@@ -1,4 +1,5 @@
-import type { GridLayout, Placement } from "../grid/types";
+import type { GridLayout, GridTrack, Placement } from "../grid/types";
+import { clampRegions, type RegionRenames, remapRegion } from "../grid/regions";
 import { newId } from "../lib/utils";
 import {
   type ControlKind,
@@ -52,33 +53,44 @@ export function removeTab(form: DesignForm, tabsId: string, tabId: string): Desi
   };
 }
 
-/** Replaces a container's (or the form's) grid and clamps the controls placed on it. */
+/**
+ * Replaces a container's (or the form's) grid, keeps its regions inside the columns, and
+ * clamps the controls placed on it. Region references follow `renames`; references to a
+ * region that no longer exists are cleared, so the control uses its column and row again.
+ */
 export function setLayout(
   form: DesignForm,
   containerId: string | null,
-  layout: GridLayout,
+  next: GridLayout,
+  renames: RegionRenames = {},
 ): DesignForm {
-  const columns = layout.columns.length;
+  const columns = next.columns.length;
+  const layout = { ...next, namedRegions: clampRegions(next.namedRegions, columns) };
   return {
     ...form,
     layout: containerId ? form.layout : layout,
     controls: form.controls.map((control) => {
       const onGrid = (control.parent?.id ?? null) === containerId;
-      const next = control.id === containerId ? { ...control, layout } : control;
-      return onGrid ? { ...next, placement: clampPlacement(next.placement, columns) } : next;
+      const placement = remapRegion(control.placement, layout.namedRegions, renames);
+      const updated = control.id === containerId ? { ...control, layout } : control;
+      return onGrid ? { ...updated, placement: clampPlacement(placement, columns) } : updated;
     }),
   };
 }
 
-/** Sets the number of equal-width base columns. */
+/** Keeps the first `count` tracks and appends `1fr` tracks; authored tracks are never rewritten. */
+export const resizeTracks = (tracks: GridTrack[], count: number): GridTrack[] => {
+  const length = Math.max(1, Math.min(24, Math.round(count) || 1));
+  return Array.from(
+    { length },
+    (_, i) => tracks[i] ?? { kind: "fr" as const, value: 1, min: null, max: null },
+  );
+};
+
+/** Sets the number of base columns, keeping existing tracks and adding or removing at the end. */
 export const withColumnCount = (layout: GridLayout, count: number): GridLayout => ({
   ...layout,
-  columns: Array.from({ length: Math.max(1, Math.min(24, count)) }, () => ({
-    kind: "fr" as const,
-    value: 1,
-    min: null,
-    max: null,
-  })),
+  columns: resizeTracks(layout.columns, count),
 });
 
 /** Adds a control of `kind` to the container `parent` (the form grid when null). */

@@ -104,6 +104,16 @@ jobs:
         run: cargo test --lib
       - name: Build NAPI test bridge
         run: npm run pretest
+      # Diagnostic (docs/decisions/windows-support.md): list the bridge DLL's imports so
+      # a load failure ("procedure could not be found") names the missing symbol.
+      - name: Show test bridge DLL imports
+        if: runner.os == 'Windows'
+        shell: pwsh
+        continue-on-error: true
+        run: |
+          $vs = & "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe" -latest -property installationPath
+          $dumpbin = Get-ChildItem "$vs\VC\Tools\MSVC\*\bin\Hostx64\x64\dumpbin.exe" | Select-Object -First 1
+          Get-ChildItem src-tauri/target/debug/*.dll | ForEach-Object { & $dumpbin.FullName /imports $_.FullName }
       # Same as `npm test`, plus JUnit reports. Golden apps run in their own job.
       - name: Unit tests (vitest)
         run: npx vitest run --passWithNoTests --reporter=default --reporter=junit --outputFile.junit=reports/unit.xml
@@ -182,6 +192,16 @@ jobs:
       - uses: ./.github/actions/setup-desktop
       - name: Build NAPI test bridge
         run: npm run pretest
+      # Diagnostic (docs/decisions/windows-support.md): list the bridge DLL's imports so
+      # a load failure ("procedure could not be found") names the missing symbol.
+      - name: Show test bridge DLL imports
+        if: runner.os == 'Windows'
+        shell: pwsh
+        continue-on-error: true
+        run: |
+          $vs = & "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe" -latest -property installationPath
+          $dumpbin = Get-ChildItem "$vs\VC\Tools\MSVC\*\bin\Hostx64\x64\dumpbin.exe" | Select-Object -First 1
+          Get-ChildItem src-tauri/target/debug/*.dll | ForEach-Object { & $dumpbin.FullName /imports $_.FullName }
       # CRM, inventory, and work-order journeys (PRD §26). Fails when no spec runs.
       - name: Golden application suite
         run: >-

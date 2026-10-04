@@ -189,6 +189,8 @@ export const REPORT_SCOPE_NAMES = [
   "params",
   "page",
   "pages",
+  "groupPage",
+  "groupPages",
   "report",
   "group",
   "rowNumber",
@@ -208,3 +210,19 @@ export const KIND_LABELS: Record<ComponentKind, string> = {
   rectangle: "Rectangle",
   table: "Table",
 };
+
+export const isPageBand = (key: BandKey) => key === "pageHeader" || key === "pageFooter";
+
+/** Definition problems the designer shows; mirrors `reports::validate` in Rust. */
+export function reportProblems(report: Report): string[] {
+  return bandEntries(report)
+    .filter((e) => isPageBand(e.key))
+    .flatMap((e) =>
+      e.band.components
+        .filter((c) => c.kind === "table")
+        .map(
+          (c) =>
+            `${e.label} component ${c.id}: tables are not supported in page headers or footers`,
+        ),
+    );
+}

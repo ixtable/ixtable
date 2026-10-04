@@ -136,7 +136,6 @@ it.skipIf(!postgresUrl)(
   "switches reads and writes to PostgreSQL without storing the password in the document",
   async () => {
     const url = new URL(postgresUrl!);
-    // The server's password when it requires one; any sentinel under trust auth.
     const secret = decodeURIComponent(url.password) || "not-needed-with-trust-auth";
     const table = `ixt_ui_${Date.now()}`;
     const user = await renderNewDocument();

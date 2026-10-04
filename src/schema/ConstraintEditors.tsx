@@ -52,7 +52,13 @@ export function ForeignKeyEditor({
   // Referential actions the record store supports (`capabilities.foreignKeyActions`).
   actions?: string[];
   // Prefills the editor, e.g. from a relationship drawn on the diagram.
-  initial?: { columns: string[]; targetTable: string; targetColumns: string[] };
+  initial?: {
+    columns: string[];
+    targetTable: string;
+    targetColumns: string[];
+    onUpdate?: string | null;
+    onDelete?: string | null;
+  };
   addLabel?: string;
   onAdd: (fk: CreateForeignKeySpec) => void;
 }) {
@@ -63,8 +69,8 @@ export function ForeignKeyEditor({
       (initial?.columns ?? []).map((c, i) => [c, initial?.targetColumns[i] ?? ""]),
     ),
   );
-  const [onUpdate, setOnUpdate] = useState(actions[0] ?? "NO ACTION");
-  const [onDelete, setOnDelete] = useState(actions[0] ?? "NO ACTION");
+  const [onUpdate, setOnUpdate] = useState(initial?.onUpdate ?? actions[0] ?? "NO ACTION");
+  const [onDelete, setOnDelete] = useState(initial?.onDelete ?? actions[0] ?? "NO ACTION");
   const targetColumns = tables.find((t) => t.name === target)?.columns.map((c) => c.name) ?? [];
   const ready = source.length > 0 && target && source.every((c) => targets[c]);
   return (

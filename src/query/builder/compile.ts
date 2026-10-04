@@ -125,13 +125,13 @@ export function compileBuilder(model: BuilderModel): string {
   const lines: string[] = [];
   const selected = model.fields.filter((f) => f.selected);
   const expr = (f: BuilderField) => aggregate(f.aggregate, column(f.source, f.column, aliases));
-  lines.push(
-    `SELECT ${
-      selected.length
-        ? selected.map((f) => `${expr(f)} AS ${quoteIdent(fieldLabel(f))}`).join(", ")
-        : "*"
-    }`,
-  );
+  let projection = "*";
+  if (selected.length)
+    projection = selected.map((f) => `${expr(f)} AS ${quoteIdent(fieldLabel(f))}`).join(", ");
+  else if (model.groupBy.length)
+    projection = model.groupBy.map((g) => column(g.source, g.column, aliases)).join(", ");
+  else if (model.fields.length) throw new BuilderError("Select at least one output field");
+  lines.push(`SELECT ${projection}`);
   lines.push(`FROM ${quoteIdent(base.table)} AS ${quoteIdent(base.alias)}`);
   const available = new Set([base.alias]);
   for (const source of joined) {
@@ -155,7 +155,9 @@ export function compileBuilder(model: BuilderModel): string {
   }
   const where = group(model.filters, aliases, false);
   if (where) lines.push(`WHERE ${where}`);
-  const aggregated = selected.some((f) => f.aggregate);
+  const sortFields = model.orderBy.map((o) => model.fields.find((f) => f.id === o.fieldId));
+  const aggregated =
+    selected.some((f) => f.aggregate) || sortFields.some((f) => f?.aggregate);
   const grouping = model.groupBy.map((g) => column(g.source, g.column, aliases));
   if (aggregated || grouping.length)
     for (const f of selected.filter((f) => !f.aggregate)) {

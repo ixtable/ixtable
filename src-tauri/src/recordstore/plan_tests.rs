@@ -61,3 +61,38 @@ fn renames_list_the_definitions_that_use_the_old_name() {
     let (deps, warnings) = rename_dependents(&config, "unused", &rename_table);
     assert!(deps.is_empty() && warnings.is_empty());
 }
+
+#[test]
+fn column_dependents_ignore_control_kinds() {
+    use super::commands::config_dependents;
+    use crate::archive::DocumentConfig;
+    use crate::design::{DesignSchema, Form};
+    let form = |id: &str, column: &str| -> Form {
+        serde_json::from_value(serde_json::json!({
+            "id": id,
+            "name": id,
+            "source": { "kind": "table", "table": "notes" },
+            "controls": [{
+                "id": format!("{id}_c"),
+                "kind": "text",
+                "label": "Text",
+                "binding": { "column": column }
+            }]
+        }))
+        .unwrap()
+    };
+    let config = DocumentConfig {
+        design: DesignSchema {
+            version: 3,
+            forms: vec![form("bound", "text"), form("other", "title")],
+            navigation: vec![],
+            start_page: None,
+        },
+        ..Default::default()
+    };
+    let ids: Vec<_> = config_dependents(&config, "text")
+        .into_iter()
+        .map(|d| d.id)
+        .collect();
+    assert_eq!(ids, ["bound"]);
+}

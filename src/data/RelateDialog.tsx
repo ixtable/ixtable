@@ -32,6 +32,8 @@ export function RelateDialog({
   const [preview, setPreview] = useState<{ fk: CreateForeignKeySpec; plan: ChangePlan } | null>(
     null,
   );
+  // The last previewed relationship, restored when the preview is cancelled.
+  const [draft, setDraft] = useState<CreateForeignKeySpec | null>(null);
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
   const columns = schemas.find((s) => s.name === child)?.columns.map((c) => c.name) ?? [];
@@ -57,7 +59,10 @@ export function RelateDialog({
         confirmLabel="Create relationship"
         busy={busy}
         error={error}
-        onCancel={onCancel}
+        onCancel={() => {
+          setError("");
+          setPreview(null);
+        }}
         onConfirm={() =>
           run(async () => {
             await applyTableChanges(child, op(preview.fk));
@@ -67,13 +72,14 @@ export function RelateDialog({
       />
     );
   const initial =
-    drawn && drawn.childTable === child
+    draft ??
+    (drawn && drawn.childTable === child
       ? {
           columns: [drawn.childColumn],
           targetTable: drawn.parentTable,
           targetColumns: [drawn.parentColumn],
         }
-      : undefined;
+      : undefined);
   return (
     <div className="schema-dialog-backdrop">
       <div
@@ -86,7 +92,10 @@ export function RelateDialog({
         <h2 id={titleId}>New relationship</h2>
         <label className="grid gap-1">
           Referencing table
-          <select value={child} onChange={(e) => setChild(e.target.value)}>
+          <select value={child} onChange={(e) => {
+            setDraft(null);
+            setChild(e.target.value);
+          }}>
             {schemas.map((s) => (
               <option key={s.name}>{s.name}</option>
             ))}
@@ -100,7 +109,10 @@ export function RelateDialog({
           initial={initial}
           addLabel="Preview relationship"
           onAdd={(fk) =>
-            run(async () => setPreview({ fk, plan: await previewTableChanges(child, op(fk)) }))
+            run(async () => {
+              setDraft(fk);
+              setPreview({ fk, plan: await previewTableChanges(child, op(fk)) });
+            })
           }
         />
         {error && (

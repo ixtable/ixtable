@@ -134,10 +134,30 @@ pub fn config_dependents(config: &DocumentConfig, table: &str) -> Vec<Dependent>
                     || (s.contains(char::is_whitespace) && super::plan::mentions(s, table))
             }
             Value::Array(a) => a.iter().any(|x| hit(x, table)),
-            Value::Object(o) => o.values().any(|x| hit(x, table)),
+            Value::Object(o) => o
+                .iter()
+                .any(|(k, x)| !DESCRIPTIVE_KEYS.contains(&k.as_str()) && hit(x, table)),
             _ => false,
         }
     }
+    /// Enum-like keys (control kinds, types) that never hold a table or column reference.
+    const DESCRIPTIVE_KEYS: &[&str] = &[
+        "kind",
+        "type",
+        "logicalType",
+        "declaredType",
+        "physicalType",
+        "format",
+        "direction",
+        "aggregate",
+        "mode",
+        "objectKind",
+        "objectType",
+        "status",
+        "align",
+        "variant",
+        "label",
+    ];
     /// Reports the shallowest objects with an id and a name whose subtree mentions the table.
     fn walk(kind: &str, v: &Value, table: &str, out: &mut Vec<Dependent>) {
         match v {

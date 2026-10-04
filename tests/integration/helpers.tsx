@@ -68,19 +68,24 @@ export async function readPage(table: string, sorts: unknown[] = [], filters: un
 }
 
 /** Dispatches a database-changed event and waits until the metadata reload it starts finishes. */
+export function announceDatabaseChange() {
+  act(() => {
+    window.dispatchEvent(new Event("ixtable:database-changed"));
+  });
+}
+
 export async function refreshDatabase() {
   const idle = () =>
     waitFor(
       () => {
         const objects = screen.queryByRole("region", { name: "Database objects" });
         expect(objects && within(objects).queryByRole("status")).toBeNull();
+        expect(screen.queryByText("Refreshing schema…")).toBeNull();
       },
       { timeout: 20_000 },
     );
   await idle();
-  act(() => {
-    window.dispatchEvent(new Event("ixtable:database-changed"));
-  });
+  announceDatabaseChange();
   await idle();
 }
 

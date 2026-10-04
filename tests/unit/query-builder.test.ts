@@ -28,6 +28,38 @@ describe("compileBuilder", () => {
     expect(compileBuilder(model({ sources: [orders] }))).toBe('SELECT *\nFROM "orders" AS "o"');
   });
 
+  it("selects grouped columns when Group by is set and no field is output", () => {
+    const sql = compileBuilder(
+      model({ sources: [orders], groupBy: [{ source: "o", column: "region" }] }),
+    );
+    expect(sql).toBe('SELECT "o"."region"\nFROM "orders" AS "o"\nGROUP BY "o"."region"');
+  });
+
+  it("requires an output field when fields exist", () => {
+    const m = model({
+      sources: [orders],
+      fields: [{ id: "f", source: "o", column: "id", selected: false }],
+    });
+    expect(() => compileBuilder(m)).toThrow(/at least one output field/);
+    expect(tryCompile(m).error).toMatch(/at least one output field/);
+  });
+
+  it("groups when an aggregate is used only for sorting", () => {
+    const sql = compileBuilder(
+      model({
+        sources: [orders],
+        fields: [
+          { id: "r", source: "o", column: "region", selected: true },
+          { id: "a", source: "o", column: "amount", aggregate: "sum", selected: false },
+        ],
+        orderBy: [{ id: "s", fieldId: "a", direction: "desc" }],
+      }),
+    );
+    expect(sql).toBe(
+      'SELECT "o"."region" AS "region"\nFROM "orders" AS "o"\nGROUP BY "o"."region"\nORDER BY sum("o"."amount") DESC',
+    );
+  });
+
   it("quotes identifiers and aliases", () => {
     const sql = compileBuilder(
       model({

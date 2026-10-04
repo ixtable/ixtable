@@ -245,15 +245,19 @@ export function DatabaseWorkbench() {
             {designingSelected && !schemasFresh && !designerOpen ? (
               <p role="status">Loading table design…</p>
             ) : designingSelected && selectedSchema ? (
-              <TableSchemaDesigner
-                key={JSON.stringify(selectedSchema)}
-                schema={selectedSchema}
-                tables={schemas}
-                capabilities={capabilities}
-                onChanged={(name) => afterSchemaChange(name)}
-                onDropped={() => afterSchemaChange(null)}
-                onCancel={() => setDesigningSelected(false)}
-              />
+              // Disabled while reloading: a remount on new schema would drop staged changes.
+              <fieldset className="contents" disabled={!schemasFresh} aria-busy={!schemasFresh}>
+                {!schemasFresh && <p role="status">Refreshing schema…</p>}
+                <TableSchemaDesigner
+                  key={JSON.stringify(selectedSchema)}
+                  schema={selectedSchema}
+                  tables={schemas}
+                  capabilities={capabilities}
+                  onChanged={(name) => afterSchemaChange(name)}
+                  onDropped={() => afterSchemaChange(null)}
+                  onCancel={() => setDesigningSelected(false)}
+                />
+              </fieldset>
             ) : creating ? (
               <CreateTableForm
                 tables={schemas}

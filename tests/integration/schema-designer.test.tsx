@@ -319,3 +319,39 @@ it("creates a relationship from the diagram through the prefilled relationship e
   }, LONG);
   await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull(), LONG);
 });
+
+it("returns to the relationship editor with its choices when the preview is cancelled", async () => {
+  const user = await renderNewDocument();
+  await createTable("parts", [
+    { name: "id", declaredType: "INTEGER", nullable: false, primaryKeyPosition: 1 },
+  ]);
+  await createTable("bins", [
+    { name: "id", declaredType: "INTEGER", nullable: false, primaryKeyPosition: 1 },
+    { name: "part", declaredType: "INTEGER" },
+  ]);
+  await refreshDatabase();
+  await user.click(await screen.findByRole("button", { name: "New relationship" }, LONG));
+  let editor = await screen.findByRole("dialog", { name: "New relationship" }, LONG);
+  await user.selectOptions(
+    within(editor).getByRole("combobox", { name: "Referencing table" }),
+    "bins",
+  );
+  await user.click(within(editor).getByRole("checkbox", { name: "Relationship columns: part" }));
+  await user.selectOptions(within(editor).getByRole("combobox", { name: "Target table" }), "parts");
+  await user.selectOptions(
+    within(editor).getByRole("combobox", { name: "Target column for part" }),
+    "id",
+  );
+  await user.selectOptions(within(editor).getByRole("combobox", { name: "On delete" }), "CASCADE");
+  await user.click(within(editor).getByRole("button", { name: "Preview relationship" }));
+  const preview = await screen.findByRole("dialog", { name: "Relate bins (part) to parts?" }, LONG);
+  await user.click(within(preview).getByRole("button", { name: "Cancel" }));
+  editor = await screen.findByRole("dialog", { name: "New relationship" }, LONG);
+  expect(
+    within(editor).getByRole("checkbox", { name: "Relationship columns: part" }),
+  ).toBeChecked();
+  expect(within(editor).getByRole("combobox", { name: "Target table" })).toHaveValue("parts");
+  expect(within(editor).getByRole("combobox", { name: "On delete" })).toHaveValue("CASCADE");
+  await user.click(within(editor).getByRole("button", { name: "Cancel" }));
+  await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull(), LONG);
+});

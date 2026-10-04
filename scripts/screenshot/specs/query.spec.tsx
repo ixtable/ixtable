@@ -82,3 +82,69 @@ it("builds a joined, grouped query with a parameter in the visual builder", asyn
     "true",
   );
 });
+
+it("groups by a non-output column with an aggregate over a multi-condition outer join", async () => {
+  const user = await renderNewDocument();
+  await seedSales();
+  await openMode(user, "Query");
+  await screen.findByRole("heading", { name: "Query" }, LONG);
+  await user.click(screen.getByRole("button", { name: "New query" }));
+  await user.selectOptions(await screen.findByRole("combobox", { name: "Source table" }), "orders");
+  await user.click(
+    await screen.findByRole(
+      "button",
+      { name: "Join customers on o.customer_id = customers.id" },
+      LONG,
+    ),
+  );
+  await user.selectOptions(screen.getByRole("combobox", { name: "Join type for c" }), "left");
+  await user.click(screen.getByRole("button", { name: "Add condition to c" }));
+  await user.selectOptions(
+    screen.getByRole("combobox", { name: "Join c left column 2" }),
+    "o.customer_id",
+  );
+  await user.selectOptions(screen.getByRole("combobox", { name: "Join c right column 2" }), "id");
+  await user.click(await screen.findByRole("checkbox", { name: "c.name" }, LONG));
+  await user.click(screen.getByRole("checkbox", { name: "o.amount" }));
+  await user.selectOptions(screen.getByRole("combobox", { name: "Aggregate for o.amount" }), "sum");
+  await user.type(screen.getByRole("textbox", { name: "Alias for o.amount" }), "total");
+  await user.click(screen.getByRole("checkbox", { name: "c.id" }));
+  await user.click(screen.getByRole("checkbox", { name: "Output c.id" }));
+  await user.selectOptions(screen.getByRole("combobox", { name: "Group by column" }), "c.id");
+  await user.click(screen.getByRole("button", { name: "Add group by" }));
+  expect(screen.getByRole("list", { name: "Group by columns" })).toHaveTextContent("c.id");
+  await user.click(screen.getByRole("button", { name: "Add sort" }));
+  await user.selectOptions(screen.getByRole("combobox", { name: "Sort 1 field" }), "c.id");
+  await user.selectOptions(screen.getByRole("combobox", { name: "Sort 1 direction" }), "desc");
+
+  const preview = await screen.findByRole("region", { name: "Preview" }, LONG);
+  await waitFor(() => {
+    const rows = within(preview).getAllByRole("row").slice(1);
+    expect(rows.map((row) => within(row).getAllByRole("cell")[0].textContent)).toEqual([
+      "Harbor & Pine",
+      "Juniper Supply",
+      "Northstar Goods",
+    ]);
+  }, LONG);
+  await captureDocument(document, {
+    name: "query-03-group-by-multi-join",
+    expand: ".query-tab-panel",
+    expectations: [
+      "The customers join is a Left join with two ON conditions listed under it.",
+      "The Group by panel lists c.id (selected but not output) and o.amount is summed as total.",
+      "The preview lists Harbor & Pine, Juniper Supply, then Northstar Goods with their totals.",
+    ],
+  });
+  await user.click(screen.getByRole("tab", { name: "SQL" }));
+  const sql = screen.getByLabelText("Generated SQL");
+  expect(sql).toHaveTextContent(
+    'LEFT JOIN "customers" AS "c" ON "o"."customer_id" = "c"."id" AND "o"."customer_id" = "c"."id"',
+  );
+  expect(sql).toHaveTextContent('GROUP BY "c"."id", "c"."name"');
+  await captureDocument(document, {
+    name: "query-04-group-by-sql",
+    expectations: [
+      "The SQL shows a LEFT JOIN with two AND-ed conditions, GROUP BY c.id, c.name, and ORDER BY c.id DESC.",
+    ],
+  });
+});

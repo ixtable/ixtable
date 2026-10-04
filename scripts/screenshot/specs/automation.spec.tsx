@@ -179,3 +179,46 @@ it("runs action buttons, sync and async triggers, and role previews in the Work 
     ],
   });
 });
+
+it("switches a trigger to run as the signed-in user and warns on roles that cannot run it", async () => {
+  const user = await startFromTemplate("Work orders");
+  await openMode(user, "Automation");
+  await screen.findByRole("heading", { name: "Automation" }, LONG);
+  await user.click(screen.getByRole("tab", { name: "Triggers" }));
+  await user.click(
+    await screen.findByRole("button", { name: /^Log new work orders in the background/ }, LONG),
+  );
+  const runAs = await screen.findByLabelText("Run as");
+  expect(runAs).toHaveValue("app");
+  expect(
+    within(runAs)
+      .getAllByRole("option")
+      .map((o) => o.textContent),
+  ).toEqual(["App — the trigger's own steps", "Signed-in user's role"]);
+  await user.selectOptions(runAs, "user");
+  await waitFor(() => expect(screen.getByLabelText("Run as")).toHaveValue("user"), LONG);
+  await captureDocument(document, {
+    name: "automation-06-run-as-user",
+    expectations: [
+      "The selected background logging trigger shows a Run as select reading 'Signed-in user's role'.",
+      "The help text explains the difference between running as the app and as the signed-in user.",
+    ],
+  });
+
+  await openMode(user, "Settings");
+  await user.click(await screen.findByRole("tab", { name: "Roles" }, LONG));
+  await user.click(await screen.findByRole("button", { name: "Technician" }, LONG));
+  const warning = await screen.findByText(
+    /Trigger "Log new work orders in the background" runs as the signed-in user/,
+    {},
+    LONG,
+  );
+  expect(warning).toHaveTextContent("Saves that fire it will be refused for this role.");
+  await captureDocument(document, {
+    name: "roles-03-user-trigger-warning",
+    expectations: [
+      "The Technician role shows a warning that the background logging trigger runs as the signed-in user.",
+      "The warning names the permissions the role is missing and says its saves will be refused.",
+    ],
+  });
+});

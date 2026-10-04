@@ -648,3 +648,113 @@ fn manifest_roles_map_like_the_frontend() {
     m.role_id = Some("role-sales".into());
     assert_eq!(install::manifest_role(&m).unwrap().id, "role-sales");
 }
+
+// Serves one canned status per connection and records each request body.
+type Bodies = std::sync::Arc<std::sync::Mutex<Vec<Vec<u8>>>>;
+fn mock_storage(statuses: Vec<u16>) -> (String, Bodies) {
+    use std::io::{Read, Write};
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let url = format!("http://{}", listener.local_addr().unwrap());
+    let bodies: Bodies = Default::default();
+    let seen = bodies.clone();
+    std::thread::spawn(move || {
+        for status in statuses {
+            let Ok((mut s, _)) = listener.accept() else {
+                return;
+            };
+            let mut buf = Vec::new();
+            let mut chunk = [0u8; 4096];
+            let (head_end, len) = loop {
+                let n = s.read(&mut chunk).unwrap_or(0);
+                if n == 0 {
+                    return;
+                }
+                buf.extend_from_slice(&chunk[..n]);
+                if let Some(i) = buf.windows(4).position(|w| w == b"\r\n\r\n") {
+                    let head = String::from_utf8_lossy(&buf[..i]).to_lowercase();
+                    let len = head
+                        .lines()
+                        .find_map(|l| l.strip_prefix("content-length:"))
+                        .map(|v| v.trim().parse::<usize>().unwrap())
+                        .unwrap_or(0);
+                    break (i + 4, len);
+                }
+            };
+            while buf.len() < head_end + len {
+                let n = s.read(&mut chunk).unwrap_or(0);
+                if n == 0 {
+                    break;
+                }
+                buf.extend_from_slice(&chunk[..n]);
+            }
+            seen.lock().unwrap().push(buf[head_end..].to_vec());
+            let _ = write!(
+                s,
+                "HTTP/1.1 {status} X\r\ncontent-length: 2\r\nconnection: close\r\n\r\n{{}}"
+            );
+        }
+    });
+    (url, bodies)
+}
+
+fn upload_with(statuses: Vec<u16>) -> (Result<(), crate::manager::AppError>, usize) {
+    let (url, bodies) = mock_storage(statuses);
+    let file = std::env::temp_dir().join(format!("ixt-upload-{}.ixt", uuid::Uuid::new_v4()));
+    std::fs::write(&file, b"archive-bytes").unwrap();
+    let cfg = config::CloudConfig {
+        url: url.clone(),
+        anon_key: "anon".into(),
+        site_url: String::new(),
+        configured: true,
+        public_key_fingerprint: None,
+    };
+    let result = http::upload_file_with(
+        &cfg,
+        &format!("{url}/storage/v1/object/upload/sign/x"),
+        &file,
+        "",
+        4,
+        std::time::Duration::from_millis(1),
+    );
+    let _ = std::fs::remove_file(&file);
+    let bodies = bodies.lock().unwrap();
+    assert!(bodies.iter().all(|b| b == b"archive-bytes"));
+    (result, bodies.len())
+}
+
+#[test]
+fn uploads_retry_transient_failures_with_the_full_body_each_time() {
+    let (result, attempts) = upload_with(vec![503, 429, 200]);
+    assert!(result.is_ok(), "{result:?}");
+    assert_eq!(attempts, 3);
+}
+
+#[test]
+fn uploads_never_retry_auth_or_precondition_failures() {
+    for status in [401, 403, 409, 412, 413] {
+        let (result, attempts) = upload_with(vec![status, 200]);
+        assert!(result.is_err(), "{status}");
+        assert_eq!(attempts, 1, "{status} must not be retried");
+    }
+}
+
+#[test]
+fn uploads_give_up_after_the_bounded_number_of_attempts() {
+    let (result, attempts) = upload_with(vec![500, 502, 503, 504, 200]);
+    assert_eq!(result.unwrap_err().code, "CLOUD_UNAVAILABLE");
+    assert_eq!(attempts, 4);
+}
+
+#[test]
+fn retry_backs_off_exponentially_and_retries_connect_errors() {
+    let mut calls = 0;
+    let start = std::time::Instant::now();
+    let out = http::with_retry(3, std::time::Duration::from_millis(10), |_| {
+        calls += 1;
+        Err::<(), _>(err("CLOUD_OFFLINE", "down"))
+    });
+    assert_eq!(out.unwrap_err().code, "CLOUD_OFFLINE");
+    assert_eq!(calls, 3);
+    // 10 ms + 20 ms between the three attempts.
+    assert!(start.elapsed() >= std::time::Duration::from_millis(30));
+}

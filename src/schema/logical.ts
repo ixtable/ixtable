@@ -1,4 +1,5 @@
 import type { DataValue, DbColumn } from "../lib/types";
+import type { StoreCapabilities } from "./types";
 
 /** Logical column types (PRD §11), in picker order. */
 export const LOGICAL_TYPES = [
@@ -90,3 +91,17 @@ export const modeLabel = (mode: string) =>
     : mode === "rebuild"
       ? "Requires table rebuild"
       : "Not supported by this store";
+
+/** The store's display name, or null while capabilities are loading. */
+export const storeLabel = (capabilities: StoreCapabilities | null) =>
+  !capabilities
+    ? null
+    : capabilities.store === "postgres"
+      ? "PostgreSQL"
+      : capabilities.store === "sqlite"
+        ? "SQLite"
+        : capabilities.store;
+
+/** Base names of the logical types the store maps (`decimal(p,s)` → `decimal`), or undefined while loading. */
+export const storeTypes = (capabilities: StoreCapabilities | null) =>
+  capabilities?.logicalTypes.map((t) => parseLogical(t.logicalType.replace("(p,s)", "")).base);

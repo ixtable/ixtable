@@ -1,6 +1,7 @@
 import type { SyntheticEvent } from "react";
 import { GridCanvas, GridItem } from "../grid";
 import type { Placement } from "../grid/types";
+import { controlConstraints } from "./constraints";
 import { controlKindLabel, type DesignControl, type DesignForm } from "./schema";
 
 type Props = {
@@ -41,6 +42,7 @@ function CanvasGrid(props: Props & { parent: DesignControl | null; tab?: string 
           id={control.id}
           placement={control.placement}
           label={control.label}
+          constraints={controlConstraints(control.kind, layout.columns.length)}
         >
           <ControlCard {...props} control={control} />
         </GridItem>

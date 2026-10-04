@@ -74,6 +74,39 @@ health checks to the copy, then swaps it in. The previous version is kept in
 `previous/`, and any failure restores it. An older version installs only when
 the user confirms a downgrade.
 
+A manual update or downgrade stops at a confirm step first (PRD §22.3 step 7).
+It shows the release notes (line breaks kept) and the migrations that would
+run on this installation's records, with their SQL. A downgrade is applied
+only from its explicit "Install older version … anyway" button.
+`inspect_runtime_bundle` checks Runtime compatibility before reading the
+archive, then fills `pendingMigrations` for an unencrypted bundle. The preview
+is best effort: if it fails, inspect still succeeds with
+`migrationsUnavailable` set to the reason, and the confirm step says so. A
+protected bundle needs its password first, so the UI calls
+`preview_runtime_update(path, password)` after the password prompt. Both read
+`data.db` read-only: the ids in `_ixtable_migrations` are compared with the
+incoming definition's supported migrations.
+
+Inspect returns the file's `sha256`. The file flow passes it back as
+`expectedSha256` (required by `update_runtime_installation`, optional for
+`open_runtime_bundle`), and Rust refuses a file whose hash changed since
+inspection (`BUNDLE_CHANGED`), so the applied bundle is the one confirmed.
+
+`bundle.json` records what the last apply did: `lastAction` (`install`,
+`open`, `update`, `downgrade`) and `appliedMigrations`, the names of the
+migrations that ran (empty for a fresh install and for opening the installed
+version). Cloud auto-sync shows the post-update notice only when `lastAction`
+is `update` or `downgrade`.
+
+Studio and installation updates share one migration preflight
+(`migrations::preflight`). Before any SQL runs it rejects an applied migration
+whose `up` SQL changed (checksum) and any `depends_on` that is unknown, unapplied,
+or ordered after its dependent, so a bad update fails and activation is blocked.
+The migration log records real start and finish times and the health-check
+outcome; the preview splits statements with SQLite's own completeness rules.
+After Studio applies or rolls back migrations it re-validates the document so
+forms and queries bound to dropped columns surface as problems at once.
+
 A `bundle.json` that exists but cannot be read or parsed fails with
 `INSTALLATION_CORRUPT`. It is never treated as "not installed", because that
 would drop the pinned signer. An installation folder with no `bundle.json` at
@@ -94,6 +127,10 @@ Rust role while Run mode shows, so a preview behaves like the installed
 runtime; leaving Run mode ends it. Runtime sessions keep the ids the
 bundle was published with; only Studio rewrites the legacy `main` form id
 (`design/upgrade.rs`, `rekey_legacy_ids`).
+
+The runtime sidebar has a "Diagnostics…" button for the background job queue
+(status, attempts, retry, cancel; the Studio `JobsPanel`) and the local log
+(`LogsTab`). Neither changes the definition.
 
 ## Threat model limits
 

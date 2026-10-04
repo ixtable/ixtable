@@ -42,7 +42,7 @@ use stream::{read_payload, write_payload};
 pub use stream::{HashingReader, HashingWriter};
 pub use workspace::{
     asset_content, asset_dir, check_ids, extract_document, extract_to, write_asset_metadata,
-    write_config_files, write_session_metadata,
+    write_atomic, write_config_files, write_session_metadata,
 };
 
 pub const FORMAT_VERSION: i64 = 2;
@@ -88,6 +88,9 @@ pub struct WriteRequest<'a> {
     pub attachments: Vec<(&'a Attachment, Payload<'a>)>,
     /// Previous archive of the same document whose unknown tables are carried over.
     pub preserve_from: Option<&'a Path>,
+    /// The new archive is a deliberate copy of `preserve_from` under a new document
+    /// id (Restore as copy), so its unknown tables carry over despite the id change.
+    pub preserve_copy: bool,
 }
 
 #[derive(Debug, Default)]
@@ -161,6 +164,7 @@ pub fn write(path: &Path, req: WriteRequest<'_>) -> Result<WriteReport, ArchiveE
     let parent = path.parent().unwrap_or_else(|| Path::new("."));
     fs::create_dir_all(parent)?;
     let tmp = temp_sibling(path);
+    let _phase = write_phase::enter();
     let result = (|| {
         let mut report = WriteReport::default();
         let mut conn = Connection::open(&tmp)?;
@@ -168,7 +172,8 @@ pub fn write(path: &Path, req: WriteRequest<'_>) -> Result<WriteReport, ArchiveE
             "PRAGMA journal_mode=OFF; PRAGMA synchronous=OFF; PRAGMA application_id={APPLICATION_ID};{SCHEMA}"
         ))?;
         if let Some(prev) = req.preserve_from.filter(|p| p.exists()) {
-            report.preserved_tables = preserve_unknown_tables(&conn, prev, req.metadata)?;
+            report.preserved_tables =
+                preserve_unknown_tables(&conn, prev, req.metadata, req.preserve_copy)?;
         }
         let tx = conn.transaction()?;
         tx.execute(
@@ -235,6 +240,33 @@ pub fn write(path: &Path, req: WriteRequest<'_>) -> Result<WriteReport, ArchiveE
         let _ = fs::remove_file(&tmp);
     }
     result
+}
+
+/// Test-only hook: while an archive write or rename is in progress, the file named
+/// by `IXTABLE_TEST_WRITE_MARKER` exists. The forced-termination test uses it to
+/// kill a writer mid-write. Compiled out of non-test builds.
+mod write_phase {
+    pub struct Guard(#[cfg(test)] Option<std::path::PathBuf>);
+    #[cfg(test)]
+    pub fn enter() -> Guard {
+        let marker = std::env::var_os("IXTABLE_TEST_WRITE_MARKER").map(std::path::PathBuf::from);
+        if let Some(m) = &marker {
+            let _ = std::fs::write(m, b"1");
+        }
+        Guard(marker)
+    }
+    #[cfg(not(test))]
+    pub fn enter() -> Guard {
+        Guard()
+    }
+    #[cfg(test)]
+    impl Drop for Guard {
+        fn drop(&mut self) {
+            if let Some(m) = &self.0 {
+                let _ = std::fs::remove_file(m);
+            }
+        }
+    }
 }
 
 pub(crate) fn open_read_only(path: &Path) -> Result<Connection, ArchiveError> {
@@ -460,6 +492,7 @@ pub fn write_archive(path: &Path, doc: &ArchiveDocument) -> Result<(), ArchiveEr
                 .map(|a| (a, Payload::Bytes(&a.contents)))
                 .collect(),
             preserve_from: Some(path),
+            preserve_copy: false,
         },
     )
     .map(|_| ())

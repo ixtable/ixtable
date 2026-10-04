@@ -1,0 +1,902 @@
+{
+ "width": 595,
+ "height": 842,
+ "pages": [
+  {
+   "number": 1,
+   "items": [
+    {
+     "kind": "text",
+     "componentId": "01a10134-cd2a-7ba9-bf5e-a1767fad161a",
+     "x": 36,
+     "y": 36,
+     "w": 80,
+     "h": 14,
+     "text": "SKU",
+     "lines": [
+      {
+       "text": "SKU",
+       "x": 38,
+       "y": 44.56,
+       "width": 21.11
+      }
+     ],
+     "fontSize": 10,
+     "bold": true,
+     "gray": 0
+    },
+    {
+     "kind": "text",
+     "componentId": "01a10134-cd2b-7f89-a76e-05d8f754bd86",
+     "x": 116,
+     "y": 36,
+     "w": 200,
+     "h": 14,
+     "text": "Product",
+     "lines": [
+      {
+       "text": "Product",
+       "x": 118,
+       "y": 44.56,
+       "width": 37.78
+      }
+     ],
+     "fontSize": 10,
+     "bold": true,
+     "gray": 0
+    },
+    {
+     "kind": "text",
+     "componentId": "01a10134-cd2c-78e6-a811-11976dc797d6",
+     "x": 316,
+     "y": 36,
+     "w": 70,
+     "h": 14,
+     "text": "On hand",
+     "lines": [
+      {
+       "text": "On hand",
+       "x": 343.44,
+       "y": 44.56,
+       "width": 40.56
+      }
+     ],
+     "fontSize": 10,
+     "bold": true,
+     "gray": 0
+    },
+    {
+     "kind": "text",
+     "componentId": "01a10134-cd2d-76c1-b543-b5fda7565cbd",
+     "x": 386,
+     "y": 36,
+     "w": 80,
+     "h": 14,
+     "text": "Unit cost",
+     "lines": [
+      {
+       "text": "Unit cost",
+       "x": 421.22,
+       "y": 44.56,
+       "width": 42.78
+      }
+     ],
+     "fontSize": 10,
+     "bold": true,
+     "gray": 0
+    },
+    {
+     "kind": "text",
+     "componentId": "01a10134-cd2e-7737-987d-c99d7f89c720",
+     "x": 466,
+     "y": 36,
+     "w": 93,
+     "h": 14,
+     "text": "Value",
+     "lines": [
+      {
+       "text": "Value",
+       "x": 530.32,
+       "y": 44.56,
+       "width": 26.68
+      }
+     ],
+     "fontSize": 10,
+     "bold": true,
+     "gray": 0
+    },
+    {
+     "kind": "image",
+     "componentId": "01a10134-cd28-76e9-8ccb-619a6c8316d1",
+     "x": 36,
+     "y": 54,
+     "w": 32,
+     "h": 32,
+     "assetId": "{{asset:1}}",
+     "mediaType": "image/png"
+    },
+    {
+     "kind": "text",
+     "componentId": "01a10134-cd29-77d2-9530-015590b1e0a1",
+     "x": 76,
+     "y": 58,
+     "w": 483,
+     "h": 24,
+     "text": "Inventory valuation",
+     "lines": [
+      {
+       "text": "Inventory valuation",
+       "x": 78,
+       "y": 71.69,
+       "width": 146.7
+      }
+     ],
+     "fontSize": 16,
+     "bold": true,
+     "gray": 0
+    },
+    {
+     "kind": "text",
+     "componentId": "01a10134-cd30-7147-85de-c38d1e6d8dc9",
+     "x": 36,
+     "y": 98,
+     "w": 523,
+     "h": 16,
+     "text": "Contoso Parts",
+     "lines": [
+      {
+       "text": "Contoso Parts",
+       "x": 38,
+       "y": 108.27,
+       "width": 82.01
+      }
+     ],
+     "fontSize": 12,
+     "bold": true,
+     "gray": 0
+    },
+    {
+     "kind": "text",
+     "componentId": "01a10134-cd32-785a-ab18-a29bf729f388",
+     "x": 36,
+     "y": 116,
+     "w": 80,
+     "h": 14,
+     "text": "BOLT-M8",
+     "lines": [
+      {
+       "text": "BOLT-M8",
+       "x": 38,
+       "y": 124.56,
+       "width": 43.34
+      }
+     ],
+     "fontSize": 10,
+     "bold": false,
+     "gray": 0
+    },
+    {
+     "kind": "text",
+     "componentId": "01a10134-cd33-7af7-879c-edfee7c93b6a",
+     "x": 116,
+     "y": 116,
+     "w": 200,
+     "h": 14,
+     "text": "Hex bolt M8",
+     "lines": [
+      {
+       "text": "Hex bolt M8",
+       "x": 118,
+       "y": 124.56,
+       "width": 53.35
+      }
+     ],
+     "fontSize": 10,
+     "bold": false,
+     "gray": 0
+    },
+    {
+     "kind": "text",
+     "componentId": "01a10134-cd34-7118-962b-115f8479c833",
+     "x": 316,
+     "y": 116,
+     "w": 70,
+     "h": 14,
+     "text": "1,050",
+     "lines": [
+      {
+       "text": "1,050",
+       "x": 358.98,
+       "y": 124.56,
+       "width": 25.02
+      }
+     ],
+     "fontSize": 10,
+     "bold": false,
+     "gray": 0
+    },
+    {
+     "kind": "text",
+     "componentId": "01a10134-cd35-7243-b385-8cf1bc7a8800",
+     "x": 386,
+     "y": 116,
+     "w": 80,
+     "h": 14,
+     "text": "0.25",
+     "lines": [
+      {
+       "text": "0.25",
+       "x": 444.54,
+       "y": 124.56,
+       "width": 19.46
+      }
+     ],
+     "fontSize": 10,
+     "bold": false,
+     "gray": 0
+    },
+    {
+     "kind": "text",
+     "componentId": "01a10134-cd36-71e3-ac0e-6d9aed8a8821",
+     "x": 466,
+     "y": 116,
+     "w": 93,
+     "h": 14,
+     "text": "262.50",
+     "lines": [
+      {
+       "text": "262.50",
+       "x": 526.42,
+       "y": 124.56,
+       "width": 30.58
+      }
+     ],
+     "fontSize": 10,
+     "bold": false,
+     "gray": 0
+    },
+    {
+     "kind": "text",
+     "componentId": "01a10134-cd32-785a-ab18-a29bf729f388",
+     "x": 36,
+     "y": 132,
+     "w": 80,
+     "h": 14,
+     "text": "NUT-M8",
+     "lines": [
+      {
+       "text": "NUT-M8",
+       "x": 38,
+       "y": 140.56,
+       "width": 37.77
+      }
+     ],
+     "fontSize": 10,
+     "bold": false,
+     "gray": 0
+    },
+    {
+     "kind": "text",
+     "componentId": "01a10134-cd33-7af7-879c-edfee7c93b6a",
+     "x": 116,
+     "y": 132,
+     "w": 200,
+     "h": 14,
+     "text": "Hex nut M8",
+     "lines": [
+      {
+       "text": "Hex nut M8",
+       "x": 118,
+       "y": 140.56,
+       "width": 51.13
+      }
+     ],
+     "fontSize": 10,
+     "bold": false,
+     "gray": 0
+    },
+    {
+     "kind": "text",
+     "componentId": "01a10134-cd34-7118-962b-115f8479c833",
+     "x": 316,
+     "y": 132,
+     "w": 70,
+     "h": 14,
+     "text": "1,200",
+     "lines": [
+      {
+       "text": "1,200",
+       "x": 358.98,
+       "y": 140.56,
+       "width": 25.02
+      }
+     ],
+     "fontSize": 10,
+     "bold": false,
+     "gray": 0
+    },
+    {
+     "kind": "text",
+     "componentId": "01a10134-cd35-7243-b385-8cf1bc7a8800",
+     "x": 386,
+     "y": 132,
+     "w": 80,
+     "h": 14,
+     "text": "0.10",
+     "lines": [
+      {
+       "text": "0.10",
+       "x": 444.54,
+       "y": 140.56,
+       "width": 19.46
+      }
+     ],
+     "fontSize": 10,
+     "bold": false,
+     "gray": 0
+    },
+    {
+     "kind": "text",
+     "componentId": "01a10134-cd36-71e3-ac0e-6d9aed8a8821",
+     "x": 466,
+     "y": 132,
+     "w": 93,
+     "h": 14,
+     "text": "120.00",
+     "lines": [
+      {
+       "text": "120.00",
+       "x": 526.42,
+       "y": 140.56,
+       "width": 30.58
+      }
+     ],
+     "fontSize": 10,
+     "bold": false,
+     "gray": 0
+    },
+    {
+     "kind": "text",
+     "componentId": "01a10134-cd31-71e5-aa05-f0c1cd7c36f1",
+     "x": 316,
+     "y": 150,
+     "w": 243,
+     "h": 14,
+     "text": "Subtotal 382.50",
+     "lines": [
+      {
+       "text": "Subtotal 382.50",
+       "x": 486.95,
+       "y": 158.56,
+       "width": 70.05
+      }
+     ],
+     "fontSize": 10,
+     "bold": false,
+     "gray": 0
+    },
+    {
+     "kind": "text",
+     "componentId": "01a10134-cd30-7147-85de-c38d1e6d8dc9",
+     "x": 36,
+     "y": 172,
+     "w": 523,
+     "h": 16,
+     "text": "Fabrikam Tools",
+     "lines": [
+      {
+       "text": "Fabrikam Tools",
+       "x": 38,
+       "y": 182.27,
+       "width": 88.69
+      }
+     ],
+     "fontSize": 12,
+     "bold": true,
+     "gray": 0
+    },
+    {
+     "kind": "text",
+     "componentId": "01a10134-cd32-785a-ab18-a29bf729f388",
+     "x": 36,
+     "y": 190,
+     "w": 80,
+     "h": 14,
+     "text": "DRILL-18V",
+     "lines": [
+      {
+       "text": "DRILL-18V",
+       "x": 38,
+       "y": 198.56,
+       "width": 49.46
+      }
+     ],
+     "fontSize": 10,
+     "bold": false,
+     "gray": 0
+    },
+    {
+     "kind": "text",
+     "componentId": "01a10134-cd33-7af7-879c-edfee7c93b6a",
+     "x": 116,
+     "y": 190,
+     "w": 200,
+     "h": 14,
+     "text": "Cordless drill 18V",
+     "lines": [
+      {
+       "text": "Cordless drill 18V",
+       "x": 118,
+       "y": 198.56,
+       "width": 78.35
+      }
+     ],
+     "fontSize": 10,
+     "bold": false,
+     "gray": 0
+    },
+    {
+     "kind": "text",
+     "componentId": "01a10134-cd34-7118-962b-115f8479c833",
+     "x": 316,
+     "y": 190,
+     "w": 70,
+     "h": 14,
+     "text": "22",
+     "lines": [
+      {
+       "text": "22",
+       "x": 372.88,
+       "y": 198.56,
+       "width": 11.12
+      }
+     ],
+     "fontSize": 10,
+     "bold": false,
+     "gray": 0
+    },
+    {
+     "kind": "text",
+     "componentId": "01a10134-cd35-7243-b385-8cf1bc7a8800",
+     "x": 386,
+     "y": 190,
+     "w": 80,
+     "h": 14,
+     "text": "89.00",
+     "lines": [
+      {
+       "text": "89.00",
+       "x": 438.98,
+       "y": 198.56,
+       "width": 25.02
+      }
+     ],
+     "fontSize": 10,
+     "bold": false,
+     "gray": 0
+    },
+    {
+     "kind": "text",
+     "componentId": "01a10134-cd36-71e3-ac0e-6d9aed8a8821",
+     "x": 466,
+     "y": 190,
+     "w": 93,
+     "h": 14,
+     "text": "1,958.00",
+     "lines": [
+      {
+       "text": "1,958.00",
+       "x": 518.08,
+       "y": 198.56,
+       "width": 38.92
+      }
+     ],
+     "fontSize": 10,
+     "bold": false,
+     "gray": 0
+    },
+    {
+     "kind": "text",
+     "componentId": "01a10134-cd32-785a-ab18-a29bf729f388",
+     "x": 36,
+     "y": 206,
+     "w": 80,
+     "h": 14,
+     "text": "TAPE-25",
+     "lines": [
+      {
+       "text": "TAPE-25",
+       "x": 38,
+       "y": 214.56,
+       "width": 40.57
+      }
+     ],
+     "fontSize": 10,
+     "bold": false,
+     "gray": 0
+    },
+    {
+     "kind": "text",
+     "componentId": "01a10134-cd33-7af7-879c-edfee7c93b6a",
+     "x": 116,
+     "y": 206,
+     "w": 200,
+     "h": 14,
+     "text": "Measuring tape 25ft",
+     "lines": [
+      {
+       "text": "Measuring tape 25ft",
+       "x": 118,
+       "y": 214.56,
+       "width": 88.38
+      }
+     ],
+     "fontSize": 10,
+     "bold": false,
+     "gray": 0
+    },
+    {
+     "kind": "text",
+     "componentId": "01a10134-cd34-7118-962b-115f8479c833",
+     "x": 316,
+     "y": 206,
+     "w": 70,
+     "h": 14,
+     "text": "47",
+     "lines": [
+      {
+       "text": "47",
+       "x": 372.88,
+       "y": 214.56,
+       "width": 11.12
+      }
+     ],
+     "fontSize": 10,
+     "bold": false,
+     "gray": 0
+    },
+    {
+     "kind": "text",
+     "componentId": "01a10134-cd35-7243-b385-8cf1bc7a8800",
+     "x": 386,
+     "y": 206,
+     "w": 80,
+     "h": 14,
+     "text": "12.00",
+     "lines": [
+      {
+       "text": "12.00",
+       "x": 438.98,
+       "y": 214.56,
+       "width": 25.02
+      }
+     ],
+     "fontSize": 10,
+     "bold": false,
+     "gray": 0
+    },
+    {
+     "kind": "text",
+     "componentId": "01a10134-cd36-71e3-ac0e-6d9aed8a8821",
+     "x": 466,
+     "y": 206,
+     "w": 93,
+     "h": 14,
+     "text": "564.00",
+     "lines": [
+      {
+       "text": "564.00",
+       "x": 526.42,
+       "y": 214.56,
+       "width": 30.58
+      }
+     ],
+     "fontSize": 10,
+     "bold": false,
+     "gray": 0
+    },
+    {
+     "kind": "text",
+     "componentId": "01a10134-cd31-71e5-aa05-f0c1cd7c36f1",
+     "x": 316,
+     "y": 224,
+     "w": 243,
+     "h": 14,
+     "text": "Subtotal 2,522.00",
+     "lines": [
+      {
+       "text": "Subtotal 2,522.00",
+       "x": 478.61,
+       "y": 232.56,
+       "width": 78.39
+      }
+     ],
+     "fontSize": 10,
+     "bold": false,
+     "gray": 0
+    },
+    {
+     "kind": "text",
+     "componentId": "01a10134-cd30-7147-85de-c38d1e6d8dc9",
+     "x": 36,
+     "y": 246,
+     "w": 523,
+     "h": 16,
+     "text": "Northwind Supply",
+     "lines": [
+      {
+       "text": "Northwind Supply",
+       "x": 38,
+       "y": 256.27,
+       "width": 102.67
+      }
+     ],
+     "fontSize": 12,
+     "bold": true,
+     "gray": 0
+    },
+    {
+     "kind": "text",
+     "componentId": "01a10134-cd32-785a-ab18-a29bf729f388",
+     "x": 36,
+     "y": 264,
+     "w": 80,
+     "h": 14,
+     "text": "GLOVE-L",
+     "lines": [
+      {
+       "text": "GLOVE-L",
+       "x": 38,
+       "y": 272.56,
+       "width": 43.35
+      }
+     ],
+     "fontSize": 10,
+     "bold": false,
+     "gray": 0
+    },
+    {
+     "kind": "text",
+     "componentId": "01a10134-cd33-7af7-879c-edfee7c93b6a",
+     "x": 116,
+     "y": 264,
+     "w": 200,
+     "h": 14,
+     "text": "Work gloves (L)",
+     "lines": [
+      {
+       "text": "Work gloves (L)",
+       "x": 118,
+       "y": 272.56,
+       "width": 70.01
+      }
+     ],
+     "fontSize": 10,
+     "bold": false,
+     "gray": 0
+    },
+    {
+     "kind": "text",
+     "componentId": "01a10134-cd34-7118-962b-115f8479c833",
+     "x": 316,
+     "y": 264,
+     "w": 70,
+     "h": 14,
+     "text": "233",
+     "lines": [
+      {
+       "text": "233",
+       "x": 367.32,
+       "y": 272.56,
+       "width": 16.68
+      }
+     ],
+     "fontSize": 10,
+     "bold": false,
+     "gray": 0
+    },
+    {
+     "kind": "text",
+     "componentId": "01a10134-cd35-7243-b385-8cf1bc7a8800",
+     "x": 386,
+     "y": 264,
+     "w": 80,
+     "h": 14,
+     "text": "4.50",
+     "lines": [
+      {
+       "text": "4.50",
+       "x": 444.54,
+       "y": 272.56,
+       "width": 19.46
+      }
+     ],
+     "fontSize": 10,
+     "bold": false,
+     "gray": 0
+    },
+    {
+     "kind": "text",
+     "componentId": "01a10134-cd36-71e3-ac0e-6d9aed8a8821",
+     "x": 466,
+     "y": 264,
+     "w": 93,
+     "h": 14,
+     "text": "1,048.50",
+     "lines": [
+      {
+       "text": "1,048.50",
+       "x": 518.08,
+       "y": 272.56,
+       "width": 38.92
+      }
+     ],
+     "fontSize": 10,
+     "bold": false,
+     "gray": 0
+    },
+    {
+     "kind": "text",
+     "componentId": "01a10134-cd32-785a-ab18-a29bf729f388",
+     "x": 36,
+     "y": 280,
+     "w": 80,
+     "h": 14,
+     "text": "LADDER-6",
+     "lines": [
+      {
+       "text": "LADDER-6",
+       "x": 38,
+       "y": 288.56,
+       "width": 49.45
+      }
+     ],
+     "fontSize": 10,
+     "bold": false,
+     "gray": 0
+    },
+    {
+     "kind": "text",
+     "componentId": "01a10134-cd33-7af7-879c-edfee7c93b6a",
+     "x": 116,
+     "y": 280,
+     "w": 200,
+     "h": 14,
+     "text": "Step ladder 6ft",
+     "lines": [
+      {
+       "text": "Step ladder 6ft",
+       "x": 118,
+       "y": 288.56,
+       "width": 65.04
+      }
+     ],
+     "fontSize": 10,
+     "bold": false,
+     "gray": 0
+    },
+    {
+     "kind": "text",
+     "componentId": "01a10134-cd34-7118-962b-115f8479c833",
+     "x": 316,
+     "y": 280,
+     "w": 70,
+     "h": 14,
+     "text": "2",
+     "lines": [
+      {
+       "text": "2",
+       "x": 378.44,
+       "y": 288.56,
+       "width": 5.56
+      }
+     ],
+     "fontSize": 10,
+     "bold": false,
+     "gray": 0
+    },
+    {
+     "kind": "text",
+     "componentId": "01a10134-cd35-7243-b385-8cf1bc7a8800",
+     "x": 386,
+     "y": 280,
+     "w": 80,
+     "h": 14,
+     "text": "65.00",
+     "lines": [
+      {
+       "text": "65.00",
+       "x": 438.98,
+       "y": 288.56,
+       "width": 25.02
+      }
+     ],
+     "fontSize": 10,
+     "bold": false,
+     "gray": 0
+    },
+    {
+     "kind": "text",
+     "componentId": "01a10134-cd36-71e3-ac0e-6d9aed8a8821",
+     "x": 466,
+     "y": 280,
+     "w": 93,
+     "h": 14,
+     "text": "130.00",
+     "lines": [
+      {
+       "text": "130.00",
+       "x": 526.42,
+       "y": 288.56,
+       "width": 30.58
+      }
+     ],
+     "fontSize": 10,
+     "bold": false,
+     "gray": 0
+    },
+    {
+     "kind": "text",
+     "componentId": "01a10134-cd31-71e5-aa05-f0c1cd7c36f1",
+     "x": 316,
+     "y": 298,
+     "w": 243,
+     "h": 14,
+     "text": "Subtotal 1,178.50",
+     "lines": [
+      {
+       "text": "Subtotal 1,178.50",
+       "x": 478.61,
+       "y": 306.56,
+       "width": 78.39
+      }
+     ],
+     "fontSize": 10,
+     "bold": false,
+     "gray": 0
+    },
+    {
+     "kind": "text",
+     "componentId": "01a10134-cd38-71ce-b808-ed4ae34c9a86",
+     "x": 36,
+     "y": 320,
+     "w": 523,
+     "h": 16,
+     "text": "Total inventory value: 4,083.00",
+     "lines": [
+      {
+       "text": "Total inventory value: 4,083.00",
+       "x": 411.94,
+       "y": 328.56,
+       "width": 145.06
+      }
+     ],
+     "fontSize": 10,
+     "bold": true,
+     "gray": 0
+    },
+    {
+     "kind": "text",
+     "componentId": "01a10134-cd37-762b-856a-7dbf000eb4ab",
+     "x": 36,
+     "y": 790,
+     "w": 523,
+     "h": 14,
+     "text": "Page 1 of 1",
+     "lines": [
+      {
+       "text": "Page 1 of 1",
+       "x": 271.93,
+       "y": 798.56,
+       "width": 51.15
+      }
+     ],
+     "fontSize": 10,
+     "bold": false,
+     "gray": 0
+    }
+   ]
+  }
+ ],
+ "diagnostics": []
+}

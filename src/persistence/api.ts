@@ -47,3 +47,6 @@ export const cleanupOrphanAssets = () => call<OrphanCleanup>("cleanup_orphan_ass
 export const archiveSizeReport = () => call<ArchiveSizeReport>("archive_size_report");
 
 export const readLogs = (limit = 200) => call<LogEntry[]>("read_logs", { limit });
+/** Appends a line to the local diagnostic log (redacted in Rust). */
+export const writeLog = (level: "info" | "warn" | "error", area: string, message: string) =>
+  call<void>("write_log", { level, area, message });

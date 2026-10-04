@@ -4,7 +4,7 @@
 // `undefined`. tests/unit/cloud-contract.test.ts runs them on responses
 // recorded from the local stack (web/e2e/service-qa/fixtures/contract).
 import { CloudError } from "./errors";
-import type { RestoreTarget } from "./types";
+import type { InstallationBackup, RestoreTarget } from "./types";
 
 type Json = Record<string, unknown>;
 
@@ -32,6 +32,21 @@ function nullableString(name: string, obj: Json, key: string, path = key): strin
   if (value === null || value === undefined) return null;
   if (typeof value !== "string") fail(name, path, "a string or null");
   return value;
+}
+
+/** An `installation_backups` row (PostgREST select or `backup-commit` reply). */
+export function backupRow(raw: unknown): InstallationBackup {
+  const name = "installation_backups";
+  const row = object(name, raw, "row");
+  const size = row.archive_size;
+  if (typeof size !== "number") fail(name, "archive_size", "a number");
+  return {
+    id: string(name, row, "id"),
+    installationId: string(name, row, "installation_id"),
+    archiveSha256: string(name, row, "archive_sha256"),
+    archiveSize: size,
+    createdAt: string(name, row, "created_at"),
+  };
 }
 
 /** A version row (`app_versions`, snake_case) as returned by publish and resolve. */
@@ -72,6 +87,7 @@ export interface DesktopReplies {
   "restore-url": RestoreTarget;
   "sync-check": SyncCheck;
   "backup-commit": { backup: { id: string } };
+  "invitations-accept": { membership: { kind: string; appId: string | null; orgId: string } };
 }
 export type DesktopFunction = keyof DesktopReplies;
 
@@ -126,4 +142,34 @@ export const decoders: { [K in DesktopFunction]: (raw: unknown) => DesktopReplie
     const backup = object("backup-commit", reply.backup, "backup");
     return { backup: { id: string("backup-commit", backup, "id", "backup.id") } };
   },
+  "invitations-accept": (raw) => {
+    const name = "invitations-accept";
+    const membership = object(name, object(name, raw, "reply").membership, "membership");
+    return {
+      membership: {
+        kind: string(name, membership, "kind", "membership.kind"),
+        appId: nullableString(name, membership, "appId", "membership.appId"),
+        orgId: string(name, membership, "orgId", "membership.orgId"),
+      },
+    };
+  },
 };
+
+/**
+ * The raw token of an invitation, from the emailed link (`…/invite?token=…`,
+ * or the older `/invitations/accept?token=…`) or the token pasted on its own.
+ */
+export function invitationToken(input: string): string {
+  const text = input.trim();
+  if (!text) return "";
+  if (/^[a-z][a-z0-9+.-]*:\/\//i.test(text)) {
+    try {
+      return new URL(text).searchParams.get("token")?.trim() ?? "";
+    } catch {
+      return "";
+    }
+  }
+  const query = text.indexOf("token=");
+  if (query >= 0) return new URLSearchParams(text.slice(text.indexOf("?") + 1)).get("token") ?? "";
+  return /^[A-Za-z0-9_-]{16,256}$/.test(text) ? text : "";
+}

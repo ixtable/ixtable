@@ -115,6 +115,10 @@ export interface Band {
    * header on the same page as the first row that follows it.
    */
   keepTogether: boolean;
+  /** Start a new page before this band (skipped when the page is still empty). */
+  pageBreakBefore?: boolean;
+  /** Start a new page after this band (no blank page at the end of the report). */
+  pageBreakAfter?: boolean;
   components: ReportComponent[];
 }
 
@@ -125,6 +129,15 @@ export interface ReportGroup {
   descending?: boolean;
   header: Band;
   footer: Band;
+  /** Start every group instance on a new page. */
+  newPage?: boolean;
+  /** Print the group header again at the top of each page the group continues on. */
+  repeatHeader?: boolean;
+  /**
+   * Start every group instance on a new page and restart `groupPage` and
+   * `groupPages` there. `page` and `pages` always count the whole report.
+   */
+  resetPageNumber?: boolean;
 }
 
 export interface Bands {

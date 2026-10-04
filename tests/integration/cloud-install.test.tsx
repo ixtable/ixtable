@@ -267,6 +267,10 @@ it("installs a signed cloud bundle, rejects tampering, and updates keeping recor
   expect(await failure(call("reset_runtime_installation_data", { confirmed: true }))).toMatch(
     /FORBIDDEN/,
   );
+  expect(await call<Json>("runtime_installation_info")).toMatchObject({
+    version: "1.1.0",
+    appliedMigrations: ["Add tags"],
+  });
   const [installed] = await call<Json[]>("cloud_installed_apps");
   expect(installed).toMatchObject({ appId: APP_ID, version: "1.1.0", versionId: "v2" });
 

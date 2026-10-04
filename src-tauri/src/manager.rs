@@ -38,9 +38,9 @@ impl std::fmt::Display for AppError {
 impl From<archive::ArchiveError> for AppError {
     fn from(e: archive::ArchiveError) -> Self {
         let code = match &e {
-            archive::ArchiveError::Unsupported(_) | archive::ArchiveError::NewerFormat(_) => {
-                "UNSUPPORTED_VERSION"
-            }
+            archive::ArchiveError::Unsupported(_)
+            | archive::ArchiveError::NewerFormat(_)
+            | archive::ArchiveError::NewerConfig(_) => "UNSUPPORTED_VERSION",
             archive::ArchiveError::Corrupt(_) => "CORRUPT_PAYLOAD",
             archive::ArchiveError::Invalid(_) | archive::ArchiveError::Sql(_) => "INVALID_ARCHIVE",
             archive::ArchiveError::Io(x) if x.kind() == std::io::ErrorKind::NotFound => {
@@ -581,6 +581,7 @@ impl DocumentManager {
                     .map(|(a, p)| (a, Payload::File(p)))
                     .collect(),
                 preserve_from: snap.origin.as_deref(),
+                preserve_copy: false,
             },
         );
         let _ = fs::remove_file(&data);

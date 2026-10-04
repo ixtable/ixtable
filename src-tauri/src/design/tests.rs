@@ -183,6 +183,7 @@ fn related_list_nesting_is_one_level() {
             parent_column: "id".into(),
             columns: vec![],
             form_id: form.map(Into::into),
+            keys: vec![],
         }),
         ..control("lines", ControlKind::RelatedList)
     };
@@ -222,6 +223,7 @@ fn table_references_are_checked_against_schema() {
                     table: "regions".into(),
                     value_column: "id".into(),
                     display_column: "label".into(),
+                    keys: vec![],
                 }),
                 ..control("region", ControlKind::Relationship)
             },
@@ -295,4 +297,81 @@ fn container_children_use_the_container_grid() {
     assert!(errors(&validate(&config))
         .iter()
         .any(|e| e.contains("tab that does not exist")));
+}
+
+#[test]
+fn multi_column_keys_round_trip_and_are_checked() {
+    let pair = |column: &str, target: &str| KeyPair {
+        column: column.into(),
+        target: target.into(),
+    };
+    // Single-column relationships keep their serialized shape (no `keys`).
+    let single = Relationship {
+        table: "regions".into(),
+        value_column: "id".into(),
+        display_column: "name".into(),
+        keys: vec![],
+    };
+    assert!(serde_json::to_value(&single).unwrap().get("keys").is_none());
+    let parsed: RelatedList = serde_json::from_value(serde_json::json!({
+        "table": "counts", "foreignKey": "product_id", "parentColumn": "product_id",
+        "keys": [{"column": "product_id", "target": "product_id"},
+                 {"column": "location_id", "target": "location_id"}]
+    }))
+    .unwrap();
+    assert_eq!(parsed.keys.len(), 2);
+
+    let config = config_with(Form {
+        id: "c".into(),
+        name: "Counts".into(),
+        source: Some(FormSource {
+            kind: SourceKind::Table,
+            table: Some("counts".into()),
+            query_id: None,
+        }),
+        controls: vec![Control {
+            relationship: Some(Relationship {
+                table: "thresholds".into(),
+                value_column: "product_id".into(),
+                display_column: "label".into(),
+                keys: vec![pair("product_id", "product_id"), pair("loc", "location_id")],
+            }),
+            ..control("product_id", ControlKind::Relationship)
+        }],
+        ..Default::default()
+    });
+    let names = |list: &[&str]| list.iter().map(|c| c.to_string()).collect::<Vec<_>>();
+    let tables = HashMap::from([
+        ("counts".to_string(), names(&["product_id", "loc"])),
+        (
+            "thresholds".to_string(),
+            names(&["product_id", "location_id", "label"]),
+        ),
+    ]);
+    assert!(errors(&validate_tables(&config, &tables)).is_empty());
+    let missing = HashMap::from([
+        ("counts".to_string(), names(&["product_id"])),
+        ("thresholds".to_string(), names(&["product_id", "label"])),
+    ]);
+    let errs = errors(&validate_tables(&config, &missing));
+    assert!(
+        errs.iter().any(|e| e.contains("thresholds.location_id")),
+        "{errs:?}"
+    );
+    assert!(
+        errs.iter().any(|e| e.contains("writes counts.loc")),
+        "{errs:?}"
+    );
+
+    let mut incomplete = config.clone();
+    let form = incomplete
+        .design
+        .forms
+        .iter_mut()
+        .find(|f| f.id == "c")
+        .unwrap();
+    form.controls[0].relationship.as_mut().unwrap().keys[1].target = String::new();
+    assert!(errors(&validate(&incomplete))
+        .iter()
+        .any(|e| e.contains("key column without a target")));
 }

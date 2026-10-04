@@ -122,6 +122,27 @@ describe("form operations", () => {
     expect(container.controls.find((c) => c.id === inner.id)?.placement.columnSpan).toBe(2);
   });
 
+  it("changes the column count without rewriting authored tracks", () => {
+    const { form } = build();
+    const layout = {
+      ...form.layout,
+      columns: [
+        { kind: "fixed" as const, value: 200, min: null, max: null },
+        { kind: "content" as const, value: null, min: 80, max: 300 },
+        { kind: "fr" as const, value: 2, min: null, max: null },
+      ],
+    };
+    const wider = withColumnCount(layout, 5);
+    expect(wider.columns.slice(0, 3)).toEqual(layout.columns);
+    expect(wider.columns.slice(3)).toEqual([
+      { kind: "fr", value: 1, min: null, max: null },
+      { kind: "fr", value: 1, min: null, max: null },
+    ]);
+    expect(withColumnCount(layout, 2).columns).toEqual(layout.columns.slice(0, 2));
+    expect(withColumnCount(layout, 0).columns).toEqual(layout.columns.slice(0, 1));
+    expect(withColumnCount(layout, 99).columns).toHaveLength(24);
+  });
+
   it("duplicates a form with fresh, consistently remapped ids", () => {
     const { form, tabs, inner } = build();
     const copy = duplicateForm(form);

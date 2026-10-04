@@ -162,6 +162,8 @@ pub struct Column {
     pub primary_key_position: u32,
     pub generated: bool,
     pub unique: bool,
+    /// The database fills the key in on insert: a PostgreSQL identity or `nextval` (serial) default.
+    pub auto_increment: bool,
 }
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]

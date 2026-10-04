@@ -20,7 +20,7 @@ import { SaveStatus } from "../persistence";
 import { type Autosave, useAutosave } from "../persistence/useAutosave";
 import { CloudRuntimeBar } from "../cloud";
 import { useIsCloudSession } from "../cloud/session";
-import { RuntimeBar } from "../release";
+import { RuntimeBar, RuntimeDiagnostics } from "../release";
 import type { OpenRequest } from "../lib/launch";
 import { useOpenRequestInShell } from "./openRequests";
 import { UpdateNotice } from "../updates";
@@ -290,11 +290,10 @@ function ShellFrame({
             </div>
           </div>
           {doc.runtimeOnly ? (
-            cloudSession ? (
-              <CloudRuntimeBar />
-            ) : (
-              <RuntimeBar />
-            )
+            <>
+              {cloudSession ? <CloudRuntimeBar /> : <RuntimeBar />}
+              <RuntimeDiagnostics />
+            </>
           ) : (
             <div className="document-label">
               <small>PROJECT</small>

@@ -101,7 +101,15 @@ export function FieldsPanel({
             const name = fieldName(f);
             return (
               <li key={f.id} className="query-row">
-                <span>{name}</span>
+                <label>
+                  <input
+                    type="checkbox"
+                    aria-label={`Output ${name}`}
+                    checked={f.selected}
+                    onChange={(e) => patch(f.id, { selected: e.target.checked })}
+                  />
+                  <span className={f.selected ? "" : "text-slate-500"}>{name}</span>
+                </label>
                 <select
                   aria-label={`Aggregate for ${name}`}
                   value={f.aggregate ?? ""}

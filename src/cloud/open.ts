@@ -1,6 +1,7 @@
 import type { SessionState } from "../lib/types";
+import { runtimeInstallationInfo } from "../release/api";
 import { installApp, installedApps, openInstalled, runtimeInfo } from "./api";
-import { invokeFunction, requireSession } from "./client";
+import { invokeFunction, requireSession, versionReleaseNotes } from "./client";
 import type { SyncCheck } from "./contract";
 import { CloudError, toCloudError } from "./errors";
 import { setCloudRuntime } from "./session";
@@ -9,6 +10,27 @@ export type OpenResult = { state: SessionState; notice: string };
 
 /** Codes that mean "the cloud could not be asked", so the installed version may run. */
 const OFFLINE = new Set(["CLOUD_OFFLINE", "CLOUD_TIMEOUT", "CLOUD_UNAVAILABLE"]);
+
+/**
+ * Post-update notice (PRD §22.3): the version, the migrations that ran on this
+ * installation's records, and the release notes. Notes and migrations are best
+ * effort; the update itself already succeeded.
+ */
+export async function updateNotice(versionId: string | null, version: string): Promise<string> {
+  const info = await runtimeInstallationInfo().catch(() => null);
+  // The record says this apply did not change versions (e.g. already installed).
+  if (info && info.lastAction !== "update" && info.lastAction !== "downgrade") {
+    return `Running version ${info.version}.`;
+  }
+  const notes = versionId ? await versionReleaseNotes(versionId).catch(() => "") : "";
+  const migrations = info?.appliedMigrations ?? [];
+  let text = `Updated to version ${version}. Your records were kept.`;
+  text += migrations.length
+    ? ` Migrations applied: ${migrations.join(", ")}.`
+    : " No migrations were needed.";
+  if (notes.trim()) text += `\nRelease notes:\n${notes.trim()}`;
+  return text;
+}
 
 /**
  * Opens a cloud app for its runtime user (PRD §22.3): installs it on first
@@ -51,7 +73,10 @@ export async function openCloudApp(
     if (sync && !sync.upToDate) {
       try {
         state = await install();
-        notice = `Updated to version ${sync.latest?.version ?? ""}. Your records were kept.`;
+        notice = await updateNotice(
+          sync.latest?.versionId ?? null,
+          sync.latest?.version ?? state.bundleVersion ?? "",
+        );
       } catch (reason) {
         const error = await toCloudError(reason);
         // A failed update leaves the previous version installed; run it and say why.

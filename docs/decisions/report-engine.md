@@ -58,6 +58,31 @@ past its box.
 - A band may hold one table. The table grows past its designed height, and
   components below it move down by the growth. When the table doesn't fit, it
   splits between rows and repeats its header row at the top of each new page.
+- `pageBreakBefore` and `pageBreakAfter` on a band start a new page before or
+  after each instance of it. A break never leaves a page empty: a break before
+  is skipped at the top of a page, and a break after the last band adds no page.
+  Page header and footer bands ignore them.
+- A group with `newPage` starts every instance on a new page, like a break
+  before its header. This holds even when the header band is empty.
+- A group with `repeatHeader` prints its header band again at the top of every
+  page the group continues on, below the page header, including the pages a
+  split table continues on. The repeat sees the group's `rows` and `group`.
+  It prints the header's non-table components at the band's designed height;
+  a table in the header prints only once. Pagination reserves that height: a
+  block that fits a page only without the repeated headers starts a page
+  without them, and a `keepTogether` table that doesn't fit below them splits.
+- A group with `resetPageNumber` starts every instance on a new page, so the
+  designer shows its "starts a new page" option checked and disabled. It also
+  restarts `groupPage` and `groupPages` there. They count the pages since the
+  last such group start (or since the first page). Without any such group they
+  equal `page` and `pages`, and `page` and `pages` always count the whole report.
+- All of these default to off and are left out of the stored definition, so
+  older reports lay out exactly as before.
+- Page header and footer bands can't hold a table. The designer lists it as a
+  problem and marks Add table `aria-disabled` with a visible reason on those
+  bands. `reports::validate` returns a warning, not an error, so older
+  documents that hold one still export. Layout leaves the table out and reports
+  a diagnostic.
 - Text boxes don't grow. Lines past the box height are dropped, and at least one
   line always shows.
 
@@ -128,6 +153,16 @@ arbitrary HTML or CSS. This engine also leaves these for later:
 - `tests/unit/report-pdf.test.ts`: a byte-for-byte golden PDF, xref offset
   checks, string escaping, image passthrough, and two runs giving identical
   bytes.
+- `tests/unit/report-pagination.test.ts`: page assignments and positions for
+  page breaks, new page per group, repeated group headers (also above a split
+  table), and group page numbers.
+- `tests/integration/golden/report-snapshots.test.tsx`: lays out every report
+  of the CRM, Inventory, and Work orders golden apps from their template and
+  seed rows, with a fixed clock and `TZ=UTC`, and compares the layout JSON and
+  PDF bytes with `tests/fixtures/report-goldens/`. Run it with `UPDATE_GOLDENS=1` to
+  rewrite the fixtures after an intended change. Asset ids, which are minted
+  when the template is created, are replaced by `{{asset:N}}` in the layout
+  JSON. `.gitattributes` keeps the fixtures out of line-ending conversion.
 - `tests/integration/report.test.tsx`: builds a grouped report in the UI,
   previews it, prints it, and exports two identical PDFs through the Rust
   command.

@@ -33,9 +33,22 @@ and none hits SQLite's 1 GB blob limit. Format 1 archives open unchanged and
 are rewritten as format 2 on the next save. A newer format fails with a message
 that asks the user to update ixtable.
 
+`DocumentConfig.version` is checked the same way. Older configs upgrade on
+load. A newer config version fails with `UNSUPPORTED_VERSION` and a message
+that asks the user to update ixtable, not with `INVALID_ARCHIVE`. Top-level
+config fields this build does not know (a newer build with the same config
+version) are kept in `DocumentConfig.extra` and written back unchanged by
+saves, `document.json`, and the `config.yaml` projection. This covers top-level
+fields only. An unknown field inside a nested object (a form, a query, a
+report) is dropped on save, so a build that adds nested fields must bump the
+config version; older builds then refuse the document instead of losing data.
+
 Ordinary tables that this build does not know are copied, with rows and
 indexes, from the previous archive of the same document. Views, triggers,
-virtual tables, and tables from a different document are never copied.
+virtual tables, and tables from a different document are never copied. The
+one exception is Restore as copy: the new archive gets a new document id but
+deliberately copies the checkpoint, so it keeps the checkpoint's unknown
+tables too.
 
 ### Save path
 
@@ -57,9 +70,20 @@ Opening a document extracts it to `recovery/<sessionId>/`: `data.db`,
 `attachments/<id>/{content,metadata.json}`. Record writes go to that `data.db`.
 The global store registers each session with a `dirty` flag.
 
+The JSON and YAML files in the workspace are each written atomically: a hidden
+temp sibling, `fsync`, rename, then a directory sync. A crash leaves the old
+or the new file, never a truncated one. `document.json` and `config.yaml`
+hold the same config, so recovery reads `document.json` and falls back to
+`config.yaml` when it is missing or unreadable.
+
 On the next start, a dirty session that never closed is offered for recovery.
-Recovery checks `PRAGMA integrity_check` on `data.db`, loads `document.json`,
-and verifies every asset checksum. Valid work is checkpointed and saved back
+Recovery checks `PRAGMA integrity_check` on `data.db`, loads the config, and
+verifies every asset checksum. It opens `data.db` read-write (never creating
+it): a crash in the middle of a transaction leaves a hot rollback journal, and
+only a writable connection can roll it back. A read-only open fails with
+`SQLITE_READONLY_ROLLBACK` and would reject work that is recoverable. Rolling
+back drops only the uncommitted transaction, which is the correct crash
+outcome. Valid work is checkpointed and saved back
 into the `.ixt`. Invalid work never touches the archive, and the error is
 shown instead.
 
@@ -78,6 +102,19 @@ checkpoints are validated archive copies under
   500 MB cloud limit bounds.
 - Unknown-table preservation only works for plain tables. A future format
   that needs views or triggers must bump `FORMAT_VERSION`.
+- Every released format stays openable. `tests/fixtures/archives/format-<N>/`
+  holds one `.ixt` per golden app (CRM, inventory with its asset, work
+  orders) with seeded data, plus a `manifest.json` of the ids, row counts, and
+  asset checksums each must contain. A change that bumps `FORMAT_VERSION` adds
+  a new `format-<N+1>/` with `node scripts/ci/write-archive-fixtures.mjs` and
+  never rewrites an existing directory. Each manifest entry records the
+  sha256 of its `.ixt`, checked by a Rust test, and the lint job runs
+  `scripts/ci/check-archive-fixtures.mjs`, which fails a pull request that
+  modifies or deletes a fixture file present on the base branch. `format-1/`
+  holds the same documents as `format-2/` in the legacy layout (no
+  `application_id`, no `payload_chunks`, config version 2), derived by
+  `node scripts/ci/write-archive-fixtures.mjs --format-1`. `.gitattributes`
+  marks `*.ixt` binary.
 
 ## Evidence
 
@@ -85,11 +122,34 @@ checkpoints are validated archive copies under
   preservation, newer and ancient format rejection, large chunked payloads with
   checksum checks, interrupted writes that keep the last valid archive, no
   copying from another document.
-- `src-tauri/src/recovery.rs` tests: valid WIP loads with its assets, and
-  invalid WIP is reported, not loaded.
+- `src-tauri/src/recovery.rs` tests: valid WIP loads with its assets,
+  invalid WIP is reported, not loaded, a truncated or missing `document.json`
+  falls back to `config.yaml`, config files leave no temp files, and a hot
+  journal left by a crash is rolled back instead of rejected.
+- `src-tauri/src/archive.rs` tests: a newer config version is
+  `UNSUPPORTED_VERSION`, and unknown top-level config fields survive save,
+  reopen, and the YAML round trip.
+- `src-tauri/src/checkpoints.rs` tests: Restore as copy keeps unknown tables.
 - `tests/integration/persistence.test.tsx`: autosave states, autosave failure
   and retry, crash recovery from the start screen, invalid recovered work,
   ignored temp-file leftovers.
 - `tests/integration/assets.test.tsx`: asset checksums, archive size report,
   checkpoint create and restore-as-copy.
 - `tests/unit/autosave.test.ts`: debounce, max wait, single in-flight save.
+- `src-tauri/src/durability_tests/fixtures.rs`: every committed archive
+  fixture opens with the current build, matches its manifest (forms, queries,
+  reports, dashboards by id, row counts, asset checksums), saves (upgrading
+  older formats), and reopens.
+- `src-tauri/src/durability_tests/kill.rs`: a real child process saves and
+  autosaves a growing document and is killed (`Child::kill`) at eight delays
+  and, alternately, while a test-only marker shows an archive write or rename
+  is in progress (at least one kill must land mid-write). The archive at the
+  path always verifies, and the leftover workspace is recovered into it (saved
+  back: not dirty, no error, archive rows equal the workspace's; at least one
+  run must grow the archive) or refused with `RECOVERY_FAILED`. The writer is
+  killed on drop and stops itself after 512 MB or two minutes.
+- `src-tauri/src/durability_tests/heavy.rs` (opt-in): an archive just over
+  500,000,000 bytes saves and reopens, the size report flags it, and the
+  publish preflight blocks it. Run with
+  `IXTABLE_HEAVY_TESTS=1 cargo test --lib durability_tests::heavy` (about a
+  minute and 1.5 GB of temporary disk). Default CI does not run it.

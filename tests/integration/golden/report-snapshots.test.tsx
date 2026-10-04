@@ -1,10 +1,3 @@
-/**
- * Golden report snapshots (PRD §15, §26.5): every report of the three golden
- * applications, laid out from the template definitions and seed rows, must
- * match the committed layout JSON and PDF bytes in tests/fixtures/report-goldens/.
- *
- * Run with UPDATE_GOLDENS=1 to rewrite the fixtures after an intended change.
- */
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -16,7 +9,6 @@ import { layoutReport } from "../../../src/reports/engine";
 import { writePdf } from "../../../src/reports/pdf";
 import { startFromTemplate } from "./journey";
 
-// Pin the zone so date handling cannot depend on the machine running the suite.
 process.env.TZ = "UTC";
 
 const FIXTURES = join(dirname(fileURLToPath(import.meta.url)), "../../fixtures/report-goldens");
@@ -29,7 +21,6 @@ const slug = (s: string) =>
     .replace(/[^a-z0-9]+/g, "-")
     .replace(/^-|-$/g, "");
 
-/** Compares `actual` with the fixture `name`, or rewrites it in update mode. */
 function golden(name: string, actual: Uint8Array) {
   const path = join(FIXTURES, name);
   if (UPDATE) {
@@ -41,7 +32,6 @@ function golden(name: string, actual: Uint8Array) {
     throw new Error(`Missing golden ${name}; run with UPDATE_GOLDENS=1 to create it`);
   const expected = new Uint8Array(readFileSync(path));
   const decode = (bytes: Uint8Array) => Buffer.from(bytes).toString("latin1");
-  // Compare as text first so a diff shows what moved, then byte for byte.
   expect(decode(actual), `${name} differs; run with UPDATE_GOLDENS=1 if intended`).toBe(
     decode(expected),
   );
@@ -76,7 +66,6 @@ async function snapshotReports(template: string, expectedReports: string[]) {
       ),
     });
     const name = `${slug(template)}-${slug(report.name)}`;
-    // Asset ids are minted when the template is created; name them by first use instead.
     let json = JSON.stringify(doc, null, 1);
     const ids = [
       ...new Set(

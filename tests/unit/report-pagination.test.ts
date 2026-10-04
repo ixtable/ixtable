@@ -3,7 +3,6 @@ import { layoutReport, PAGE_BAND_TABLE, type ReportDocument } from "../../src/re
 import type { Band, ReportComponent, ReportGroup } from "../../src/reports/types";
 import { band, baseReport, orders } from "./report-fixtures";
 
-// A4 portrait with 36 pt margins: the body runs from y=36 to y=806.
 const field = (id: string, expression: string): ReportComponent => ({
   id,
   kind: "field",
@@ -15,7 +14,6 @@ const field = (id: string, expression: string): ReportComponent => ({
 });
 const pageNumbers = "groupPage & '/' & groupPages & ' ' & page & '/' & pages";
 
-/** Per page: [componentId, text, box y] of every text item. */
 const texts = (doc: ReportDocument) =>
   doc.pages.map((p) =>
     p.items.flatMap((i) => (i.kind === "text" ? [[i.componentId, i.text, i.y]] : [])),
@@ -156,7 +154,6 @@ describe("pagination controls", () => {
     expect(doc.pages.length).toBeGreaterThan(1);
     for (const page of texts(doc).slice(1)) {
       expect(page[0]).toEqual(["gh", "West", 36]);
-      // The table's header row continues directly below the repeated group header.
       expect(page[1].slice(1)).toEqual(["Customer", 66]);
     }
   });

@@ -96,6 +96,8 @@ export type DbColumn = {
   /** Logical type (`text`, `integer`, `decimal(10,2)`, …); see src/schema/logical.ts. */
   logicalType?: string;
   unique?: boolean;
+  /** The database fills it in on insert (SQLite rowid alias, PostgreSQL identity or serial). */
+  autoIncrement?: boolean;
 };
 export type DbForeignKey = {
   id: number;

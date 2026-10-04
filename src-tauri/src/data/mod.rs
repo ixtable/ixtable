@@ -28,10 +28,10 @@ pub use ddl::{
     parse_sqlite_create_index, parse_sqlite_create_table, CheckDef, ColumnDef, ForeignKeyDef,
     IndexDef, TableDef, UniqueDef,
 };
+pub use extensions::{postgres_extension_path, sqlite_extension_path};
 pub use logical::{
     LogicalType, LOGICAL_TYPE_NAMES, MAX_DECIMAL_PRECISION, SQLITE_MAX_DECIMAL_PRECISION,
 };
-pub use extensions::{postgres_extension_path, sqlite_extension_path};
 pub use read::{ReadRuntime, ReadTarget};
 pub use support::{logical_from_duckdb, redact};
 
@@ -162,6 +162,8 @@ pub struct Column {
     pub primary_key_position: u32,
     pub generated: bool,
     pub unique: bool,
+    /// The database fills the key in on insert: a PostgreSQL identity or `nextval` (serial) default.
+    pub auto_increment: bool,
 }
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]

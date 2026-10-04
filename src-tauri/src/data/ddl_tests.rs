@@ -61,3 +61,20 @@ fn parses_autoincrement_and_indexes() {
     assert_eq!(i.name, "by label");
     assert_eq!(i.columns, vec!["label", "id"]);
 }
+
+#[test]
+fn rowid_alias_is_marked_auto_increment_only_for_integer_primary_keys() {
+    let auto = |sql: &str| {
+        let mut def = parse_sqlite_create_table(sql).unwrap();
+        super::read::mark_rowid_alias(&mut def);
+        super::TableSchema::from_def(def, "table".into()).columns[0].auto_increment
+    };
+    assert!(auto("CREATE TABLE a (id integer PRIMARY KEY, n TEXT)"));
+    assert!(!auto("CREATE TABLE b (id BIGINT PRIMARY KEY, n TEXT)"));
+    assert!(!auto(
+        "CREATE TABLE c (id INTEGER, n TEXT, PRIMARY KEY (id, n))"
+    ));
+    assert!(!auto(
+        "CREATE TABLE d (id INTEGER PRIMARY KEY, n TEXT) WITHOUT ROWID"
+    ));
+}

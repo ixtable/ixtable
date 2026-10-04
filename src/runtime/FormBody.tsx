@@ -120,6 +120,10 @@ function ControlView({ ctx, control }: { ctx: BodyContext; control: DesignContro
       error={ctx.errors[control.id]}
       onChange={(next) => column && ctx.setField(column, next)}
       onBlur={() => ctx.blur(control)}
+      keyValues={scope.record}
+      onKeys={(values) => {
+        for (const [key, next] of Object.entries(values)) ctx.setField(key, next);
+      }}
     />
   );
 }

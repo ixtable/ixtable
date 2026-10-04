@@ -50,8 +50,21 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      # Supabase and OAuth settings are baked into the static build. Set them as
+      # variables on the `production` and `preview` environments; unset falls back
+      # to the local stack (docusaurus.config.ts), which only works on a laptop.
       - name: Build web app
-        run: npm run build
+        env:
+          SUPABASE_URL: ${{ vars.SUPABASE_URL }}
+          SUPABASE_ANON_KEY: ${{ vars.SUPABASE_ANON_KEY }}
+          OAUTH_ENABLED: ${{ vars.OAUTH_ENABLED }}
+          OAUTH_GOOGLE_ENABLED: ${{ vars.OAUTH_GOOGLE_ENABLED }}
+          OAUTH_MICROSOFT_ENABLED: ${{ vars.OAUTH_MICROSOFT_ENABLED }}
+        run: |
+          if [ "${{ github.event_name }}" != "pull_request" ] && [ -z "$SUPABASE_URL" ]; then
+            echo "::warning::SUPABASE_URL is not set on the production environment: sign-in and the cloud dashboard will not work"
+          fi
+          npm run build
 
       - name: Publish production
         if: github.event_name != 'pull_request'

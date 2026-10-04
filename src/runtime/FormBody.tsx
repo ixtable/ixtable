@@ -3,6 +3,7 @@ import type { DesignControl, DesignForm, TabPage } from "../design/schema";
 import { isInputKind } from "../design/schema";
 import { GridCanvas, GridItem } from "../grid";
 import { ComputedValue, Field, ImageView } from "./controls";
+import { toneFor } from "./conditions";
 import { compute, condition, type FormScope } from "./formState";
 import { RelatedRecords } from "./RelatedList";
 import type { DataValue } from "../lib/types";
@@ -79,7 +80,14 @@ function ControlView({ ctx, control }: { ctx: BodyContext; control: DesignContro
       return <TabGroup ctx={ctx} control={control} />;
     case "computed": {
       const result = compute(control.computed, scope);
-      return <ComputedValue control={control} value={result.value} error={result.error} />;
+      return (
+        <ComputedValue
+          control={control}
+          value={result.value}
+          error={result.error}
+          tone={toneFor(control.styles, { ...scope, value: result.value })}
+        />
+      );
     }
     case "button":
       return (
@@ -109,8 +117,9 @@ function ControlView({ ctx, control }: { ctx: BodyContext; control: DesignContro
     !!control.readOnly ||
     (column ? ctx.locked.has(column) : true) ||
     !condition(control.enabledWhen, scope);
+  const tone = toneFor(control.styles, { ...scope, value });
   if (ctx.readOnly && control.format && value != null && control.kind !== "relationship") {
-    return <ComputedValue control={control} value={value} />;
+    return <ComputedValue control={control} value={value} tone={tone} />;
   }
   return (
     <Field
@@ -118,6 +127,12 @@ function ControlView({ ctx, control }: { ctx: BodyContext; control: DesignContro
       value={value}
       readOnly={readOnly}
       error={ctx.errors[control.id]}
+      tone={tone}
+      filterScope={
+        control.relationship?.filter
+          ? { parent: scope.record, form: scope.form, app: scope.app, params: {} }
+          : undefined
+      }
       onChange={(next) => column && ctx.setField(column, next)}
       onBlur={() => ctx.blur(control)}
     />

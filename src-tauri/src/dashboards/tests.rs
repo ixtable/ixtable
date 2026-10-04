@@ -238,3 +238,40 @@ fn incomplete_components_are_warnings() {
         vec!["dashboardComponent:k: component ids must be non-empty and unique within a dashboard"]
     );
 }
+
+#[test]
+fn component_conditions_filters_and_styles_round_trip() {
+    let raw = json!({
+        "id": "t1", "kind": "table", "title": "Orders", "queryId": "q1",
+        "filter": "record.amount > 10", "visibleWhen": "params.region <> null",
+        "enabledWhen": "app.role = 'admin'",
+        "styles": [{"id": "s1", "when": "value < 0", "tone": "warning", "column": "amount"}],
+        "placement": {"column": 1, "row": 3, "columnSpan": 6, "rowSpan": 1}
+    });
+    let component: DashboardComponent = serde_json::from_value(raw.clone()).unwrap();
+    let back = serde_json::to_value(&component).unwrap();
+    for key in ["filter", "visibleWhen", "enabledWhen", "styles"] {
+        assert_eq!(back[key], raw[key], "{key}");
+    }
+    let mut dashboard = sample();
+    dashboard.components.push(DashboardComponent {
+        filter: Some(" ".into()),
+        visible_when: Some(String::new()),
+        styles: vec![ConditionalStyle {
+            id: "s".into(),
+            ..Default::default()
+        }],
+        ..component
+    });
+    let found = messages(&validate(&config_with(dashboard)), Severity::Error);
+    for needle in [
+        "empty filter expression",
+        "empty visibility expression",
+        "conditional style with an empty condition",
+    ] {
+        assert!(
+            found.iter().any(|e| e.contains(needle)),
+            "{needle}: {found:?}"
+        );
+    }
+}

@@ -9,6 +9,7 @@ import {
 } from "../grid/engine";
 import type { GridLayout, Placement } from "../grid/types";
 import { newId } from "../lib/utils";
+import type { ConditionalStyle } from "../runtime/conditions";
 
 /** TypeScript mirror of `src-tauri/src/design.rs` (serde camelCase). */
 export const DESIGN_SCHEMA_VERSION = 3;
@@ -60,7 +61,13 @@ export type ControlValidation = {
   message?: string | null;
 };
 export type SelectOption = { value: string; label: string };
-export type Relationship = { table: string; valueColumn: string; displayColumn: string };
+export type Relationship = {
+  table: string;
+  valueColumn: string;
+  displayColumn: string;
+  /** Row filter over the choices: `record` is a choice row, `parent` the edited record. */
+  filter?: string | null;
+};
 export type TabPage = { id: string; label: string };
 export type RelatedList = {
   table: string;
@@ -68,6 +75,8 @@ export type RelatedList = {
   parentColumn: string;
   columns: string[];
   formId?: string | null;
+  /** Row filter: `record` is a child row, `parent` the parent record. */
+  filter?: string | null;
 };
 export type ControlParent = { id: string; tab?: string | null };
 
@@ -95,6 +104,8 @@ export type DesignControl = {
   assetId?: string | null;
   readOnly?: boolean;
   variant?: string | null;
+  /** Conditional styles; the first rule whose `when` holds sets the tone. */
+  styles?: ConditionalStyle[];
 };
 export type FormRule = { id: string; expression: string; message: string };
 export type DesignForm = {
@@ -108,6 +119,8 @@ export type DesignForm = {
   pageSize: number;
   detailFormId?: string | null;
   rules: FormRule[];
+  /** List mode row filter: an expression over `record`, `app` and `params`. */
+  filter?: string | null;
 };
 export type NavKind = "form" | "report" | "dashboard" | "table" | "group";
 export type NavigationItem = {
@@ -286,6 +299,7 @@ function upgradeForm(raw: unknown): DesignForm {
     pageSize: typeof form.pageSize === "number" ? form.pageSize : 25,
     detailFormId: (form.detailFormId as string | null | undefined) ?? null,
     rules: arr(form.rules).map((r) => ({ id: "", expression: "", message: "", ...rec(r) })),
+    ...(typeof form.filter === "string" ? { filter: form.filter } : {}),
   };
 }
 

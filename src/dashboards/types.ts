@@ -4,6 +4,7 @@
  */
 import type { FormMode } from "../design/schema";
 import type { GridLayout, Placement } from "../grid/types";
+import type { ConditionalStyle } from "../runtime/conditions";
 
 export type FilterControl = "select" | "text" | "date" | "number" | "dateRange";
 export const FILTER_CONTROLS: FilterControl[] = ["select", "text", "date", "number", "dateRange"];
@@ -93,6 +94,13 @@ export interface DashboardComponent {
   label?: string | null;
   // text: plain text; blank lines separate paragraphs.
   text?: string | null;
+  // table: row filter over `record` (one result row), `params` and `app`.
+  filter?: string | null;
+  // table: conditional styles, each naming the column it styles.
+  styles?: ConditionalStyle[];
+  // Any kind: shown / enabled when the expression over `params` and `app` holds.
+  visibleWhen?: string | null;
+  enabledWhen?: string | null;
 }
 
 export interface Dashboard {

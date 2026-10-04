@@ -6,7 +6,9 @@
 //! definitions only; queries run through `queries.rs`, and charts, KPI expressions,
 //! and filters are evaluated by the TypeScript dashboard view.
 use crate::archive::{check_named_ids, DocumentConfig, Issue};
-use crate::design::{validate_grid_layout, validate_grid_span, FormMode, GridLayout, Placement};
+use crate::design::{
+    validate_grid_layout, validate_grid_span, ConditionalStyle, FormMode, GridLayout, Placement,
+};
 use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
 
@@ -156,6 +158,18 @@ pub struct DashboardComponent {
     /// text: plain text; blank lines separate paragraphs.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub text: Option<String>,
+    /// table: row filter expression over `record`, `params` and `app`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub filter: Option<String>,
+    /// table: conditional styles, each naming its column.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub styles: Vec<ConditionalStyle>,
+    /// Shown when this expression over `params` and `app` holds (blank: always).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub visible_when: Option<String>,
+    /// Enabled when this expression holds (blank: always).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub enabled_when: Option<String>,
 }
 
 /// The query parameter names a filter supplies.
@@ -344,6 +358,26 @@ impl Checker<'_> {
                     ),
                     None => self.warning(kind, id, format!("\"{title}\" has no saved query")),
                 }
+            }
+            for (name, value) in [
+                ("filter", &c.filter),
+                ("visibility", &c.visible_when),
+                ("enabled", &c.enabled_when),
+            ] {
+                if value.as_deref().is_some_and(|t| t.trim().is_empty()) {
+                    self.error(
+                        kind,
+                        id,
+                        format!("\"{title}\" has an empty {name} expression"),
+                    );
+                }
+            }
+            if c.styles.iter().any(|s| s.when.trim().is_empty()) {
+                self.error(
+                    kind,
+                    id,
+                    format!("\"{title}\" has a conditional style with an empty condition"),
+                );
             }
             match c.kind {
                 ComponentKind::Kpi => {

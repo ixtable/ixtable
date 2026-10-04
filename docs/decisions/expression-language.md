@@ -40,8 +40,41 @@ Semantics chosen for determinism:
   pattern and input length.
 
 Scope roots follow one convention across features: `record`, `form`, `app`,
-`params`, `rows`, and `value`. `check(src, knownNames)` reports unknown names
-with character positions, so editors can flag them as the user types.
+`params`, `rows`, `value`, and `parent`. `check(src, knownNames)` reports
+unknown names with character positions, so editors can flag them as the user
+types. The table of roots per expression kind is in `src/expr/README.md`.
+
+Filters and conditional styles (PRD §17.1) use the same evaluator through
+`src/runtime/conditions.ts`:
+
+- A filter is a boolean expression over one row as `record`. List forms,
+  related lists, lookup selectors, and dashboard tables each store an optional
+  `filter`. In a related list or lookup, `parent` is the record on screen.
+  Rows are still read through DuckDB, and the filter runs on the fetched rows.
+  Null, false, and evaluation errors drop the row. A syntax error is shown
+  in place of the rows.
+- Paging stays honest. A filtered list form reads its table in chunks of 500
+  rows. It scans at least 5,000 rows, or the whole table, and then keeps going
+  until it has found one match past the current page. If it read the whole
+  table, the pager shows an exact total ("1–25 of 40"). Otherwise it shows a
+  lower bound ("1–25 of at least 2,500"). Scanning stops at 50,000 rows. A
+  related list and a lookup scan until they fill their 200 or 50 rows. A
+  dashboard table already holds the whole query result, so its page count is
+  exact.
+- A conditional style is an ordered list of `{ id, when, tone }` rules on a
+  form's input and computed controls, and `{ id, column, when, tone }` rules
+  on a dashboard table. The first rule whose `when` is true sets the tone.
+  List and related-list cells use the rules of the control bound to their
+  column. Tones are names (`positive`, `negative`, `warning`, `muted`,
+  `emphasis`) that map to `tone-*` classes, never raw CSS (PRD §6.3). Each tone
+  has a non-color cue (a glyph, bold or italic text, or a border style), so it
+  still reads in grayscale print and for color-blind users (PRD §27.4).
+- Dashboard components have `visibleWhen` and `enabledWhen`, evaluated with
+  the KPI scope (`params`, `app`) by the form helper `condition()`. There is
+  no dashboard-only state engine.
+
+Rust stores these fields in `design` and `dashboards` and only flags empty
+ones in validation.
 
 ## Consequences
 
@@ -57,6 +90,12 @@ with character positions, so editors can flag them as the user types.
 
 ## Evidence
 
+- `tests/unit/conditions.test.ts`: first-match tones, row filters and their
+  names, chunked scanning with exact and lower-bound totals, pager text.
+  `tests/unit/dashboard-conditions.test.tsx`: dashboard show/enable and table
+  filter and styles. `tests/integration/expressions.test.tsx`: designer
+  authoring and runtime results for list form, related list, lookup, and
+  dashboard table filters and styles.
 - `tests/unit/expr.test.ts`: literals and arithmetic, names, null semantics,
   comparisons, functions, aggregates, dates, formatting, errors, injection
   attempts, `check`, and `referencedNames`.

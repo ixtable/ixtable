@@ -1,5 +1,7 @@
 import { Plus, Trash2 } from "lucide-react";
 import { newId } from "../lib/utils";
+import { filterNames } from "../runtime/conditions";
+import { ExpressionField } from "./ExpressionField";
 import { removeTab } from "./operations";
 import type { DesignControl, DesignForm } from "./schema";
 import { useColumns } from "./useColumns";
@@ -130,6 +132,15 @@ export function RelatedListProperties({
         columns={columns}
         onChange={(parentColumn) =>
           control.related && change({ related: { ...control.related, parentColumn } })
+        }
+      />
+      <ExpressionField
+        label="Row filter"
+        value={control.related?.filter}
+        names={filterNames(childColumns)}
+        placeholder="record.status <> 'void'"
+        onChange={(filter) =>
+          control.related && change({ related: { ...control.related, filter } })
         }
       />
       <label>

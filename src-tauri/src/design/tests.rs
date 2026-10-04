@@ -183,6 +183,7 @@ fn related_list_nesting_is_one_level() {
             parent_column: "id".into(),
             columns: vec![],
             form_id: form.map(Into::into),
+            filter: None,
         }),
         ..control("lines", ControlKind::RelatedList)
     };
@@ -222,6 +223,7 @@ fn table_references_are_checked_against_schema() {
                     table: "regions".into(),
                     value_column: "id".into(),
                     display_column: "label".into(),
+                    filter: None,
                 }),
                 ..control("region", ControlKind::Relationship)
             },
@@ -295,4 +297,61 @@ fn container_children_use_the_container_grid() {
     assert!(errors(&validate(&config))
         .iter()
         .any(|e| e.contains("tab that does not exist")));
+}
+
+#[test]
+fn filters_and_conditional_styles_round_trip_and_flag_blanks() {
+    use serde_json::json;
+    let raw = json!({
+        "id": "f", "name": "Orders", "filter": "record.total > 0",
+        "controls": [
+            {"id": "a", "kind": "decimal", "label": "Total", "binding": {"column": "total"},
+             "styles": [{"id": "s1", "when": "value < 0", "tone": "negative"}]},
+            {"id": "r", "kind": "relationship", "label": "Region",
+             "relationship": {"table": "regions", "valueColumn": "id", "displayColumn": "name",
+                              "filter": "record.active"}},
+            {"id": "l", "kind": "relatedList", "label": "Lines",
+             "related": {"table": "lines", "foreignKey": "order_id", "parentColumn": "id",
+                         "filter": "record.qty > 0"}}
+        ]
+    });
+    let form: Form = serde_json::from_value(raw.clone()).unwrap();
+    assert_eq!(form.filter.as_deref(), Some("record.total > 0"));
+    assert_eq!(form.controls[0].styles[0].tone, Tone::Negative);
+    let back = serde_json::to_value(&form).unwrap();
+    assert_eq!(back["filter"], raw["filter"]);
+    assert_eq!(back["controls"][0]["styles"], raw["controls"][0]["styles"]);
+    assert_eq!(
+        back["controls"][1]["relationship"]["filter"],
+        json!("record.active")
+    );
+    assert_eq!(
+        back["controls"][2]["related"]["filter"],
+        json!("record.qty > 0")
+    );
+    // Unset fields stay out of the serialized control.
+    let plain = serde_json::to_value(control("x", ControlKind::Text)).unwrap();
+    assert!(plain.get("styles").is_none());
+
+    let mut blank = form.clone();
+    blank.filter = Some(" ".into());
+    blank.controls[0].styles[0].when = String::new();
+    if let Some(r) = blank.controls[1].relationship.as_mut() {
+        r.filter = Some(String::new());
+    }
+    if let Some(r) = blank.controls[2].related.as_mut() {
+        r.filter = Some(String::new());
+    }
+    let found = errors(&validate(&config_with(blank)));
+    for needle in [
+        "empty list filter",
+        "conditional style with an empty condition",
+        "empty lookup filter expression",
+        "empty related list filter expression",
+    ] {
+        assert!(
+            found.iter().any(|e| e.contains(needle)),
+            "{needle}: {found:?}"
+        );
+    }
 }

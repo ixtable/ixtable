@@ -1,4 +1,4 @@
-import { useEffect, useId, useState } from "react";
+import { useEffect, useId, useMemo, useState } from "react";
 import type { DesignControl } from "../design/schema";
 import { useDocumentConfig } from "../lib/config-store";
 import { readAssetDataUrl } from "./api";
@@ -9,6 +9,7 @@ import {
   relationshipChoices,
   relationshipLabel,
 } from "./data";
+import { type Tone, toneClass } from "./conditions";
 import { formatted } from "./formState";
 import { sameValue } from "./values";
 
@@ -20,6 +21,10 @@ export type FieldProps = {
   /** Read-only display (detail mode, disabled by `enabledWhen`, or no permission). */
   readOnly: boolean;
   error?: string;
+  /** Conditional style tone from the control's `styles`. */
+  tone?: Tone | null;
+  /** Scope for a relationship `filter`: the edited record as `parent`, plus `form`, `app`. */
+  filterScope?: Record<string, unknown>;
 };
 
 const dateInput = (value: unknown, kind: string) => {
@@ -33,7 +38,16 @@ const dateInput = (value: unknown, kind: string) => {
 const numberValue = (raw: string) => (raw === "" ? null : Number(raw));
 
 /** Label + described input for one bound control. Keyboard accessible, labelled, with error text. */
-export function Field({ control, value, onChange, onBlur, readOnly, error }: FieldProps) {
+export function Field({
+  control,
+  value,
+  onChange,
+  onBlur,
+  readOnly,
+  error,
+  tone,
+  filterScope,
+}: FieldProps) {
   const id = useId();
   const errorId = `${id}-error`;
   const required = control.validation?.required ?? false;
@@ -106,6 +120,7 @@ export function Field({ control, value, onChange, onBlur, readOnly, error }: Fie
           value={value}
           onChange={onChange}
           readOnly={readOnly}
+          filterScope={filterScope}
         />
       );
       break;
@@ -120,7 +135,7 @@ export function Field({ control, value, onChange, onBlur, readOnly, error }: Fie
       );
   }
   return (
-    <div className={`rt-field rt-${control.kind}`}>
+    <div className={`rt-field rt-${control.kind} ${toneClass(tone ?? null)}`.trim()}>
       <label htmlFor={id}>
         {control.label}
         {required && !readOnly && <span aria-hidden="true"> *</span>}
@@ -195,9 +210,16 @@ function RelationshipInput({
   value,
   onChange,
   readOnly,
+  filterScope,
   ...rest
-}: InputProps & { readOnly: boolean }) {
+}: InputProps & { readOnly: boolean; filterScope?: Record<string, unknown> }) {
   const relationship = control.relationship;
+  // Reload choices only when the filter's inputs change (none without a filter).
+  const scopeKey = relationship?.filter?.trim() ? JSON.stringify(filterScope ?? {}) : "";
+  const scope = useMemo(
+    () => (scopeKey ? (JSON.parse(scopeKey) as Record<string, unknown>) : {}),
+    [scopeKey],
+  );
   const [search, setSearch] = useState("");
   const [choices, setChoices] = useState<Choice[]>([]);
   // Starts from the last label shown for this key, so a reload never blanks the field.
@@ -209,7 +231,7 @@ function RelationshipInput({
     let live = true;
     const timer = setTimeout(
       () => {
-        relationshipChoices(relationship, search)
+        relationshipChoices(relationship, search, 50, scope)
           .then((items) => live && setChoices(items))
           .catch(() => live && setChoices([]));
       },
@@ -219,7 +241,7 @@ function RelationshipInput({
       live = false;
       clearTimeout(timer);
     };
-  }, [relationship, search, readOnly]);
+  }, [relationship, search, readOnly, scope]);
   useEffect(() => {
     if (!relationship) return;
     let live = true;
@@ -268,14 +290,16 @@ export function ComputedValue({
   control,
   value,
   error,
+  tone,
 }: {
   control: DesignControl;
   value: unknown;
   error?: string;
+  tone?: Tone | null;
 }) {
   const id = useId();
   return (
-    <div className="rt-field rt-computed">
+    <div className={`rt-field rt-computed ${toneClass(tone ?? null)}`.trim()}>
       <span id={id} className="rt-label">
         {control.label}
       </span>

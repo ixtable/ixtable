@@ -9,6 +9,7 @@ import { ReportPreview } from "../reports";
 import { useConfirm } from "../runtime/Confirm";
 import { FormRenderer } from "../runtime/FormRenderer";
 import { type PageKind, useRuntimeNavigation } from "../runtime/navigation";
+import { condition } from "../runtime/formState";
 import { can } from "../runtime/rbac";
 import { dashboardParams, defaultFilterValues, type FilterValue, resultRows } from "./data";
 import { KIND_LABELS, normalizeDashboard } from "./model";
@@ -145,7 +146,7 @@ function LiveDashboard({
       case "table":
         return (
           <QueryGate component={c} state={stateOf(c)}>
-            {(result) => <TableBody component={c} result={result} />}
+            {(result) => <TableBody component={c} result={result} scope={scope} />}
           </QueryGate>
         );
       case "filter": {
@@ -194,6 +195,9 @@ function LiveDashboard({
     }
   };
 
+  // Hidden components are not rendered; the others keep their authored placement, as on forms.
+  const shown = dashboard.components.filter((c) => condition(c.visibleWhen, scope));
+
   const minHeight = (c: DashboardComponent): CSSProperties => ({
     minHeight:
       c.placement.rowSpan * ROW_HEIGHT + (c.placement.rowSpan - 1) * dashboard.layout.rowGap,
@@ -240,18 +244,29 @@ function LiveDashboard({
       )}
       {dashboard.components.length ? (
         <GridCanvas layout={dashboard.layout} label={dashboard.name}>
-          {dashboard.components.map((c) => (
-            <GridItem key={c.id} id={c.id} placement={c.placement} label={c.title}>
-              <section
-                className={`dash-widget dash-${c.kind}`}
-                aria-label={c.title || KIND_LABELS[c.kind]}
-                style={minHeight(c)}
-              >
-                {c.title && c.kind !== "button" && c.kind !== "filter" && <h3>{c.title}</h3>}
-                {body(c)}
-              </section>
-            </GridItem>
-          ))}
+          {shown.map((c) => {
+            const enabled = condition(c.enabledWhen, scope);
+            return (
+              <GridItem key={c.id} id={c.id} placement={c.placement} label={c.title}>
+                <section
+                  className={`dash-widget dash-${c.kind}${enabled ? "" : " dash-disabled"}`}
+                  aria-label={c.title || KIND_LABELS[c.kind]}
+                  aria-disabled={enabled ? undefined : true}
+                  style={minHeight(c)}
+                >
+                  {c.title && c.kind !== "button" && c.kind !== "filter" && <h3>{c.title}</h3>}
+                  {enabled ? (
+                    body(c)
+                  ) : (
+                    // A disabled fieldset disables every native control inside the component.
+                    <fieldset disabled className="dash-disabled-body">
+                      {body(c)}
+                    </fieldset>
+                  )}
+                </section>
+              </GridItem>
+            );
+          })}
         </GridCanvas>
       ) : (
         <p className="dash-muted">This dashboard has no components yet.</p>

@@ -20,16 +20,23 @@ export function knownNames(columns?: string[]): string[] {
 }
 
 /** Diagnostics text for an expression field in the designer ("" when valid). */
-export function expressionProblem(src: string | null | undefined, columns?: string[]): string {
+export function expressionProblem(
+  src: string | null | undefined,
+  columns?: string[],
+  names?: string[],
+): string {
   if (!present(src)) return "";
-  const diagnostics = check(src, knownNames(columns));
+  const diagnostics = check(src, names ?? knownNames(columns));
   return diagnostics.map((d) => d.message).join("; ");
 }
 
-/** Evaluates a condition; a blank expression gives `fallback`, an error gives false. */
+/**
+ * Evaluates a condition; a blank expression gives `fallback`, an error gives false.
+ * Dashboards call it too, with their `{ params, app }` scope.
+ */
 export function condition(
   src: string | null | undefined,
-  scope: FormScope,
+  scope: FormScope | Record<string, unknown>,
   fallback = true,
 ): boolean {
   if (!present(src)) return fallback;

@@ -148,10 +148,23 @@ fn check_control(config: &DocumentConfig, form: &Form, control: &Control, out: &
         ("computed value", &control.computed),
         ("default value", &control.default_value),
         ("validation", &control.validation.expression),
+        (
+            "lookup filter",
+            &control.relationship.as_ref().and_then(|r| r.filter.clone()),
+        ),
+        (
+            "related list filter",
+            &control.related.as_ref().and_then(|r| r.filter.clone()),
+        ),
     ] {
         if blank(value) {
             error(format!("\"{label}\" has an empty {name} expression"));
         }
+    }
+    if control.styles.iter().any(|s| s.when.trim().is_empty()) {
+        error(format!(
+            "\"{label}\" has a conditional style with an empty condition"
+        ));
     }
     if let Some(parent) = &control.parent {
         match form.controls.iter().find(|c| c.id == parent.id) {
@@ -356,6 +369,13 @@ pub fn validate(config: &DocumentConfig) -> Vec<Issue> {
                     format!("form \"{}\" has an empty validation rule", form.name),
                 ));
             }
+        }
+        if blank(&form.filter) {
+            out.push(Issue::error(
+                "form",
+                id,
+                format!("form \"{}\" has an empty list filter", form.name),
+            ));
         }
         let nested = form
             .controls

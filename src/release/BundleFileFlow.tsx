@@ -126,6 +126,7 @@ export function BundleFileFlow({
           className="bundle-password"
           role="dialog"
           aria-labelledby={titleId}
+          busy={busy}
           onClose={cancel}
         >
           <form onSubmit={submit}>
@@ -146,7 +147,7 @@ export function BundleFileFlow({
               <button type="submit" className="save" disabled={busy || !password}>
                 Unlock
               </button>
-              <button type="button" onClick={cancel}>
+              <button type="button" disabled={busy} onClick={cancel}>
                 Cancel
               </button>
             </div>

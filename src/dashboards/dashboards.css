@@ -17,7 +17,7 @@
 .dash-list > small {
   font-size: 10px;
   letter-spacing: 0.13em;
-  color: #6b7079;
+  color: var(--ix-subtle);
   font-weight: 700;
 }
 .dash-list ul {
@@ -40,7 +40,7 @@
   border-radius: 5px;
   padding: 6px 9px;
   background: #fff;
-  color: #2f343a;
+  color: var(--ix-text);
   font-size: 12px;
 }
 .dash-list li button {
@@ -119,10 +119,10 @@
   border-radius: 5px;
   background: #fffaf2;
   font-size: 12px;
-  color: #6a4a10;
+  color: var(--ix-warning);
 }
 .dash-issues li.error {
-  color: #9b1c1c;
+  color: var(--ix-danger);
 }
 
 /* Live view */
@@ -147,7 +147,7 @@
   flex-direction: column;
   gap: 3px;
   font-size: 12px;
-  color: #4b5058;
+  color: var(--ix-muted);
   min-width: 140px;
 }
 .dash-filter select,
@@ -156,7 +156,7 @@
   border-radius: 5px;
   padding: 6px 8px;
   background: #fff;
-  color: #1f2328;
+  color: var(--ix-text);
 }
 .dash-filter select:focus-visible,
 .dash-filter input:focus-visible,
@@ -208,20 +208,20 @@
   margin: 0;
   font-size: 13px;
   font-weight: 600;
-  color: #3c4047;
+  color: var(--ix-muted);
 }
 .dash-kpi-value {
   margin: 0;
   font-size: 32px;
   font-weight: 700;
-  color: #1f2328;
+  color: var(--ix-text);
   line-height: 1.1;
 }
 .dash-kpi-compare,
 .dash-delta {
   margin: 0;
   font-size: 12px;
-  color: #4b5058;
+  color: var(--ix-muted);
 }
 .dash-chart {
   margin: 0;
@@ -247,7 +247,7 @@
   margin: 0;
   font-size: 30px;
   font-weight: 700;
-  color: #1f2328;
+  color: var(--ix-text);
 }
 .dash-legend {
   display: flex;
@@ -257,7 +257,7 @@
   padding: 0;
   list-style: none;
   font-size: 12px;
-  color: #3c4047;
+  color: var(--ix-muted);
 }
 .dash-legend li {
   display: flex;
@@ -293,7 +293,7 @@
   border-radius: 6px;
   padding: 8px 14px;
   background: #3d6b4a;
-  color: #fff;
+  color: var(--ix-on-dark);
   font-weight: 600;
 }
 .dash-action:disabled {
@@ -302,22 +302,22 @@
 .dash-text p {
   margin: 0 0 8px;
   font-size: 13px;
-  color: #2f343a;
+  color: var(--ix-text);
 }
 .dash-muted,
 .dash-empty {
-  color: #5c6169;
+  color: var(--ix-subtle);
   font-size: 12px;
   margin: 0;
   padding: 4px 0;
 }
 .dash-error {
-  color: #9b1c1c;
+  color: var(--ix-danger);
   font-size: 12px;
   margin: 0;
 }
 .dash-status {
-  color: #2f5a3a;
+  color: var(--ix-accent);
   font-size: 12px;
   margin: 0;
 }

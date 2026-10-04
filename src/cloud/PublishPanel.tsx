@@ -249,6 +249,7 @@ export function PublishPanel({
           className="cloud-dialog"
           role="dialog"
           aria-label="Version conflict"
+          busy={busy}
           onClose={() => setConflict(null)}
         >
           <h3>The published history moved on</h3>

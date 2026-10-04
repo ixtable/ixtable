@@ -92,6 +92,7 @@ export function RuntimeBar() {
           className="bundle-password"
           role="dialog"
           aria-labelledby={titleId}
+          busy={busy}
           onClose={() => setPreview(null)}
         >
           <h2 id={titleId}>Reset installation data?</h2>

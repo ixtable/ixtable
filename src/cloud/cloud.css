@@ -20,7 +20,7 @@
 }
 .cloud-muted,
 .cloud-license {
-  color: #6b716a;
+  color: var(--ix-subtle);
   font-size: 12px;
   margin: 4px 0;
 }
@@ -45,7 +45,7 @@
   gap: 4px;
   font-size: 12px;
   font-weight: 600;
-  color: #3c423d;
+  color: var(--ix-text);
 }
 .cloud-form label.checkbox {
   flex-direction: row;
@@ -64,7 +64,7 @@
   background: #fff;
 }
 .cloud-form small.field-error {
-  color: #a3302a;
+  color: var(--ix-danger);
   font-weight: 400;
 }
 .cloud-form fieldset {
@@ -142,7 +142,7 @@
 }
 .cloud-versions small {
   display: block;
-  color: #6b716a;
+  color: var(--ix-subtle);
 }
 .cloud-dialog {
   border: 1px solid #c48a1a;
@@ -165,7 +165,7 @@
   margin: 0;
 }
 .cloud-notice {
-  color: #2f5e3a;
+  color: var(--ix-accent);
   font-size: 13px;
 }
 .cloud-runtime-bar .cloud-license {

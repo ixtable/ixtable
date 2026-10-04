@@ -9,6 +9,16 @@
   --ix-focus: #3b6b47;
   --ix-sidebar: #222621;
   --ix-focus-on-dark: #9cc7a6;
+  /* Text colours. Each passes 4.5:1 on the backgrounds it is used on (a11y-styles.test.tsx). */
+  --ix-subtle: #616861;
+  --ix-accent: #2f5e3a;
+  --ix-danger: #a3302a;
+  --ix-warning: #8a5a00;
+  --ix-link: #3563c4;
+  --ix-on-dark: #ffffff;
+  --ix-on-dark-muted: #b8bdb4;
+  /* Disabled controls only (exempt from contrast minimums, WCAG 1.4.3). */
+  --ix-disabled: #9aa099;
   font-family: Inter, ui-sans-serif, system-ui, sans-serif;
   color: var(--ix-text);
   background: var(--ix-bg);
@@ -57,7 +67,7 @@ button {
   height: 31px;
   border-radius: 8px;
   background: #202126;
-  color: #fff;
+  color: var(--ix-on-dark);
   display: grid;
   place-items: center;
   font-size: 13px;
@@ -70,7 +80,7 @@ button {
 .kicker {
   font-size: 11px;
   letter-spacing: 0.16em;
-  color: #817d70;
+  color: var(--ix-subtle);
   font-weight: 700;
 }
 .start-main h1 {
@@ -81,7 +91,7 @@ button {
   margin: 14px 0;
 }
 .intro {
-  color: #6b6b65;
+  color: var(--ix-subtle);
   line-height: 1.7;
   max-width: 650px;
 }
@@ -100,11 +110,11 @@ button {
   border: 1px solid #dcdcd5;
   background: #fff;
   border-radius: 12px;
-  color: #30312f;
+  color: var(--ix-text);
 }
 .start-actions .hero-action {
   background: #272823;
-  color: #fff;
+  color: var(--ix-on-dark);
 }
 .start-actions svg {
   width: 23px;
@@ -127,7 +137,7 @@ button {
 .text-button {
   border: 0;
   background: transparent;
-  color: #6c685d;
+  color: var(--ix-subtle);
 }
 .empty-recent {
   border: 1px dashed #d5d5ce;
@@ -137,14 +147,14 @@ button {
   place-items: center;
   align-content: center;
   gap: 7px;
-  color: #898982;
+  color: var(--ix-subtle);
 }
 .empty-recent svg {
   width: 25px;
 }
 .empty-recent b {
   font-size: 13px;
-  color: #5e5e58;
+  color: var(--ix-muted);
 }
 .empty-recent span {
   font-size: 12px;
@@ -152,7 +162,7 @@ button {
 .start-screen > footer {
   margin-top: auto;
   padding: 24px 42px;
-  color: #77776f;
+  color: var(--ix-subtle);
   font-size: 12px;
   border-top: 1px solid #e5e5df;
 }
@@ -169,7 +179,7 @@ button {
   width: 226px;
   height: 100vh;
   background: var(--ix-sidebar);
-  color: #b8bdb4;
+  color: var(--ix-on-dark-muted);
   padding: 18px 13px;
   display: flex;
   flex-direction: column;
@@ -179,11 +189,11 @@ button {
   gap: 10px;
   align-items: center;
   padding: 0 8px 18px;
-  color: #fff;
+  color: var(--ix-on-dark);
 }
 .doc-brand span {
   background: #e8eee6;
-  color: #253126;
+  color: var(--ix-text);
 }
 .document-label {
   border-top: 1px solid #394039;
@@ -196,15 +206,15 @@ button {
 .sidebar-section > small {
   font-size: 9px;
   letter-spacing: 0.15em;
-  color: #747c73;
+  color: var(--ix-on-dark-muted);
 }
 .document-label strong {
-  color: #f2f4ef;
+  color: var(--ix-on-dark);
   font-size: 13px;
 }
 .document-label span {
   font-size: 10px;
-  color: #81887f;
+  color: var(--ix-on-dark-muted);
 }
 .doc-sidebar nav {
   display: grid;
@@ -214,7 +224,7 @@ button {
 .doc-sidebar nav button {
   border: 0;
   background: transparent;
-  color: #9da49b;
+  color: var(--ix-on-dark-muted);
   padding: 9px;
   border-radius: 6px;
   text-align: left;
@@ -225,7 +235,7 @@ button {
 }
 .doc-sidebar nav button.active {
   background: #343a34;
-  color: #fff;
+  color: var(--ix-on-dark);
 }
 .doc-sidebar nav svg {
   width: 14px;
@@ -245,7 +255,7 @@ button {
 .sidebar-section button {
   border: 0;
   background: none;
-  color: #aeb4ab;
+  color: var(--ix-on-dark-muted);
   display: flex;
   align-items: center;
   gap: 8px;
@@ -256,7 +266,7 @@ button {
 }
 .sidebar-section button.selected {
   background: #3a493e;
-  color: #fff;
+  color: var(--ix-on-dark);
 }
 .sidebar-section .table-glyph {
   font-size: 14px;
@@ -265,14 +275,14 @@ button {
   font-style: normal;
   margin-left: auto;
   font-size: 9px;
-  color: #788078;
+  color: var(--ix-on-dark-muted);
 }
 .sidebar-bottom {
   margin-top: auto;
   border-top: 1px solid #394039;
   padding: 16px 8px 0;
   font-size: 10px;
-  color: #8c948a;
+  color: var(--ix-on-dark-muted);
 }
 .status-dot {
   display: inline-block;
@@ -293,14 +303,14 @@ button {
 .mode-switch button {
   border: 0;
   background: transparent;
-  color: #7e877d;
+  color: var(--ix-on-dark-muted);
   border-radius: 4px;
   padding: 6px;
   font-size: 10px;
 }
 .mode-switch button.active {
   background: #394139;
-  color: #fff;
+  color: var(--ix-on-dark);
 }
 .workspace {
   margin-left: 226px;
@@ -318,7 +328,7 @@ button {
 .titlebar p {
   font-size: 9px;
   letter-spacing: 0.13em;
-  color: #969c95;
+  color: var(--ix-subtle);
   font-weight: 700;
   margin: 0 0 6px;
 }
@@ -340,7 +350,7 @@ button {
 }
 .header-actions .save {
   background: #29352c;
-  color: #fff;
+  color: var(--ix-on-dark);
   display: flex;
   gap: 6px;
   align-items: center;
@@ -360,12 +370,12 @@ button {
   border: 0;
   background: none;
   font-size: 11px;
-  color: #656b65;
+  color: var(--ix-subtle);
   padding: 0 2px;
   position: relative;
 }
 .ribbon-tabs button.active {
-  color: #244a31;
+  color: var(--ix-accent);
   font-weight: 700;
 }
 .ribbon-tabs button.active:after {
@@ -398,7 +408,7 @@ button {
 }
 .ribbon-group > small {
   text-align: center;
-  color: #888e87;
+  color: var(--ix-subtle);
   font-size: 9px;
   letter-spacing: 0.04em;
 }
@@ -412,7 +422,7 @@ button {
   border: 0;
   background: transparent;
   border-radius: 5px;
-  color: #3e443e;
+  color: var(--ix-text);
 }
 .ribbon-tools button {
   width: 58px;
@@ -431,7 +441,7 @@ button {
 .ribbon-tools svg {
   width: 22px;
   height: 22px;
-  color: #476b51;
+  color: var(--ix-accent);
   stroke-width: 1.6;
 }
 .ribbon-big {
@@ -446,7 +456,7 @@ button {
 .ribbon-big > svg:first-child {
   grid-column: 1 / 3;
   width: 25px;
-  color: #476b51;
+  color: var(--ix-accent);
 }
 .ribbon-big > svg:last-child {
   width: 11px;
@@ -467,7 +477,7 @@ button {
   border-radius: 4px;
 }
 .view-menu [role="label"] {
-  color: #8a9089;
+  color: var(--ix-subtle);
   font-size: 9px;
   text-transform: uppercase;
   letter-spacing: 0.1em;
@@ -480,7 +490,7 @@ button {
   background: #edf1ec;
 }
 .view-menu .checked {
-  color: #2b5c39;
+  color: var(--ix-accent);
   font-weight: 700;
 }
 .notice {
@@ -489,7 +499,7 @@ button {
   top: 247px;
   z-index: 4;
   background: #263c2d;
-  color: #fff;
+  color: var(--ix-on-dark);
   padding: 9px 11px 9px 15px;
   border-radius: 6px;
   box-shadow: 0 5px 20px #1b271f2b;
@@ -501,7 +511,7 @@ button {
 .notice button {
   border: 0;
   background: none;
-  color: #fff;
+  color: var(--ix-on-dark);
   padding: 0;
 }
 .notice svg {
@@ -544,17 +554,17 @@ button {
 }
 .pane-title svg {
   width: 14px;
-  color: #4c7356;
+  color: var(--ix-accent);
 }
 .pane-title b {
   font-size: 9px;
-  color: #8b918a;
+  color: var(--ix-subtle);
   background: #eef0ed;
   padding: 4px 7px;
   border-radius: 10px;
 }
 .zoom {
-  color: #8d938c;
+  color: var(--ix-subtle);
   gap: 9px !important;
 }
 .zoom span {
@@ -602,7 +612,7 @@ button {
   align-items: center;
   gap: 6px;
   font-size: 10px;
-  color: #364038;
+  color: var(--ix-text);
 }
 .table-card.active strong {
   background: #dfe9e1;
@@ -613,26 +623,26 @@ button {
 .table-card strong span {
   margin-left: auto;
   font-size: 8px;
-  color: #7d877e;
+  color: var(--ix-subtle);
 }
 .table-card > span {
   display: block;
   padding: 4px 10px;
   border-top: 1px solid #edf0ec;
   font-size: 8px;
-  color: #697069;
+  color: var(--ix-subtle);
 }
 .split-handle {
   display: grid;
   place-items: center;
-  color: #a8ada7;
+  color: var(--ix-subtle);
   font-size: 8px;
   cursor: row-resize;
 }
 .filter {
   border: 1px solid #d9ddd8;
   background: #fff;
-  color: #717771;
+  color: var(--ix-subtle);
   border-radius: 4px;
   padding: 5px 9px;
   display: flex;
@@ -655,7 +665,7 @@ button {
 .data-grid th {
   height: 32px;
   background: #f0f2ef;
-  color: #687068;
+  color: var(--ix-subtle);
   font-weight: 600;
   text-align: left;
 }
@@ -674,12 +684,12 @@ button {
 .data-grid .rownum {
   width: 35px;
   text-align: center;
-  color: #9aa099;
+  color: var(--ix-subtle);
   background: #f6f7f5;
 }
 .data-grid td.primary {
   font-weight: 600;
-  color: #315c3c;
+  color: var(--ix-accent);
 }
 .data-grid .addcol {
   width: 35px;
@@ -699,7 +709,7 @@ button {
   gap: 28px;
   padding: 0 12px;
   font-size: 9px;
-  color: #7c827c;
+  color: var(--ix-subtle);
 }
 .grid-footer div {
   margin-left: auto;
@@ -707,14 +717,14 @@ button {
 }
 .grid-footer div b {
   background: #3f6749;
-  color: white;
+  color: var(--ix-on-dark);
   border-radius: 3px;
   padding: 3px 6px;
 }
 .grid-footer button {
   border: 0;
   background: none;
-  color: #366443;
+  color: var(--ix-accent);
   font-weight: 700;
   display: flex;
   align-items: center;
@@ -732,14 +742,14 @@ button {
   display: grid;
   place-items: center;
   align-content: center;
-  color: #879087;
+  color: var(--ix-subtle);
 }
 .design-empty svg {
   width: 35px;
 }
 .design-empty h2 {
   font-family: Georgia, serif;
-  color: #333b34;
+  color: var(--ix-text);
   margin-bottom: 0;
 }
 .design-empty p {
@@ -789,7 +799,7 @@ button {
 .ribbon-tools svg {
   width: 25px;
   height: 25px;
-  color: #376845;
+  color: var(--ix-accent);
   stroke-width: 1.7;
 }
 .ribbon-big {
@@ -799,10 +809,10 @@ button {
 }
 .ribbon-big > svg:first-child {
   width: 28px;
-  color: #376845;
+  color: var(--ix-accent);
 }
 .ribbon-group > small {
-  color: #747b74;
+  color: var(--ix-subtle);
 }
 .notice {
   top: 257px;
@@ -814,7 +824,7 @@ button {
 /* React Flow table browser */
 .canvas-help {
   font-size: 9px;
-  color: #929891;
+  color: var(--ix-subtle);
 }
 .flow-browser {
   height: calc(100% - 39px);
@@ -848,14 +858,14 @@ button {
 }
 .flow-table-head svg {
   width: 13px;
-  color: #416c4c;
+  color: var(--ix-accent);
 }
 .flow-table-head strong {
   font-size: 10px;
 }
 .flow-table-head > span {
   margin-left: auto;
-  color: #788078;
+  color: var(--ix-subtle);
   font-size: 8px;
 }
 .flow-field {
@@ -865,7 +875,7 @@ button {
   align-items: center;
   gap: 6px;
   padding: 0 9px;
-  color: #606760;
+  color: var(--ix-subtle);
 }
 .flow-field > span {
   width: 12px;
@@ -875,7 +885,7 @@ button {
   margin-left: auto;
   font-style: normal;
   font-size: 7px;
-  color: #8b928b;
+  color: var(--ix-subtle);
 }
 .react-flow__edge-path {
   stroke: #65836d !important;
@@ -899,7 +909,7 @@ button {
 }
 .react-flow__controls-button {
   border-color: #e1e5e0 !important;
-  color: #526057 !important;
+  color: var(--ix-accent) !important;
 }
 .react-flow__minimap {
   width: 105px !important;
@@ -1066,12 +1076,12 @@ button {
   justify-content: space-between;
   font-size: 8px;
   letter-spacing: 0.13em;
-  color: #7f887e;
+  color: var(--ix-on-dark-muted);
 }
 .object-browser-title button {
   border: 0;
   background: none;
-  color: #9da69c;
+  color: var(--ix-on-dark-muted);
   padding: 2px;
 }
 .object-browser-title svg {
@@ -1090,12 +1100,12 @@ button {
 }
 .object-search svg {
   width: 10px;
-  color: #778077;
+  color: var(--ix-on-dark-muted);
 }
 .object-search input {
   border: 0;
   background: transparent;
-  color: #dce0d9;
+  color: var(--ix-on-dark-muted);
   min-width: 0;
   width: 100%;
   font-size: 9px;
@@ -1113,7 +1123,7 @@ button {
   align-items: center;
   gap: 5px;
   padding: 0 5px;
-  color: #abb2a8;
+  color: var(--ix-on-dark-muted);
   font-size: 9px;
   font-weight: 700;
   cursor: pointer;
@@ -1129,19 +1139,19 @@ button {
 }
 .object-groups summary > svg:nth-child(2) {
   width: 11px;
-  color: #7f9a84;
+  color: var(--ix-on-dark-muted);
 }
 .object-groups summary em {
   margin-left: auto;
   font-style: normal;
   font-size: 7px;
-  color: #707970;
+  color: var(--ix-on-dark-muted);
 }
 .object-groups details > button {
   width: 100%;
   border: 0;
   background: none;
-  color: #9ea69c;
+  color: var(--ix-on-dark-muted);
   padding: 5px 5px 5px 19px;
   border-radius: 4px;
   display: flex;
@@ -1151,11 +1161,11 @@ button {
 }
 .object-groups details > button:hover {
   background: #2a302a;
-  color: #eef1ec;
+  color: var(--ix-on-dark);
 }
 .object-groups details > button.selected {
   background: #3a4c3e;
-  color: #fff;
+  color: var(--ix-on-dark);
 }
 .object-groups details > button > svg {
   width: 10px;
@@ -1168,10 +1178,10 @@ button {
 }
 .object-groups details > button small {
   font-size: 7px;
-  color: #6f786f;
+  color: var(--ix-on-dark-muted);
 }
 .object-groups details > button.selected small {
-  color: #a4b4a7;
+  color: var(--ix-on-dark-muted);
 }
 
 /* Data-view refinements */
@@ -1213,7 +1223,7 @@ button {
   margin-left: 7px;
   width: 116px;
   justify-content: flex-start;
-  color: #818881;
+  color: var(--ix-subtle);
 }
 .pane-title > div {
   flex-wrap: nowrap;
@@ -1229,19 +1239,19 @@ button {
 }
 .draft-row .rownum svg {
   width: 10px;
-  color: #4d7657;
+  color: var(--ix-accent);
 }
 .draft-row input {
   width: 100%;
   height: 23px;
   border: 0;
   background: transparent;
-  color: #27352b;
+  color: var(--ix-accent);
   font-size: 9px;
   padding: 0;
 }
 .draft-row input::placeholder {
-  color: #77907c;
+  color: var(--ix-accent);
   font-style: italic;
 }
 .draft-row td:focus-within {
@@ -1284,7 +1294,7 @@ button {
 .studio-properties > small {
   font-size: 10px;
   letter-spacing: 0.13em;
-  color: #979ca5;
+  color: var(--ix-subtle);
   font-weight: 700;
   margin-bottom: 10px;
 }
@@ -1297,7 +1307,7 @@ button {
   border-radius: 5px;
   padding: 10px;
   text-align: left;
-  color: #3c4047;
+  color: var(--ix-muted);
 }
 .studio-components svg {
   width: 15px;
@@ -1351,7 +1361,7 @@ button {
   box-shadow: 0 0 0 2px #62738a20;
 }
 .design-control > span {
-  color: #818791;
+  color: var(--ix-subtle);
   font-size: 11px;
 }
 .design-control .move-controls {
@@ -1380,7 +1390,7 @@ button {
 .form-card > small {
   font-size: 9px;
   letter-spacing: 0.12em;
-  color: #999fa7;
+  color: var(--ix-subtle);
 }
 .form-card h2 {
   margin: 7px 0 4px;
@@ -1388,7 +1398,7 @@ button {
 }
 .form-card > p {
   margin: 0 0 24px;
-  color: #777e87;
+  color: var(--ix-subtle);
   font-size: 13px;
 }
 .form-card label,
@@ -1408,7 +1418,7 @@ button {
   border: 1px solid #d9dce1;
   border-radius: 5px;
   padding: 10px 12px;
-  color: #8b9199;
+  color: var(--ix-subtle);
   font-weight: 400;
   background: #fff;
 }
@@ -1436,7 +1446,7 @@ button {
 }
 .form-actions .save {
   background: #292c32;
-  color: #fff;
+  color: var(--ix-on-dark);
   border-color: #292c32;
 }
 .add-section {
@@ -1446,7 +1456,7 @@ button {
   background: #fff;
   border-radius: 5px;
   padding: 9px 35px;
-  color: #6d737b;
+  color: var(--ix-subtle);
 }
 .add-section svg {
   width: 15px;
@@ -1469,7 +1479,7 @@ button {
 .preview-app-head small {
   font-size: 9px;
   letter-spacing: 0.13em;
-  color: #9298a1;
+  color: var(--ix-subtle);
 }
 .preview-app-head h2 {
   font-size: 28px;
@@ -1480,7 +1490,7 @@ button {
   align-items: center;
   gap: 6px;
   background: #292c32;
-  color: #fff;
+  color: var(--ix-on-dark);
   border: 0;
   border-radius: 5px;
   padding: 10px 14px;
@@ -1506,7 +1516,7 @@ button {
 .preview-metrics small {
   font-size: 9px;
   letter-spacing: 0.12em;
-  color: #969ca5;
+  color: var(--ix-subtle);
 }
 .preview-metrics b {
   font-size: 25px;
@@ -1557,7 +1567,7 @@ button {
 .preview-record-head {
   font-size: 9px;
   letter-spacing: 0.1em;
-  color: #979da5;
+  color: var(--ix-subtle);
   background: #fafafa;
 }
 .preview-record-head span,
@@ -1569,7 +1579,7 @@ button {
   border: 0;
 }
 .record-status {
-  color: #267447;
+  color: var(--ix-accent);
   font-weight: 700;
 }
 .project-actions {
@@ -1584,11 +1594,11 @@ button {
   border: 0;
   border-radius: 5px;
   background: transparent;
-  color: #aeb5ac;
+  color: var(--ix-on-dark-muted);
 }
 .project-actions button:hover {
   background: #353b35;
-  color: #fff;
+  color: var(--ix-on-dark);
 }
 .project-actions svg {
   width: 14px;
@@ -1605,7 +1615,7 @@ button {
 }
 .progress {
   background: #e8eee8;
-  color: #35543c;
+  color: var(--ix-accent);
 }
 .error {
   display: flex;
@@ -1613,7 +1623,7 @@ button {
   gap: 8px;
   background: #fff0ed;
   border: 1px solid #e0aaa0;
-  color: #7c2f24;
+  color: var(--ix-danger);
 }
 .error b {
   font-size: 9px;
@@ -1732,7 +1742,7 @@ button {
   border: 1px solid #ccd5cc;
   border-radius: 5px;
   background: #fff;
-  color: #315b3b;
+  color: var(--ix-accent);
   padding: 6px 10px;
   display: flex;
   align-items: center;
@@ -1741,7 +1751,7 @@ button {
 }
 .relationship-pane > .data-create {
   background: #315b3b;
-  color: #fff;
+  color: var(--ix-on-dark);
   border-color: #315b3b;
 }
 .relationship-pane > button svg {
@@ -1764,7 +1774,7 @@ button {
   border: 1px solid #d3d9d3;
   border-radius: 5px;
   background: #f9faf8;
-  color: #384039;
+  color: var(--ix-text);
   padding: 8px 9px;
   display: flex;
   align-items: flex-start;
@@ -1779,7 +1789,7 @@ button {
 .relationship-pane > .object-groups > button svg {
   width: 14px;
   height: 14px;
-  color: #4d7257;
+  color: var(--ix-accent);
 }
 .relationship-pane > .object-groups > button span {
   display: grid;
@@ -1790,7 +1800,7 @@ button {
 .relationship-pane > .object-groups > button small {
   font-size: 8px;
   font-weight: 400;
-  color: #7b837b;
+  color: var(--ix-subtle);
 }
 .data-grid th button {
   display: flex;
@@ -1803,12 +1813,12 @@ button {
 .data-grid th button small {
   font-size: 7px;
   font-weight: 400;
-  color: #8b928b;
+  color: var(--ix-subtle);
 }
 .data-grid td:last-child button {
   border: 0;
   background: transparent;
-  color: #476c51;
+  color: var(--ix-accent);
 }
 .data-grid > .empty-recent {
   border-width: 0 0 1px;
@@ -1819,7 +1829,7 @@ button {
   margin-left: auto;
   border: 0;
   background: transparent;
-  color: #aeb6ac;
+  color: var(--ix-on-dark-muted);
   padding: 2px;
   display: grid;
   place-items: center;
@@ -1830,8 +1840,11 @@ button {
 .object-empty {
   display: block;
   padding: 5px 8px 8px 20px;
-  color: #747d73;
+  color: var(--ix-on-dark-muted);
   font-size: 8px;
+}
+.query-list .object-empty {
+  color: var(--ix-subtle);
 }
 .monaco-shell {
   border-bottom: 1px solid #d8ddd7;
@@ -1860,11 +1873,11 @@ button {
   align-items: center;
   gap: 5px;
   padding: 0 5px;
-  color: #aeb5ab;
+  color: var(--ix-on-dark-muted);
 }
 .object-group-heading > svg {
   width: 10px;
-  color: #7f9a84;
+  color: var(--ix-on-dark-muted);
 }
 .object-group-heading h3 {
   margin: 0;
@@ -1876,12 +1889,12 @@ button {
   margin-left: auto;
   font-style: normal;
   font-size: 7px;
-  color: #707970;
+  color: var(--ix-on-dark-muted);
 }
 .object-group-heading button {
   border: 0;
   background: transparent;
-  color: #aeb6ac;
+  color: var(--ix-on-dark-muted);
   padding: 0;
   display: grid;
   place-items: center;
@@ -1902,7 +1915,7 @@ button {
   min-height: 25px;
   border: 0;
   background: none;
-  color: #9ea69c;
+  color: var(--ix-on-dark-muted);
   padding: 3px 5px 3px 18px;
   border-radius: 4px;
   display: flex;
@@ -1912,11 +1925,11 @@ button {
 }
 .object-group li > button:hover {
   background: #2a302a;
-  color: #eef1ec;
+  color: var(--ix-on-dark);
 }
 .object-group li > button.selected {
   background: #3a4c3e;
-  color: #fff;
+  color: var(--ix-on-dark);
 }
 .object-group li > button > svg {
   width: 10px;
@@ -1931,10 +1944,10 @@ button {
 .object-group li > button small {
   font-size: 7px;
   line-height: 9px;
-  color: #6f786f;
+  color: var(--ix-on-dark-muted);
 }
 .object-group li > button.selected small {
-  color: #a4b4a7;
+  color: var(--ix-on-dark-muted);
 }
 .object-group .object-empty {
   padding: 2px 6px 4px 18px;
@@ -1994,14 +2007,14 @@ button {
   align-items: center;
   gap: 12px;
   text-align: left;
-  color: #3d3d38;
+  color: var(--ix-text);
 }
 .recent-list button:hover {
   background: #f1f3ef;
 }
 .recent-list svg {
   width: 18px;
-  color: #6c8a72;
+  color: var(--ix-accent);
   flex: none;
 }
 .recent-list span {
@@ -2010,7 +2023,7 @@ button {
   min-width: 0;
 }
 .recent-list small {
-  color: #8a8a82;
+  color: var(--ix-subtle);
   font-size: 11px;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -2019,7 +2032,7 @@ button {
 .recent-list time {
   margin-left: auto;
   font-size: 11px;
-  color: #8a8a82;
+  color: var(--ix-subtle);
   white-space: nowrap;
 }
 .feature-placeholder .empty-recent,
@@ -2027,7 +2040,7 @@ button {
   margin: 24px 30px;
 }
 .runtime-info {
-  color: #8a9088;
+  color: var(--ix-subtle);
   font-size: 11px;
 }
 .settings-tabs {
@@ -2043,11 +2056,11 @@ button {
   background: none;
   padding: 10px 12px;
   font-size: 12px;
-  color: #5d635c;
+  color: var(--ix-subtle);
   border-bottom: 2px solid transparent;
 }
 .settings-tabs button.active {
-  color: #244a31;
+  color: var(--ix-accent);
   font-weight: 700;
   border-bottom-color: #52775b;
 }
@@ -2060,7 +2073,7 @@ button {
 }
 .settings-panel p {
   font-size: 12px;
-  color: #5d635c;
+  color: var(--ix-subtle);
 }
 .settings-actions {
   display: flex;
@@ -2078,7 +2091,7 @@ button {
 }
 .settings-actions button.save {
   background: #29352c;
-  color: #fff;
+  color: var(--ix-on-dark);
 }
 .settings-actions button:disabled {
   opacity: 0.5;
@@ -2121,10 +2134,10 @@ button {
   flex: none;
 }
 .problem-list .issue-error svg {
-  color: #b42318;
+  color: var(--ix-danger);
 }
 .problem-list .issue-warning svg {
-  color: #b54708;
+  color: var(--ix-warning);
 }
 
 /* Query mode (src/query). */
@@ -2172,11 +2185,11 @@ button {
   gap: 6px;
   text-align: left;
   font-size: 12px;
-  color: #4f564e;
+  color: var(--ix-muted);
 }
 .query-list li > button.selected {
   background: #e7efe6;
-  color: #244a31;
+  color: var(--ix-accent);
   font-weight: 600;
 }
 .query-list svg {
@@ -2188,7 +2201,7 @@ button {
   border: 0;
   background: none;
   padding: 3px;
-  color: #8a9388;
+  color: var(--ix-subtle);
 }
 .query-list form {
   display: flex;
@@ -2223,7 +2236,7 @@ button {
   padding: 2px 7px;
   border-radius: 10px;
   background: #e7efe6;
-  color: #244a31;
+  color: var(--ix-accent);
 }
 .query-tabs {
   display: flex;
@@ -2237,7 +2250,7 @@ button {
   background: none;
   padding: 8px 12px;
   font-size: 12px;
-  color: #5d635c;
+  color: var(--ix-subtle);
   border-bottom: 2px solid transparent;
   display: inline-flex;
   align-items: center;
@@ -2247,7 +2260,7 @@ button {
   width: 13px;
 }
 .query-tabs button.active {
-  color: #244a31;
+  color: var(--ix-accent);
   border-bottom-color: #4f7d5a;
   font-weight: 600;
 }
@@ -2277,7 +2290,7 @@ button {
 .query-panel h3 {
   margin: 0;
   font-size: 11px;
-  color: #5d635c;
+  color: var(--ix-subtle);
   text-transform: uppercase;
   letter-spacing: 0.04em;
 }
@@ -2384,7 +2397,7 @@ button {
   align-items: center;
   gap: 8px;
   font-size: 12px;
-  color: #5d635c;
+  color: var(--ix-subtle);
   padding: 4px 0 8px;
 }
 .query-status .spin {
@@ -2421,7 +2434,7 @@ button {
   background: #fff;
   padding: 3px 8px;
   font-size: 11px;
-  color: #33503b;
+  color: var(--ix-accent);
   white-space: nowrap;
 }
 .pane-title button svg {
@@ -2443,7 +2456,7 @@ button {
   border-radius: 4px;
 }
 .grid-footer > div button:disabled {
-  color: #b9beb8;
+  color: var(--ix-disabled);
   cursor: default;
 }
 

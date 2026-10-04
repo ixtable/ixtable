@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { humanize } from "../design/generate";
 import type { DesignControl, DesignForm, FormMode } from "../design/schema";
 import { readTablePage } from "../lib/api";
@@ -37,7 +37,16 @@ export function RelatedRecords({ ctx, control }: { ctx: BodyContext; control: De
   const [error, setError] = useState("");
   // Messages of the embedded child form, shown here because that form closes on save.
   const [message, setMessage] = useState("");
-  const [dialog, confirm] = useConfirm();
+  const section = useRef<HTMLElement>(null);
+  const [dialog, confirm] = useConfirm(() => section.current);
+  const refocus = useRef(false);
+  // After a delete re-renders the rows, the row's Delete button is gone; keep focus in the list.
+  useEffect(() => {
+    if (!refocus.current) return;
+    refocus.current = false;
+    if (!document.activeElement || document.activeElement === document.body)
+      section.current?.focus();
+  }, [rows]);
   const parentValue = related ? ctx.scope.record[related.parentColumn] : null;
   const childForm: DesignForm | null = !related
     ? null
@@ -92,7 +101,7 @@ export function RelatedRecords({ ctx, control }: { ctx: BodyContext; control: De
   const label = control.label || humanize(related.table);
   if (!saved)
     return (
-      <section className="rt-related" aria-label={label}>
+      <section ref={section} tabIndex={-1} className="rt-related" aria-label={label}>
         <h3>{label}</h3>
         <p className="rt-muted">Save this record to add {label.toLowerCase()}.</p>
       </section>
@@ -121,6 +130,7 @@ export function RelatedRecords({ ctx, control }: { ctx: BodyContext; control: De
         expected: namedValues(record, columns),
         old: record,
       });
+      refocus.current = true;
       await load();
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : String(reason));
@@ -128,7 +138,7 @@ export function RelatedRecords({ ctx, control }: { ctx: BodyContext; control: De
   };
 
   return (
-    <section className="rt-related" aria-label={label}>
+    <section ref={section} tabIndex={-1} className="rt-related" aria-label={label}>
       <div className="rt-related-head">
         <h3>{label}</h3>
         {allowed("create") && childForm && !editing && (

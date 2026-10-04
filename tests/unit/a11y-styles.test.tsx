@@ -94,12 +94,51 @@ describe("focus indicators", () => {
 
 describe("built-in theme contrast (WCAG 2.1 AA)", () => {
   const t = tokens();
-  const text: Array<[string, string]> = [
-    ["--ix-text", "--ix-bg"],
-    ["--ix-text", "--ix-surface"],
-    ["--ix-muted", "--ix-bg"],
-    ["--ix-muted", "--ix-surface"],
-    ["--ix-on-primary", "--ix-primary"],
+  const hex = (value: string) => {
+    const name = value.match(/var\((--ix-[\w-]+)\)/)?.[1];
+    if (name) return t[name];
+    return value.match(/#[0-9a-f]{6}\b|#[0-9a-f]{3}\b/i)?.[0];
+  };
+  const onLight = [
+    "--ix-text",
+    "--ix-muted",
+    "--ix-subtle",
+    "--ix-accent",
+    "--ix-danger",
+    "--ix-warning",
+    "--ix-link",
+  ];
+  const lightSurfaces = [
+    "--ix-bg",
+    "--ix-surface",
+    "#f7f7f4",
+    "#f7f8f5",
+    "#fbfcfa",
+    "#f6f7f5",
+    "#f8f9f7",
+    "#fafafa",
+    "#f0f2ef",
+    "#eef0ed",
+    "#edf1ec",
+    "#f9faf8",
+    "#f5f7f3",
+  ];
+  const onDark = ["--ix-on-dark", "--ix-on-dark-muted", "--ix-on-primary"];
+  const darkSurfaces = [
+    "--ix-sidebar",
+    "--ix-primary",
+    "#171a17",
+    "#2a302a",
+    "#343a34",
+    "#353b35",
+    "#394139",
+    "#3a493e",
+    "#3a4c3e",
+  ];
+  const resolve = (name: string) => (name.startsWith("--") ? t[name] : name);
+  const text = [
+    ...onLight.flatMap((fg) => lightSurfaces.map((bg) => [fg, bg])),
+    ...onDark.flatMap((fg) => darkSurfaces.map((bg) => [fg, bg])),
   ];
   const ui: Array<[string, string]> = [
     ["--ix-focus", "--ix-bg"],
@@ -107,12 +146,33 @@ describe("built-in theme contrast (WCAG 2.1 AA)", () => {
     ["--ix-focus-on-dark", "--ix-sidebar"],
     ["--ix-primary", "--ix-surface"],
   ];
+  const textColor = /(?:^|[;\s])color:\s*([^;]+)/g;
 
   it.each(text)("%s on %s is at least 4.5:1", (fg, bg) => {
-    expect(contrast(t[fg], t[bg])).toBeGreaterThanOrEqual(4.5);
+    expect(contrast(resolve(fg), resolve(bg))).toBeGreaterThanOrEqual(4.5);
   });
   it.each(ui)("%s on %s is at least 3:1", (fg, bg) => {
     expect(contrast(t[fg], t[bg])).toBeGreaterThanOrEqual(3);
+  });
+  it("sets every text colour in app CSS from a token", () => {
+    const allowed =
+      /^(var\(--ix-[\w-]+\)|transparent|inherit|currentColor|initial|unset)(\s*!important)?$/i;
+    for (const { path, css } of stylesheets)
+      for (const rule of rules(css))
+        for (const match of rule.body.matchAll(textColor))
+          expect(match[1].trim(), `${path}: ${rule.selector}`).toMatch(allowed);
+  });
+  it("passes 4.5:1 wherever a rule sets both a text token and a background", () => {
+    for (const { path, css } of stylesheets)
+      for (const rule of rules(css)) {
+        const fg = [...rule.body.matchAll(textColor)].at(-1)?.[1] ?? "";
+        const bg = rule.body.match(/background(?:-color)?:\s*([^;]+)/)?.[1] ?? "";
+        if (fg.includes("--ix-disabled") || !hex(fg) || !hex(bg)) continue;
+        expect(
+          contrast(hex(fg) as string, hex(bg) as string),
+          `${path}: ${rule.selector}`,
+        ).toBeGreaterThanOrEqual(4.5);
+      }
   });
   it("defines no dark theme that would need its own checks", () => {
     expect(stylesheets.some(({ css }) => css.includes("prefers-color-scheme"))).toBe(false);

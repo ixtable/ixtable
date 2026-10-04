@@ -34,7 +34,7 @@
   border: 1px solid #d9dce1;
   border-radius: 4px;
   background: #fff;
-  color: #25272a;
+  color: var(--ix-text);
 }
 .grid-handles button svg {
   width: 13px;
@@ -71,7 +71,7 @@
   padding: 4px 6px;
   border: 1px dashed #c7ccd3;
   border-radius: 5px;
-  color: #818791;
+  color: var(--ix-subtle);
   font-size: 11px;
   pointer-events: none;
 }

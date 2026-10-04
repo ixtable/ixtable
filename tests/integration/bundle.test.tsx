@@ -145,6 +145,7 @@ it("asks for the password of a protected bundle and explains a wrong one", async
   await user.clear(input);
   await user.type(input, "correct horse");
   await user.click(screen.getByRole("button", { name: "Unlock" }));
+  await user.keyboard("{Escape}");
   const runtime = await screen.findByRole("region", { name: "Runtime bundle" }, LONG);
   expect(within(runtime).getByText("Version 2.0.0")).toBeInTheDocument();
   expect(await customerNames()).toEqual(["Ada"]);

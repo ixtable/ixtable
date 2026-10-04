@@ -118,6 +118,7 @@ export function VersionsPanel({ app, revision }: { app: CloudApp | null; revisio
           className="cloud-dialog"
           role="dialog"
           aria-label="Restore warning"
+          busy={busy}
           onClose={() => setPending(null)}
         >
           <h3>PostgreSQL records are not restored</h3>

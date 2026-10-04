@@ -11,7 +11,7 @@
   gap: 4px;
   font-size: 12px;
   font-weight: 600;
-  color: #3c423d;
+  color: var(--ix-text);
 }
 .release-fields label.wide {
   grid-column: 1 / -1;
@@ -37,10 +37,10 @@
 }
 .release-fields small {
   font-weight: 400;
-  color: #6b716a;
+  color: var(--ix-subtle);
 }
 .release-fields small.field-error {
-  color: #a3302a;
+  color: var(--ix-danger);
 }
 .release-password {
   border: 1px solid #d9dcd7;
@@ -122,11 +122,11 @@
 }
 .runtime-bar-action.danger,
 .settings-actions button.danger {
-  color: #a3302a;
+  color: var(--ix-danger);
 }
 .settings-actions button.save.danger {
   background: #a3302a;
-  color: #fff;
+  color: var(--ix-on-dark);
 }
 .start-actions .bundle-flow {
   grid-column: 1 / -1;
@@ -135,8 +135,8 @@
 }
 /* The bar sits in the dark sidebar: give its white buttons dark text instead of the inherited light colour. */
 .runtime-bar-action {
-  color: #2d3a30;
+  color: var(--ix-accent);
 }
 .runtime-bar-action.danger {
-  color: #a3302a;
+  color: var(--ix-danger);
 }

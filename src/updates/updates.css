@@ -5,7 +5,7 @@
   margin: 0 0 12px;
 }
 .updates-facts dt {
-  color: #5d635c;
+  color: var(--ix-subtle);
 }
 .updates-facts dd {
   margin: 0;
@@ -72,14 +72,14 @@
   align-items: center;
   gap: 12px;
   background: #263c2d;
-  color: #fff;
+  color: var(--ix-on-dark);
   padding: 8px 12px;
   border-radius: 6px;
 }
 .update-banner button {
   border: 1px solid #aeb6ac;
   background: none;
-  color: #fff;
+  color: var(--ix-on-dark);
   padding: 3px 10px;
   border-radius: 6px;
   font-size: 12px;

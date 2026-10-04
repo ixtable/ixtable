@@ -1,4 +1,5 @@
 import { useEffect, useId, useState } from "react";
+import { DialogFrame } from "../components/DialogFrame";
 import { asTauriError, type TauriError } from "../lib/api";
 import { useDocumentConfig } from "../lib/config-store";
 import { useShell } from "../shell/context";
@@ -87,7 +88,12 @@ export function RuntimeBar() {
         Reset installation data…
       </button>
       {preview && (
-        <div className="bundle-password" role="dialog" aria-labelledby={titleId}>
+        <DialogFrame
+          className="bundle-password"
+          role="dialog"
+          aria-labelledby={titleId}
+          onClose={() => setPreview(null)}
+        >
           <h2 id={titleId}>Reset installation data?</h2>
           <p>{preview.message}</p>
           <ul>
@@ -109,11 +115,11 @@ export function RuntimeBar() {
             >
               Replace all records
             </button>
-            <button type="button" onClick={() => setPreview(null)}>
+            <button type="button" data-autofocus onClick={() => setPreview(null)}>
               Keep my records
             </button>
           </div>
-        </div>
+        </DialogFrame>
       )}
       {error && <BundleError error={error} />}
     </section>

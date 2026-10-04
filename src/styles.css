@@ -1,8 +1,17 @@
 @import "tailwindcss";
 :root {
+  --ix-text: #25272a;
+  --ix-bg: #f5f5f3;
+  --ix-surface: #ffffff;
+  --ix-muted: #5f665f;
+  --ix-primary: #292c32;
+  --ix-on-primary: #ffffff;
+  --ix-focus: #3b6b47;
+  --ix-sidebar: #222621;
+  --ix-focus-on-dark: #9cc7a6;
   font-family: Inter, ui-sans-serif, system-ui, sans-serif;
-  color: #25272a;
-  background: #f5f5f3;
+  color: var(--ix-text);
+  background: var(--ix-bg);
   font-synthesis: none;
 }
 * {
@@ -19,6 +28,13 @@ input {
 }
 button {
   cursor: pointer;
+}
+:where(a, button, input, select, textarea, summary, [tabindex], [role="menuitem"]):focus-visible {
+  outline: 2px solid var(--ix-focus);
+  outline-offset: 1px;
+}
+.doc-sidebar :focus-visible {
+  outline-color: var(--ix-focus-on-dark);
 }
 .start-screen {
   min-height: 100vh;
@@ -152,7 +168,7 @@ button {
   z-index: 5;
   width: 226px;
   height: 100vh;
-  background: #222621;
+  background: var(--ix-sidebar);
   color: #b8bdb4;
   padding: 18px 13px;
   display: flex;
@@ -449,7 +465,6 @@ button {
   padding: 8px 9px;
   font-size: 11px;
   border-radius: 4px;
-  outline: 0;
 }
 .view-menu [role="label"] {
   color: #8a9089;
@@ -1079,7 +1094,6 @@ button {
 }
 .object-search input {
   border: 0;
-  outline: 0;
   background: transparent;
   color: #dce0d9;
   min-width: 0;
@@ -1222,7 +1236,6 @@ button {
   height: 23px;
   border: 0;
   background: transparent;
-  outline: 0;
   color: #27352b;
   font-size: 9px;
   padding: 0;
@@ -1515,7 +1528,6 @@ button {
 }
 .preview-toolbar input {
   border: 0;
-  outline: 0;
   padding: 10px 0;
 }
 .preview-toolbar svg {
@@ -1647,7 +1659,7 @@ button {
   padding: 7px;
 }
 .data-grid td input:focus {
-  outline: 2px solid #52785d;
+  outline: 2px solid var(--ix-focus);
   background: white;
 }
 .data-grid th button {
@@ -1952,12 +1964,6 @@ button {
   height: 11px;
   flex: none;
 }
-.mode-switch button:focus-visible,
-.settings-tabs button:focus-visible,
-.recent-list button:focus-visible {
-  outline: 2px solid #6f9a78;
-  outline-offset: 1px;
-}
 .mode-switch button:disabled {
   cursor: default;
   opacity: 0.6;
@@ -2248,7 +2254,7 @@ button {
 .query-tabs button:focus-visible,
 .query-pane button:focus-visible,
 .query-list button:focus-visible {
-  outline: 2px solid #6f9a78;
+  outline: 2px solid var(--ix-focus);
   outline-offset: 1px;
 }
 .query-builder,

@@ -1,4 +1,5 @@
 import { type FormEvent, type ReactNode, useId, useState } from "react";
+import { DialogFrame } from "../components/DialogFrame";
 import { asTauriError, type TauriError } from "../lib/api";
 import { chooseBundleToOpen } from "../lib/dialog";
 import { type OpenRequest, useEachRequest } from "../lib/launch";
@@ -92,6 +93,11 @@ export function BundleFileFlow({
     verify(opened.path).catch((reason: unknown) => setError(asTauriError(reason)));
   });
 
+  const cancel = () => {
+    setPrompt(null);
+    setPassword("");
+    setError(null);
+  };
   const submit = (event: FormEvent) => {
     event.preventDefault();
     if (prompt) attempt(prompt, password).catch(() => undefined);
@@ -116,7 +122,12 @@ export function BundleFileFlow({
         </div>
       )}
       {prompt && (
-        <div className="bundle-password" role="dialog" aria-labelledby={titleId}>
+        <DialogFrame
+          className="bundle-password"
+          role="dialog"
+          aria-labelledby={titleId}
+          onClose={cancel}
+        >
           <form onSubmit={submit}>
             <h2 id={titleId}>
               Password for {prompt.summary.name} {prompt.summary.version}
@@ -127,7 +138,6 @@ export function BundleFileFlow({
                 type="password"
                 autoComplete="off"
                 aria-label="Bundle password"
-                autoFocus
                 value={password}
                 onChange={(event) => setPassword(event.target.value)}
               />
@@ -136,19 +146,12 @@ export function BundleFileFlow({
               <button type="submit" className="save" disabled={busy || !password}>
                 Unlock
               </button>
-              <button
-                type="button"
-                onClick={() => {
-                  setPrompt(null);
-                  setPassword("");
-                  setError(null);
-                }}
-              >
+              <button type="button" onClick={cancel}>
                 Cancel
               </button>
             </div>
           </form>
-        </div>
+        </DialogFrame>
       )}
       {error && <BundleError error={error} />}
       {downgrade && (

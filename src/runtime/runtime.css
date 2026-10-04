@@ -102,9 +102,9 @@
   font-size: 13px;
 }
 .rt-actions .primary {
-  background: #292c32;
-  color: #fff;
-  border-color: #292c32;
+  background: var(--ix-primary);
+  color: var(--ix-on-primary);
+  border-color: var(--ix-primary);
 }
 .rt-footer {
   justify-content: flex-end;
@@ -181,7 +181,7 @@
   font-size: 12px;
 }
 .rt-muted {
-  color: #7a8089;
+  color: var(--ix-muted);
   font-size: 12px;
 }
 .rt-static {
@@ -373,4 +373,15 @@
 .rt-record > .rt-error,
 .rt-related > .rt-status {
   margin: 0 0 12px;
+}
+@media print {
+  .rt-nav,
+  .rt-actions,
+  .rt-pager {
+    display: none;
+  }
+  .rt-app {
+    display: block;
+    background: #fff;
+  }
 }

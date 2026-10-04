@@ -1,4 +1,5 @@
 import { type FormEvent, useCallback, useEffect, useId, useState } from "react";
+import { DialogFrame } from "../components/DialogFrame";
 import { saveDocument } from "../lib/api";
 import { useDocumentConfig } from "../lib/config-store";
 import { documentState } from "../release/api";
@@ -244,7 +245,12 @@ export function PublishPanel({
       </form>
       <TransferBar progress={progress} label="Upload progress" />
       {conflict && (
-        <div className="cloud-dialog" role="dialog" aria-label="Version conflict">
+        <DialogFrame
+          className="cloud-dialog"
+          role="dialog"
+          aria-label="Version conflict"
+          onClose={() => setConflict(null)}
+        >
           <h3>The published history moved on</h3>
           <p>
             A checkpoint was published after the version this document is based on. Overwrite
@@ -263,11 +269,11 @@ export function PublishPanel({
             <button type="button" disabled={busy} onClick={() => resolve("fork")}>
               Fork
             </button>
-            <button type="button" disabled={busy} onClick={() => setConflict(null)}>
+            <button type="button" data-autofocus disabled={busy} onClick={() => setConflict(null)}>
               Cancel
             </button>
           </div>
-        </div>
+        </DialogFrame>
       )}
       <ActionStatus error={error} notice={notice} />
     </section>

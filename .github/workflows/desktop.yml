@@ -64,10 +64,15 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
       - uses: actions/setup-node@v4
         with:
           node-version: lts/*
           cache: npm
+      - name: Released archive fixtures are unchanged
+        if: github.event_name == 'pull_request'
+        run: node scripts/ci/check-archive-fixtures.mjs "${{ github.base_ref }}"
       - run: npm ci
       - name: Typecheck
         run: npx tsc --noEmit
@@ -182,6 +187,9 @@ jobs:
         run: >-
           npx vitest run --config vitest.integration.config.ts tests/integration/golden
           --reporter=default --reporter=junit --outputFile.junit=reports/golden.xml
+      # A skipped golden spec (it.skip, skipIf) would otherwise pass silently.
+      - name: Check no golden spec was skipped
+        run: node scripts/ci/check-junit-no-skips.mjs reports/golden.xml "golden suite"
       # Journey evidence (steps, assertions, failure log tail) is release evidence,
       # so it is uploaded on success too.
       - name: Upload golden evidence

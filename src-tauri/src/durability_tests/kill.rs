@@ -2,18 +2,45 @@
 //! re-runs this test binary as a writer that saves and autosaves a growing
 //! document in a loop, kills it (`Child::kill`: SIGKILL / TerminateProcess) at
 //! varied points, and checks that the archive is always the last good save and
-//! that the leftover workspace is recovered or cleanly refused.
+//! that the leftover workspace is recovered or cleanly refused. Half the runs kill
+//! while a test-only marker shows an archive write or rename is in progress.
 use crate::archive_io;
 use crate::manager::DocumentManager;
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::process::{Command, Stdio};
+use std::process::{Child, Command, Stdio};
 use std::time::{Duration, Instant};
 
 const WRITER_DIR: &str = "IXTABLE_KILL_WRITER_DIR";
 const WRITER_TEST: &str = "durability_tests::kill::autosave_writer_child";
 /// Milliseconds the writer runs after its first save before it is killed.
 const KILL_AFTER_MS: &[u64] = &[0, 15, 40, 90, 160, 260, 400, 650];
+/// Set by the test-only hook in `archive_io::write` while a write or rename runs.
+const WRITE_MARKER: &str = "IXTABLE_TEST_WRITE_MARKER";
+/// Extra runs that kill on the write marker, beyond one per `KILL_AFTER_MS` entry.
+const MAX_MARKER_ATTEMPTS: usize = 12;
+/// The writer stops by itself after this many payload bytes or this long, so a
+/// leaked writer cannot fill the disk.
+const WRITER_MAX_BYTES: u64 = 512 * 1024 * 1024;
+const WRITER_MAX_SECS: u64 = 120;
+
+/// Kills and reaps the writer when dropped, so a failed assertion never leaks it.
+struct KillOnDrop(Child);
+impl Drop for KillOnDrop {
+    fn drop(&mut self) {
+        let _ = self.0.kill();
+        let _ = self.0.wait();
+    }
+}
+
+/// When the parent kills the writer.
+#[derive(Clone, Copy, Debug)]
+enum KillAt {
+    /// This many ms after the first save.
+    After(u64),
+    /// As soon as an archive write or rename is in progress.
+    MidWrite,
+}
 
 fn noise(len: usize, mut seed: u64) -> Vec<u8> {
     (0..len)
@@ -48,7 +75,13 @@ fn autosave_writer_child() {
     m.mark_data_dirty(w).unwrap();
     m.save(w, Some(dir.join("doc.ixt"))).unwrap();
     fs::write(dir.join("ready"), b"1").unwrap();
-    for i in 0u64..100_000 {
+    let started = Instant::now();
+    let mut written = 0u64;
+    for i in 0u64.. {
+        if written >= WRITER_MAX_BYTES || started.elapsed() > Duration::from_secs(WRITER_MAX_SECS) {
+            break;
+        }
+        written += 131_072;
         rusqlite::Connection::open(&db)
             .unwrap()
             .execute("INSERT INTO payload(body) VALUES (randomblob(131072))", [])
@@ -68,18 +101,23 @@ fn autosave_writer_child() {
     }
 }
 
-/// Spawns the writer, kills it `after` ms past its first save, and returns once it exited.
-fn run_and_kill(dir: &Path, after: u64) {
-    let mut child = Command::new(std::env::current_exe().unwrap())
-        .args([WRITER_TEST, "--exact", "--ignored", "--test-threads=1"])
-        .env(WRITER_DIR, dir)
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .spawn()
-        .unwrap();
+/// Spawns the writer, kills it at `at`, and returns whether the kill landed while an
+/// archive write or rename was in progress (the marker outlived the writer).
+fn run_and_kill(dir: &Path, at: KillAt) -> bool {
+    let marker = dir.join("writing");
+    let mut child = KillOnDrop(
+        Command::new(std::env::current_exe().unwrap())
+            .args([WRITER_TEST, "--exact", "--ignored", "--test-threads=1"])
+            .env(WRITER_DIR, dir)
+            .env(WRITE_MARKER, &marker)
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+            .unwrap(),
+    );
     let started = Instant::now();
     while !dir.join("ready").exists() {
-        if let Some(status) = child.try_wait().unwrap() {
+        if let Some(status) = child.0.try_wait().unwrap() {
             panic!("the writer exited before its first save: {status}");
         }
         assert!(
@@ -88,52 +126,102 @@ fn run_and_kill(dir: &Path, after: u64) {
         );
         std::thread::sleep(Duration::from_millis(5));
     }
-    std::thread::sleep(Duration::from_millis(after));
-    let exited_early = child.try_wait().unwrap();
+    match at {
+        KillAt::After(ms) => std::thread::sleep(Duration::from_millis(ms)),
+        KillAt::MidWrite => {
+            let waiting = Instant::now();
+            while !marker.exists() && waiting.elapsed() < Duration::from_secs(30) {
+                std::hint::spin_loop();
+            }
+        }
+    }
+    let exited_early = child.0.try_wait().unwrap();
     assert!(
         exited_early.is_none(),
         "the writer stopped on its own: {exited_early:?}"
     );
-    child.kill().unwrap();
-    child.wait().unwrap();
+    child.0.kill().unwrap();
+    child.0.wait().unwrap();
+    marker.exists()
+}
+
+#[derive(Default)]
+struct Tally {
+    recovered: usize,
+    grew: usize,
+    mid_write: usize,
+}
+
+/// One kill run: the archive is the last good save, and leftover work is recovered
+/// into it (written back, not just reopened) or refused with a reason.
+fn check_run(n: usize, at: KillAt, tally: &mut Tally) {
+    let dir = std::env::temp_dir().join(format!("ixtable-kill-{}", uuid::Uuid::new_v4()));
+    fs::create_dir_all(&dir).unwrap();
+    if run_and_kill(&dir, at) {
+        tally.mid_write += 1;
+    }
+    let path = dir.join("doc.ixt");
+    let what = format!("run {n} (killed at {at:?})");
+    // The file at the path is always a complete archive whose checksums verify.
+    let saved = archive_io::verify(&path).unwrap_or_else(|e| panic!("{what}: {e}"));
+    let header = archive_io::read_header(&path).unwrap();
+    assert_eq!(header.format_version, archive_io::FORMAT_VERSION, "{what}");
+    let m = manager(&dir);
+    m.open("check", &path)
+        .unwrap_or_else(|e| panic!("{what}: open: {e}"));
+    let rows = super::count_rows(&m, "check", "payload");
+    m.close("check", true).unwrap();
+    for record in m.recoverable_sessions().unwrap() {
+        assert_eq!(record.document_id, saved.metadata.document_id, "{what}");
+        match m.recover_session("recovered", &record.session_id) {
+            Ok(state) => {
+                tally.recovered += 1;
+                assert!(!state.conflict, "{what}: {:?}", state.last_error);
+                assert!(state.last_error.is_none(), "{what}: {:?}", state.last_error);
+                assert!(!state.dirty, "{what}: recovery did not save back");
+                let workspace_rows = super::count_rows(&m, "recovered", "payload");
+                assert!(workspace_rows >= rows, "{what}");
+                archive_io::verify(&path).unwrap_or_else(|e| panic!("{what}: {e}"));
+                m.open("check", &path).unwrap();
+                let after = super::count_rows(&m, "check", "payload");
+                m.close("check", true).unwrap();
+                assert_eq!(
+                    after, workspace_rows,
+                    "{what}: archive lacks recovered rows"
+                );
+                if workspace_rows > rows {
+                    tally.grew += 1;
+                }
+            }
+            Err(e) => assert_eq!(e.code, "RECOVERY_FAILED", "{what}: {e}"),
+        }
+        let _ = m.close("recovered", true);
+    }
+    drop(m);
+    let _ = fs::remove_dir_all(&dir);
 }
 
 #[test]
 fn forced_termination_during_autosave_keeps_the_last_good_archive() {
-    let mut recovered = 0;
-    for (n, after) in KILL_AFTER_MS.iter().enumerate() {
-        let dir = std::env::temp_dir().join(format!("ixtable-kill-{}", uuid::Uuid::new_v4()));
-        fs::create_dir_all(&dir).unwrap();
-        run_and_kill(&dir, *after);
-        let path = dir.join("doc.ixt");
-        let what = format!("run {n} (killed {after} ms after the first save)");
-        // The file at the path is always a complete archive whose checksums verify.
-        let saved = archive_io::verify(&path).unwrap_or_else(|e| panic!("{what}: {e}"));
-        let header = archive_io::read_header(&path).unwrap();
-        assert_eq!(header.format_version, archive_io::FORMAT_VERSION, "{what}");
-        let m = manager(&dir);
-        m.open("check", &path)
-            .unwrap_or_else(|e| panic!("{what}: open: {e}"));
-        let rows = super::count_rows(&m, "check", "payload");
-        m.close("check", true).unwrap();
-        // The killed session's workspace is recovered into the archive, or refused with a reason.
-        for record in m.recoverable_sessions().unwrap() {
-            assert_eq!(record.document_id, saved.metadata.document_id, "{what}");
-            match m.recover_session("recovered", &record.session_id) {
-                Ok(state) => {
-                    recovered += 1;
-                    assert!(!state.conflict, "{what}: {:?}", state.last_error);
-                    archive_io::verify(&path).unwrap_or_else(|e| panic!("{what}: {e}"));
-                    m.open("check", &path).unwrap();
-                    assert!(super::count_rows(&m, "check", "payload") >= rows, "{what}");
-                    m.close("check", true).unwrap();
-                }
-                Err(e) => assert_eq!(e.code, "RECOVERY_FAILED", "{what}: {e}"),
-            }
-            let _ = m.close("recovered", true);
-        }
-        drop(m);
-        let _ = fs::remove_dir_all(&dir);
+    let mut tally = Tally::default();
+    let mut n = 0;
+    for after in KILL_AFTER_MS {
+        check_run(n, KillAt::After(*after), &mut tally);
+        n += 1;
+        check_run(n, KillAt::MidWrite, &mut tally);
+        n += 1;
     }
-    assert!(recovered > 0, "no run left recoverable work to check");
+    for _ in 0..MAX_MARKER_ATTEMPTS {
+        if tally.mid_write > 0 && tally.grew > 0 {
+            break;
+        }
+        check_run(n, KillAt::MidWrite, &mut tally);
+        n += 1;
+    }
+    assert!(tally.recovered > 0, "no run left recoverable work to check");
+    assert!(tally.grew > 0, "no recovery added rows to the archive");
+    assert!(
+        tally.mid_write > 0,
+        "no kill landed inside an archive write"
+    );
 }

@@ -1,7 +1,7 @@
 [
   {
     "file": "crm.ixt",
-    "formatVersion": 2,
+    "formatVersion": 1,
     "documentId": "94d49ea9-a2f1-49aa-98ca-878e06a4f0c9",
     "forms": [
       "01a100fd-decd-7fa8-ae27-1bb43f0171af",
@@ -35,11 +35,11 @@
       "deals": 10
     },
     "assets": [],
-    "sha256": "991bc1494ca6c2865f9a048532949f3ff80cfbc34f0506108aee774f3f22fab0"
+    "sha256": "8177f12b5c50d4d0b62def2b6e01a84624cc6a562df95cc3b535edef4a801ea3"
   },
   {
     "file": "inventory.ixt",
-    "formatVersion": 2,
+    "formatVersion": 1,
     "documentId": "a47ebc9e-7304-42b3-a4c4-76c3e6c9d14f",
     "forms": [
       "01a10134-cd59-7af4-ac2e-249930a93769",
@@ -85,11 +85,11 @@
         "size": 89
       }
     ],
-    "sha256": "c29c7e5754cc25cfebab4b23fbc3ff0feca52f6cf2f86f9a502edb452c699177"
+    "sha256": "9daf6dee13837ee377231222ce634db4f605c1338f330912ef3ed3a1ceb0ea38"
   },
   {
     "file": "work-orders.ixt",
-    "formatVersion": 2,
+    "formatVersion": 1,
     "documentId": "1a6e9d51-ae27-4dbf-ae62-274709fee560",
     "forms": [
       "01a1016b-bbed-7069-9243-717d20e70ac1",
@@ -124,6 +124,6 @@
       "work_orders": 5
     },
     "assets": [],
-    "sha256": "c0ee7d6a45fc824aba998662176d3d53d17b2ab782301414185f581fcb71d090"
+    "sha256": "36a2ec94bfe35005cfc70041bff5bf48207564a3b1c08f73d7d23616c8c70fae"
   }
 ]

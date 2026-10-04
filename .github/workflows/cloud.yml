@@ -14,6 +14,10 @@ on:
       - 'scripts/cloud/**'
       - 'src/cloud/**'
       - 'src-tauri/src/cloud/**'
+      - 'src-tauri/src/bundle*.rs'
+      - 'src-tauri/src/installation*.rs'
+      - 'src-tauri/Cargo.lock'
+      - 'package-lock.json'
       - 'tests/integration/cloud-*'
       - 'web/e2e/service-qa/**'
       - 'web/playwright.service-qa.config.ts'
@@ -24,6 +28,10 @@ on:
       - 'scripts/cloud/**'
       - 'src/cloud/**'
       - 'src-tauri/src/cloud/**'
+      - 'src-tauri/src/bundle*.rs'
+      - 'src-tauri/src/installation*.rs'
+      - 'src-tauri/Cargo.lock'
+      - 'package-lock.json'
       - 'tests/integration/cloud-*'
       - 'web/e2e/service-qa/**'
       - 'web/playwright.service-qa.config.ts'
@@ -54,9 +62,11 @@ jobs:
       - uses: ./.github/actions/setup-desktop
         with:
           cache-key: cloud
+      # Pinned to the CLI version the stack is developed against. A maintainer
+      # should also pin this action to a commit SHA.
       - uses: supabase/setup-cli@v1
         with:
-          version: latest
+          version: 2.119.0
       # Generates supabase/functions/.env.local (dev-only secrets), starts the
       # stack, resets the database, and waits for /functions/v1/health.
       - name: Start local Supabase stack
@@ -84,7 +94,7 @@ jobs:
           --reporter=default --reporter=junit --outputFile.junit=reports/cloud.xml
       # Skipped suites would pass silently: fail if the stack was not detected.
       - name: Check the cloud tests ran
-        run: node -e "const x=require('fs').readFileSync('reports/cloud.xml','utf8'); if(/<skipped/.test(x)){console.error('cloud integration tests were skipped');process.exit(1)}"
+        run: node scripts/ci/check-junit-no-skips.mjs reports/cloud.xml "cloud integration tests"
       - name: Supabase logs on failure
         if: failure()
         run: docker ps -a --format '{{.Names}}' | grep supabase | while read -r name; do echo "::group::$name"; docker logs --tail 200 "$name" 2>&1; echo "::endgroup::"; done

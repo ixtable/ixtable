@@ -83,7 +83,14 @@ checkpoints are validated archive copies under
   orders) with seeded data, plus a `manifest.json` of the ids, row counts, and
   asset checksums each must contain. A change that bumps `FORMAT_VERSION` adds
   a new `format-<N+1>/` with `node scripts/ci/write-archive-fixtures.mjs` and
-  never rewrites an existing directory. `.gitattributes` marks `*.ixt` binary.
+  never rewrites an existing directory. Each manifest entry records the
+  sha256 of its `.ixt`, checked by a Rust test, and the lint job runs
+  `scripts/ci/check-archive-fixtures.mjs`, which fails a pull request that
+  modifies or deletes a fixture file present on the base branch. `format-1/`
+  holds the same documents as `format-2/` in the legacy layout (no
+  `application_id`, no `payload_chunks`, config version 2), derived by
+  `node scripts/ci/write-archive-fixtures.mjs --format-1`. `.gitattributes`
+  marks `*.ixt` binary.
 
 ## Evidence
 
@@ -104,9 +111,13 @@ checkpoints are validated archive copies under
   reports, dashboards by id, row counts, asset checksums), saves (upgrading
   older formats), and reopens.
 - `src-tauri/src/durability_tests/kill.rs`: a real child process saves and
-  autosaves a growing document and is killed (`Child::kill`) at eight points.
-  The archive at the path always verifies, and the leftover workspace is
-  recovered into it or refused with `RECOVERY_FAILED`.
+  autosaves a growing document and is killed (`Child::kill`) at eight delays
+  and, alternately, while a test-only marker shows an archive write or rename
+  is in progress (at least one kill must land mid-write). The archive at the
+  path always verifies, and the leftover workspace is recovered into it (saved
+  back: not dirty, no error, archive rows equal the workspace's; at least one
+  run must grow the archive) or refused with `RECOVERY_FAILED`. The writer is
+  killed on drop and stops itself after 512 MB or two minutes.
 - `src-tauri/src/durability_tests/heavy.rs` (opt-in): an archive just over
   500,000,000 bytes saves and reopens, the size report flags it, and the
   publish preflight blocks it. Run with

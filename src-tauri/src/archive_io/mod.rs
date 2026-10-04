@@ -161,6 +161,7 @@ pub fn write(path: &Path, req: WriteRequest<'_>) -> Result<WriteReport, ArchiveE
     let parent = path.parent().unwrap_or_else(|| Path::new("."));
     fs::create_dir_all(parent)?;
     let tmp = temp_sibling(path);
+    let _phase = write_phase::enter();
     let result = (|| {
         let mut report = WriteReport::default();
         let mut conn = Connection::open(&tmp)?;
@@ -235,6 +236,33 @@ pub fn write(path: &Path, req: WriteRequest<'_>) -> Result<WriteReport, ArchiveE
         let _ = fs::remove_file(&tmp);
     }
     result
+}
+
+/// Test-only hook: while an archive write or rename is in progress, the file named
+/// by `IXTABLE_TEST_WRITE_MARKER` exists. The forced-termination test uses it to
+/// kill a writer mid-write. Compiled out of non-test builds.
+mod write_phase {
+    pub struct Guard(#[cfg(test)] Option<std::path::PathBuf>);
+    #[cfg(test)]
+    pub fn enter() -> Guard {
+        let marker = std::env::var_os("IXTABLE_TEST_WRITE_MARKER").map(std::path::PathBuf::from);
+        if let Some(m) = &marker {
+            let _ = std::fs::write(m, b"1");
+        }
+        Guard(marker)
+    }
+    #[cfg(not(test))]
+    pub fn enter() -> Guard {
+        Guard()
+    }
+    #[cfg(test)]
+    impl Drop for Guard {
+        fn drop(&mut self) {
+            if let Some(m) = &self.0 {
+                let _ = std::fs::remove_file(m);
+            }
+        }
+    }
 }
 
 pub(crate) fn open_read_only(path: &Path) -> Result<Connection, ArchiveError> {

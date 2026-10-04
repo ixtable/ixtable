@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { DesignControl } from "../../src/design/schema";
 
@@ -86,5 +86,66 @@ describe("relationship choice filter", () => {
     render(field("record.region =", {}));
     expect(await screen.findByRole("alert")).toHaveTextContent(/^Choice filter: /);
     await waitFor(() => expect(screen.getAllByRole("option")).toHaveLength(1));
+  });
+
+  it("writes every key column of a filtered multi-column choice", async () => {
+    readTablePage.mockResolvedValue({
+      columns: [
+        { name: "product_id", declaredType: "INTEGER" },
+        { name: "location_id", declaredType: "INTEGER" },
+        { name: "label", declaredType: "TEXT" },
+      ],
+      rows: [
+        [
+          { type: "integer", value: 1 },
+          { type: "integer", value: 1 },
+          { type: "text", value: "Depot" },
+        ],
+        [
+          { type: "integer", value: 1 },
+          { type: "integer", value: 2 },
+          { type: "text", value: "Store" },
+        ],
+      ],
+      identities: [],
+      total: 2,
+      offset: 0,
+      limit: 500,
+    });
+    const onKeys = vi.fn();
+    const threshold = {
+      id: "t",
+      kind: "relationship",
+      label: "Threshold",
+      binding: { column: "product_id" },
+      relationship: {
+        table: "thresholds",
+        valueColumn: "product_id",
+        displayColumn: "label",
+        keys: [
+          { column: "product_id", target: "product_id" },
+          { column: "loc", target: "location_id" },
+        ],
+        filter: "record.label <> 'Depot'",
+      },
+    } as unknown as DesignControl;
+    render(
+      <Field
+        control={threshold}
+        value={null}
+        onChange={() => undefined}
+        onBlur={() => undefined}
+        readOnly={false}
+        filterScope={scope({})}
+        keyValues={{ product_id: null, loc: null }}
+        onKeys={onKeys}
+      />,
+    );
+    const store = await screen.findByRole<HTMLOptionElement>("option", { name: "Store" });
+    expect(screen.queryByRole("option", { name: "Depot" })).toBeNull();
+    fireEvent.change(screen.getByRole("combobox", { name: "Threshold" }), {
+      target: { value: store.value },
+    });
+    expect(onKeys).toHaveBeenCalledWith({ product_id: 1, loc: 2 });
   });
 });

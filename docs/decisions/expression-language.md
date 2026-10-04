@@ -80,6 +80,13 @@ Filters and conditional styles (PRD §17.1) use the same evaluator through
 - `enabledWhen` is presentation, not access control (use roles for that). A
   disabled component is wrapped in a disabled, `inert` fieldset, and list rows
   ignore clicks and keys inside an inert container.
+- Form controls have their own `enabledWhen`, evaluated per record by
+  `enabledControls()` in `src/runtime/formState.ts`. It is separate from the
+  dashboard one: a disabled control or container makes its fields read-only,
+  keeps their stored values, and makes a related list read-only.
+- A related list with a multi-column key reads the rows that match every key
+  column, then applies its `filter` to them. Lookup choices carry their whole
+  row, so a multi-column lookup with a filter still writes every key column.
 
 Rust stores these fields in `design` and `dashboards` and only flags empty
 ones, and dashboard table style rules with no column, in validation. A tone

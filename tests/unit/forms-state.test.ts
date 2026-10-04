@@ -158,4 +158,13 @@ describe("form validation and expressions", () => {
     // Visibility is independent of enabled state.
     expect(visibleControls(f, scope({ open: false })).has(inner.id)).toBe(true);
   });
+
+  it("does not validate controls the user cannot change", () => {
+    const f = newForm("Orders", { kind: "table", table: "orders" });
+    const section = { ...newControl("section", f), enabledWhen: "record.open" };
+    const name = { ...newControl("text", f, { id: section.id }), binding: { column: "name" } };
+    f.controls.push(section, { ...name, validation: { ...name.validation, required: true } });
+    expect(hasErrors(validateForm(f, scope({ open: false })))).toBe(false);
+    expect(Object.keys(validateForm(f, scope({ open: true })).fields)).toEqual([name.id]);
+  });
 });

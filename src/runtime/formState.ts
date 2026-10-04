@@ -133,12 +133,18 @@ export const enabledControls = (form: DesignForm, scope: FormScope): Set<string>
 
 export type FormErrors = { fields: Record<string, string>; form: string[] };
 
-/** Validates every visible bound control and the form-level rules. */
+/**
+ * Validates every visible, enabled bound control and the form-level rules. Like
+ * read-only controls, disabled ones (or ones in a disabled container) are skipped:
+ * the user cannot change them, so their errors could not be fixed.
+ */
 export function validateForm(form: DesignForm, scope: FormScope): FormErrors {
   const visible = visibleControls(form, scope);
+  const enabled = enabledControls(form, scope);
   const fields: Record<string, string> = {};
   for (const control of form.controls) {
-    if (!visible.has(control.id) || !isInputKind(control.kind) || control.readOnly) continue;
+    if (!visible.has(control.id) || !enabled.has(control.id)) continue;
+    if (!isInputKind(control.kind) || control.readOnly) continue;
     const column = control.binding?.column;
     const message = validateControl(control, column ? scope.record[column] : null, scope);
     if (message) fields[control.id] = message;

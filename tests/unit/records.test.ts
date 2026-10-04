@@ -3,8 +3,14 @@ import { beforeEach, expect, it, vi } from "vitest";
 const call = vi.fn();
 vi.mock("../../src/lib/api", () => ({ call: (...args: unknown[]) => call(...args) }));
 
-const { deleteRecord, insertRecord, registerRecordHook, updateRecord, writeRecordBatch } =
-  await import("../../src/lib/records");
+const {
+  CommittedWriteError,
+  deleteRecord,
+  insertRecord,
+  registerRecordHook,
+  updateRecord,
+  writeRecordBatch,
+} = await import("../../src/lib/records");
 
 beforeEach(() => call.mockReset());
 
@@ -116,5 +122,28 @@ it("passes trigger step auth to Rust and the issued grant to after hooks", async
   });
   expect(after.mock.calls[1].slice(1)).toEqual([identity, { triggerGrant: "g2" }]);
   expect(after.mock.calls[2].slice(1)).toEqual([1, undefined]);
+  unregister();
+});
+
+it("hands every grant to its hook after a failing one, then rejects as committed", async () => {
+  const grants: unknown[] = [];
+  const unregister = registerRecordHook({
+    after: (write, _result, extra) => {
+      grants.push(extra?.triggerGrant);
+      if (write.table === "a") throw new Error("Trigger failed");
+    },
+  });
+  const identity = [{ type: "integer" as const, value: 3 }];
+  call.mockResolvedValueOnce([
+    { changed: 1, identity, triggerGrant: "g1" },
+    { changed: 1, identity, triggerGrant: "g2" },
+  ]);
+  const error = await writeRecordBatch([
+    { operation: "insert", table: "a", values: [], identity: null },
+    { operation: "insert", table: "b", values: [], identity: null },
+  ]).catch((e: unknown) => e);
+  expect(error).toBeInstanceOf(CommittedWriteError);
+  expect(error).toMatchObject({ message: "Trigger failed", results: [identity, identity] });
+  expect(grants).toEqual(["g1", "g2"]);
   unregister();
 });

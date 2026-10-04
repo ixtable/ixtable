@@ -282,7 +282,7 @@ it("Inventory: constraints, transactional transfers, and concurrency policies", 
         table: "products",
         values: [{ column: "unit_cost", value: { type: "real", value: 0.3 } }],
         identity: [int(1)],
-        expected: null,
+        expected: [{ column: "name", value: { type: "text", value: "Hex bolt M8" } }],
       });
       await user.clear(name);
       await user.type(name, "Hex bolt M8 zinc");

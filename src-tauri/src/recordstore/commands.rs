@@ -28,19 +28,47 @@ pub fn after_write(window: &str) -> Result<SessionState, AppError> {
 fn guard_definition(window: &str) -> Result<(), AppError> {
     crate::manager()?.with_session(window, |s| crate::manager::read_only_guard(s))
 }
-/// Optimistic and custom-action entities check original values; last-write-wins ignores them.
+/// Optimistic, custom-action, and unresolved entities check original values;
+/// last-write-wins ignores them.
 fn effective_expected(
     window: &str,
     table: &str,
     expected: Option<Vec<NamedValue>>,
 ) -> Result<Option<Vec<NamedValue>>, AppError> {
     let config = crate::manager()?.config(window)?;
-    Ok(
-        match entity_policy(&config, table).map(|e| e.concurrency.as_str()) {
-            Some("lastWriteWins") => None,
-            _ => expected.filter(|e| !e.is_empty()),
-        },
+    resolve_expected(
+        entity_policy(&config, table).map(|e| e.concurrency.as_str()),
+        table,
+        expected,
     )
+}
+
+/// Applies the concurrency policy (PRD §19) to a write's original values. Every
+/// policy except `lastWriteWins` (an unresolved one included) needs them: an
+/// update or delete without `expected` fails with `EXPECTED_REQUIRED` instead
+/// of overwriting blindly.
+///
+/// `customAction` is enforced here like `optimistic`: routing the write to the
+/// entity's action happens only in the TypeScript frontend (`src/automation/custom.ts`),
+/// so a direct command with `expected` writes the row without running the action.
+pub(crate) fn resolve_expected(
+    policy: Option<&str>,
+    table: &str,
+    expected: Option<Vec<NamedValue>>,
+) -> Result<Option<Vec<NamedValue>>, AppError> {
+    if policy == Some("lastWriteWins") {
+        return Ok(None);
+    }
+    match expected.filter(|e| !e.is_empty()) {
+        Some(e) => Ok(Some(e)),
+        None => Err(AppError::new(
+            "EXPECTED_REQUIRED",
+            format!(
+                "{table} uses the {} concurrency policy: updates and deletes must send the original values they started from",
+                policy.unwrap_or("optimistic")
+            ),
+        )),
+    }
 }
 
 fn update_entities(window: &str, f: impl FnOnce(&mut Vec<EntitySettings>)) -> Result<(), AppError> {
@@ -371,7 +399,8 @@ fn with_grants(
         .collect())
 }
 
-fn resolve_expected(window: &str, ops: Vec<WriteOp>) -> Result<Vec<WriteOp>, AppError> {
+/// Applies `effective_expected` to every update and delete in a batch.
+fn resolve_batch_expected(window: &str, ops: Vec<WriteOp>) -> Result<Vec<WriteOp>, AppError> {
     let mut resolved = Vec::with_capacity(ops.len());
     for op in ops {
         resolved.push(match op {
@@ -417,7 +446,7 @@ pub fn execute_write_batch(
     triggers: Option<Vec<Option<crate::trigger_auth::TriggerWrite>>>,
 ) -> Result<Vec<TriggeredOutcome>, AppError> {
     authorize_ops(&window_label, &ops, &triggers.unwrap_or_default())?;
-    let resolved = resolve_expected(&window_label, ops)?;
+    let resolved = resolve_batch_expected(&window_label, ops)?;
     let out = with_store(&window_label, |s| s.execute_batch(&resolved))?;
     after_write(&window_label)?;
     with_grants(&window_label, &resolved, out)
@@ -447,7 +476,8 @@ pub fn insert_row(
     write_one(window_label, WriteOp::Insert { table, values }, trigger)
 }
 /// `expected` carries the values the user started from; entities with the
-/// optimistic policy reject the update with CONFLICT when they changed.
+/// optimistic policy reject the update with CONFLICT when they changed, and
+/// with EXPECTED_REQUIRED when it is missing (`resolve_expected`).
 #[tauri::command]
 pub fn update_row(
     window_label: String,

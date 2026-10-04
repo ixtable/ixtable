@@ -11,7 +11,14 @@ const config = {
         navigation: [],
         actions: ["stock"],
         objects: [
-          { kind: "table", id: "inventory", read: true, create: false, update: true, delete: false },
+          {
+            kind: "table",
+            id: "inventory",
+            read: true,
+            create: false,
+            update: true,
+            delete: false,
+          },
         ],
       },
     },
@@ -56,5 +63,27 @@ it("lists the grants a role lacks for user-mode triggers only", () => {
       name: "User stock",
       missing: ["execute action audit", "create table audit_log"],
     },
+  ]);
+});
+
+it("follows updates of custom-action entities to the action they run", () => {
+  const routed = {
+    ...config,
+    actions: [
+      ...config.actions,
+      {
+        id: "guard",
+        name: "Guard",
+        onError: "stop",
+        steps: [{ id: "g", kind: "createRecord", table: "stock_audit", values: {} }],
+      },
+    ],
+    entities: [{ id: "e", table: "inventory", concurrency: "customAction", actionId: "guard" }],
+  } as unknown as DocumentConfig;
+  expect(userTriggerGaps(routed, "clerk")[0].missing.sort()).toEqual([
+    "create table audit_log",
+    "create table stock_audit",
+    "execute action audit",
+    "execute action guard",
   ]);
 });

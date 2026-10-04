@@ -2,6 +2,8 @@ import { Trash2 } from "lucide-react";
 import { ActionPicker } from "../automation/ActionPicker";
 import type { DbObject } from "../lib/types";
 import { resizePlacement } from "../grid/engine";
+import { filterNames } from "../runtime/conditions";
+import { knownNames } from "../runtime/formState";
 import { AssetPicker } from "./AssetPicker";
 import { controlConstraints } from "./constraints";
 import { DraftInput } from "./DraftInput";
@@ -18,6 +20,7 @@ import {
 } from "./schema";
 import { ColumnSelect, RelatedListProperties, TabsProperties } from "./KindProperties";
 import { RegionPicker } from "./RegionEditor";
+import { StylesEditor } from "./StylesEditor";
 import { useColumns } from "./useColumns";
 import { useDesignEditor } from "./useDesignEditor";
 
@@ -241,6 +244,15 @@ export function ControlProperties({
               change({ relationship: { ...control.relationship, displayColumn } })
             }
           />
+          <ExpressionField
+            label="Choice filter"
+            value={control.relationship?.filter}
+            names={filterNames(lookupColumns)}
+            placeholder="record.active and record.region = parent.region"
+            onChange={(filter) =>
+              control.relationship && change({ relationship: { ...control.relationship, filter } })
+            }
+          />
         </fieldset>
       )}
       {control.kind === "button" && (
@@ -381,6 +393,13 @@ export function ControlProperties({
           </label>
         )}
       </fieldset>
+      {(input || control.kind === "computed") && (
+        <StylesEditor
+          rules={control.styles}
+          names={knownNames(columns)}
+          onChange={(styles) => change({ styles }, "Edit conditional styles")}
+        />
+      )}
       <button
         type="button"
         onClick={() => {

@@ -1,4 +1,4 @@
-import { useEffect, useId, useState } from "react";
+import { useEffect, useId, useMemo, useState } from "react";
 import type { DesignControl } from "../design/schema";
 import { useDocumentConfig } from "../lib/config-store";
 import { readAssetDataUrl } from "./api";
@@ -9,7 +9,9 @@ import {
   relationshipChoices,
   relationshipLabel,
 } from "./data";
+import { filterInputsKey, type Tone, toneClass } from "./conditions";
 import { formatted } from "./formState";
+import { useDebounced } from "./useDebounced";
 import { sameValue } from "./values";
 
 export type FieldProps = {
@@ -20,6 +22,10 @@ export type FieldProps = {
   /** Read-only display (detail mode, disabled by `enabledWhen`, or no permission). */
   readOnly: boolean;
   error?: string;
+  /** Conditional style tone from the control's `styles`. */
+  tone?: Tone | null;
+  /** Scope for a relationship `filter`: the edited record as `parent`, plus `form`, `app`. */
+  filterScope?: Record<string, unknown>;
   /** Multi-column relationship: current value of every key column (by form column). */
   keyValues?: Record<string, unknown>;
   /** Multi-column relationship: writes every key column of the chosen record. */
@@ -44,6 +50,8 @@ export function Field({
   onBlur,
   readOnly,
   error,
+  tone,
+  filterScope,
   keyValues,
   onKeys,
 }: FieldProps) {
@@ -119,6 +127,7 @@ export function Field({
           value={value}
           onChange={onChange}
           readOnly={readOnly}
+          filterScope={filterScope}
           keyValues={keyValues}
           onKeys={onKeys}
         />
@@ -135,7 +144,7 @@ export function Field({
       );
   }
   return (
-    <div className={`rt-field rt-${control.kind}`}>
+    <div className={`rt-field rt-${control.kind} ${toneClass(tone ?? null)}`.trim()}>
       <label htmlFor={id}>
         {control.label}
         {required && !readOnly && <span aria-hidden="true"> *</span>}
@@ -213,11 +222,19 @@ function RelationshipInput({
   value,
   onChange,
   readOnly,
+  filterScope,
   keyValues,
   onKeys,
   ...rest
-}: InputProps & Pick<FieldProps, "keyValues" | "onKeys"> & { readOnly: boolean }) {
+}: InputProps & Pick<FieldProps, "filterScope" | "keyValues" | "onKeys"> & { readOnly: boolean }) {
   const relationship = control.relationship;
+  // Reload choices only when a value the filter reads settles on a new value.
+  const scopeKey = useDebounced(filterInputsKey(relationship?.filter, filterScope ?? {}), 250);
+  const scope = useMemo(
+    () => (scopeKey ? (JSON.parse(scopeKey)[1] as Record<string, unknown>) : {}),
+    [scopeKey],
+  );
+  const [choiceError, setChoiceError] = useState("");
   const pairs = relationship?.keys && relationship.keys.length > 1 ? relationship.keys : null;
   // The stored key: the bound value, or target column -> value for a multi-column key.
   const key: unknown = pairs
@@ -238,9 +255,17 @@ function RelationshipInput({
     let live = true;
     const timer = setTimeout(
       () => {
-        relationshipChoices(relationship, search)
-          .then((items) => live && setChoices(items))
-          .catch(() => live && setChoices([]));
+        relationshipChoices(relationship, search, 50, scope)
+          .then((items) => {
+            if (!live) return;
+            setChoices(items);
+            setChoiceError("");
+          })
+          .catch((reason) => {
+            if (!live) return;
+            setChoices([]);
+            setChoiceError(reason instanceof Error ? reason.message : String(reason));
+          });
       },
       search ? 150 : 0,
     );
@@ -248,7 +273,7 @@ function RelationshipInput({
       live = false;
       clearTimeout(timer);
     };
-  }, [relationship, search, readOnly]);
+  }, [relationship, search, readOnly, scope]);
   const composite = !!pairs;
   useEffect(() => {
     if (!relationship) return;
@@ -300,6 +325,11 @@ function RelationshipInput({
           </option>
         ))}
       </select>
+      {choiceError && (
+        <p className="rt-error" role="alert">
+          Choice filter: {choiceError}
+        </p>
+      )}
     </div>
   );
 }
@@ -309,14 +339,16 @@ export function ComputedValue({
   control,
   value,
   error,
+  tone,
 }: {
   control: DesignControl;
   value: unknown;
   error?: string;
+  tone?: Tone | null;
 }) {
   const id = useId();
   return (
-    <div className="rt-field rt-computed">
+    <div className={`rt-field rt-computed ${toneClass(tone ?? null)}`.trim()}>
       <span id={id} className="rt-label">
         {control.label}
       </span>

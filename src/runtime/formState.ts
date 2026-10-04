@@ -20,24 +20,43 @@ export function knownNames(columns?: string[]): string[] {
 }
 
 /** Diagnostics text for an expression field in the designer ("" when valid). */
-export function expressionProblem(src: string | null | undefined, columns?: string[]): string {
+export function expressionProblem(
+  src: string | null | undefined,
+  columns?: string[],
+  names?: string[],
+): string {
   if (!present(src)) return "";
-  const diagnostics = check(src, knownNames(columns));
+  const diagnostics = check(src, names ?? knownNames(columns));
   return diagnostics.map((d) => d.message).join("; ");
 }
 
-/** Evaluates a condition; a blank expression gives `fallback`, an error gives false. */
+/** A condition's outcome plus the evaluation error, if any (the value is then false). */
+export type ConditionResult = { value: boolean; error?: string };
+
+/** Like `condition`, but reports why an expression failed so the UI can show it. */
+export function conditionResult(
+  src: string | null | undefined,
+  scope: FormScope | Record<string, unknown>,
+  fallback = true,
+): ConditionResult {
+  if (!present(src)) return { value: fallback };
+  try {
+    return { value: evaluateBoolean(src, scope) };
+  } catch (reason) {
+    return { value: false, error: reason instanceof Error ? reason.message : String(reason) };
+  }
+}
+
+/**
+ * Evaluates a condition; a blank expression gives `fallback`, an error gives false.
+ * Dashboards use `conditionResult` to show the error as well.
+ */
 export function condition(
   src: string | null | undefined,
-  scope: FormScope,
+  scope: FormScope | Record<string, unknown>,
   fallback = true,
 ): boolean {
-  if (!present(src)) return fallback;
-  try {
-    return evaluateBoolean(src, scope);
-  } catch {
-    return false;
-  }
+  return conditionResult(src, scope, fallback).value;
 }
 
 export type Computed = { value: unknown; error?: string };

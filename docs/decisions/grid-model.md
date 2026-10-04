@@ -62,6 +62,14 @@ region renames every placement that uses it in the same update; removing a
 region, or a column it no longer fits, clears or clamps it, and controls in a
 removed region fall back to their column and row (`setLayout`, `withLayout`).
 
+Hidden items behave the same on forms and dashboards. When a control's or a
+dashboard component's `visibleWhen` is false, the item is not rendered. The
+other items keep their authored placement, so a hidden item leaves its cells
+empty instead of pulling later items up. A `content` row with nothing in it
+still collapses, as CSS Grid does. A dashboard component whose `enabledWhen`
+is false stays in place, wrapped in a disabled fieldset that disables every
+control inside it.
+
 Rust validates layouts in `design::validate_layout` and `validate_span`. The
 dashboard module calls the same functions, so a placement that overflows the
 grid fails the same way in both. `validateLayout` in TypeScript returns the
@@ -95,5 +103,7 @@ same `Issue` shape, plus rendering warnings such as overlapping regions.
   and move within limits, breakpoint by measured width, pointer drag snapping.
 - `src-tauri/src/design/tests.rs`: placements cannot overflow columns, and
   container children use the container grid.
+- `tests/unit/dashboard-conditions.test.tsx`: a hidden dashboard component
+  leaves the other components' placements unchanged.
 - Dashboards: `src-tauri/src/dashboards.rs` reuses the design grid validators.
   Dashboard UI tests are in progress.

@@ -12,6 +12,7 @@ import {
   recordIdFor,
   tableSchema,
 } from "./data";
+import { pageLabel, TRUNCATED_NOTICE, toneClass, toneFor } from "./conditions";
 import { cellText } from "./formState";
 import { BooleanCell } from "./BooleanCell";
 import { useLookupLabels } from "./lookups";
@@ -26,10 +27,14 @@ type Props = {
   onCreate: () => void;
 };
 
-/** List mode: DuckDB-backed paging with sort and a contains-filter, rows open the detail form. */
+/**
+ * List mode: DuckDB-backed paging with sort and a contains-filter, rows open the detail form.
+ * The form's `filter` expression runs on fetched rows (see `loadPage`); cells take the
+ * conditional tone of the control bound to their column.
+ */
 export function ListView({ form, onOpen, onCreate }: Props) {
   const { config } = useDocumentConfig();
-  const { roleId } = useRuntimeNavigation();
+  const { roleId, app } = useRuntimeNavigation();
   const [sorts, setSorts] = useState<Sort[]>([]);
   const [offset, setOffset] = useState(0);
   const [search, setSearch] = useState("");
@@ -57,15 +62,16 @@ export function ListView({ form, onOpen, onCreate }: Props) {
     () => ({ offset, limit, sorts, filters }),
     [offset, limit, sorts, filters],
   );
-  const [page, setPage] = useState<RecordPage | null>(() => cachedPage(form, request));
+  const scope = useMemo(() => ({ app }), [app]);
+  const [page, setPage] = useState<RecordPage | null>(() => cachedPage(form, request, scope));
 
   useEffect(() => {
     let live = true;
-    const hit = cachedPage(form, request);
+    const hit = cachedPage(form, request, scope);
     if (hit) setPage(hit);
     const timer = setTimeout(
       () => {
-        loadPage(config, form, request)
+        loadPage(config, form, request, scope)
           .then((next) => {
             if (!live) return;
             setPage(next);
@@ -81,7 +87,7 @@ export function ListView({ form, onOpen, onCreate }: Props) {
       live = false;
       clearTimeout(timer);
     };
-  }, [config, form, request, search]);
+  }, [config, form, request, search, scope]);
 
   useEffect(() => {
     if (table)
@@ -131,14 +137,19 @@ export function ListView({ form, onOpen, onCreate }: Props) {
       return [];
     });
   };
-  const open = (index: number) => {
-    if (!page) return;
+  const open = (index: number, row: Element) => {
+    // Rows are not native controls, so a disabled (inert) container must be checked here.
+    if (!page || row.closest("[inert], [aria-disabled='true']")) return;
     const record = page.rows[index];
     if (table && schema && page.identities)
       onOpen(recordIdFor(schema, record, page.identities[index]));
     else onOpen(record);
   };
   const total = page?.total ?? 0;
+  const tone = (record: Record<string, unknown>, column: string) =>
+    toneClass(
+      toneFor(controlFor(column)?.styles, { record, form: {}, app, value: record[column] }),
+    ) || undefined;
 
   return (
     <section className="rt-list" aria-label={form.name}>
@@ -185,6 +196,11 @@ export function ListView({ form, onOpen, onCreate }: Props) {
           {error}
         </p>
       )}
+      {page?.truncated && (
+        <p className="rt-notice" role="status">
+          {TRUNCATED_NOTICE}
+        </p>
+      )}
       <table className="rt-table">
         <thead>
           <tr>
@@ -217,16 +233,18 @@ export function ListView({ form, onOpen, onCreate }: Props) {
               tabIndex={0}
               className="rt-row"
               aria-label={`Open ${record[columns[0]] == null ? `row ${offset + index + 1}` : (lookup(columns[0], record) ?? String(record[columns[0]]))}`}
-              onClick={() => open(index)}
+              onClick={(event) => open(index, event.currentTarget)}
               onKeyDown={(event) => {
                 if (event.key === "Enter" || event.key === " ") {
                   event.preventDefault();
-                  open(index);
+                  open(index, event.currentTarget);
                 }
               }}
             >
               {columns.map((column) => (
-                <td key={column}>{cell(record, column)}</td>
+                <td key={column} className={tone(record, column)}>
+                  {cell(record, column)}
+                </td>
               ))}
             </tr>
           ))}
@@ -240,13 +258,7 @@ export function ListView({ form, onOpen, onCreate }: Props) {
         </tbody>
       </table>
       <div className="rt-pager">
-        <span role="status">
-          {total
-            ? `${offset + 1}–${Math.min(offset + limit, total)} of ${total}`
-            : page
-              ? "0 records"
-              : "Loading…"}
-        </span>
+        <span role="status">{page ? pageLabel(offset, page.rows.length, total) : "Loading…"}</span>
         <button
           type="button"
           disabled={offset === 0}

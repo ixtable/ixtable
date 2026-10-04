@@ -1,4 +1,5 @@
-import { type ComponentType, createElement, useContext, useEffect, useState } from "react";
+import { type ComponentType, createElement, useContext, useEffect, useRef, useState } from "react";
+import { NAVIGATE_EVENT, provideAppState, SET_STATE_EVENT } from "../automation/context";
 import * as dashboardsModule from "../dashboards";
 import { GenerateAppButton } from "../design/GenerateAppButton";
 import { flattenNavigation, formTable, type NavigationItem } from "../design/schema";
@@ -51,6 +52,7 @@ export function RunMode() {
   const roles = config.roles ?? [];
   const assigned = assignedRuntimeRole();
   const back = usePageBack(runtime);
+  useActionEvents(runtime);
   return (
     <RuntimeContext.Provider value={runtime}>
       <header className="titlebar">
@@ -124,6 +126,39 @@ export function RunMode() {
 }
 
 /**
+ * Follows navigation and app-state changes from actions that run outside a page
+ * (sync triggers, custom concurrency actions), and gives them the app state.
+ */
+function useActionEvents(runtime: RuntimeNavigation) {
+  const ref = useRef(runtime);
+  useEffect(() => {
+    ref.current = runtime;
+  });
+  useEffect(() => {
+    const navigate = (event: Event) => {
+      const target = (event as CustomEvent<RuntimePage>).detail;
+      if (!target?.id) return;
+      event.preventDefault();
+      ref.current.navigate({ ...target, navId: undefined });
+    };
+    const setState = (event: Event) => {
+      const { scope, key, value } = (event as CustomEvent).detail ?? {};
+      if (scope !== "app" || !key) return;
+      event.preventDefault();
+      ref.current.setAppState(key, value);
+    };
+    window.addEventListener(NAVIGATE_EVENT, navigate);
+    window.addEventListener(SET_STATE_EVENT, setState);
+    const release = provideAppState(() => ref.current.app);
+    return () => {
+      window.removeEventListener(NAVIGATE_EVENT, navigate);
+      window.removeEventListener(SET_STATE_EVENT, setState);
+      release();
+    };
+  }, []);
+}
+
+/**
  * True when the application has a navigation item of any kind (form, table, dashboard,
  * report, …) other than a new document's blank form (no source, no controls).
  */
@@ -189,6 +224,7 @@ export function PageView({ page, back = null }: { page: RuntimePage; back?: Back
           formId={page.id}
           mode={page.mode as "list" | undefined}
           recordId={page.recordId}
+          params={page.params}
           back={back}
         />
       );
@@ -210,6 +246,7 @@ export function PageView({ page, back = null }: { page: RuntimePage; back?: Back
             name="DashboardView"
             missing="Dashboards are not available in this build."
             dashboardId={page.id}
+            params={page.params}
           />
         </>
       );

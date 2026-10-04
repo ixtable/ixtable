@@ -52,6 +52,74 @@ fn optimistic_updates_reject_stale_original_values() {
     });
 }
 
+/// The write-time policy check (`resolve_expected`) in front of each store, as
+/// `update_row`, `delete_row`, and `execute_write_batch` apply it.
+#[test]
+fn concurrency_policies_apply_at_write_time() {
+    use super::commands::resolve_expected;
+    each_store(|h| {
+        people(h);
+        h.store
+            .insert("people", &[nv("id", int(1)), nv("name", text("Ada"))])
+            .unwrap();
+        let original = vec![nv("name", text("Ada"))];
+        // Optimistic (and unresolved) entities reject writes without original values.
+        for policy in [Some("optimistic"), Some("customAction"), None] {
+            let missing = resolve_expected(policy, "people", None).unwrap_err();
+            assert_eq!(missing.code, "EXPECTED_REQUIRED", "{}", h.name);
+            let empty = resolve_expected(policy, "people", Some(vec![])).unwrap_err();
+            assert_eq!(empty.code, "EXPECTED_REQUIRED");
+        }
+        // Optimistic: a stale original value conflicts.
+        let expected = resolve_expected(Some("optimistic"), "people", Some(original.clone()))
+            .unwrap()
+            .unwrap();
+        h.store
+            .update(
+                "people",
+                &[nv("name", text("Bea"))],
+                &[int(1)],
+                Some(&expected),
+            )
+            .unwrap();
+        let stale = h
+            .store
+            .update(
+                "people",
+                &[nv("name", text("Eve"))],
+                &[int(1)],
+                Some(&expected),
+            )
+            .unwrap_err();
+        assert_eq!(stale.code, "CONFLICT", "{}", h.name);
+        assert_eq!(rows(h, "people")[0][1], text("Bea"));
+        // Last write wins: the stale original values are dropped and the write lands.
+        let lww =
+            resolve_expected(Some("lastWriteWins"), "people", Some(original.clone())).unwrap();
+        assert!(lww.is_none());
+        assert_eq!(
+            h.store
+                .update(
+                    "people",
+                    &[nv("name", text("Eve"))],
+                    &[int(1)],
+                    lww.as_deref()
+                )
+                .unwrap(),
+            1
+        );
+        assert_eq!(rows(h, "people")[0][1], text("Eve"));
+        let none = resolve_expected(Some("lastWriteWins"), "people", None).unwrap();
+        assert_eq!(
+            h.store
+                .delete("people", &[int(1)], none.as_deref())
+                .unwrap(),
+            1
+        );
+        assert!(rows(h, "people").is_empty());
+    });
+}
+
 #[test]
 fn schema_changes_publish_store_specific_modes_and_keep_data() {
     each_store(|h| {

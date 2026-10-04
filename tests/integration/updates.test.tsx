@@ -108,6 +108,12 @@ it("saves unsaved work before installing, and cancelling installs nothing", asyn
   await user.click(await screen.findByRole("button", { name: "Install and relaunch" }, LONG));
 
   let prompt = await screen.findByRole("alertdialog", { name: "Save changes before updating?" });
+  expect(within(prompt).getByRole("button", { name: "Save and install" })).toHaveFocus();
+  await user.keyboard("{Escape}");
+  expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "Install and relaunch" })).toHaveFocus();
+  await user.click(screen.getByRole("button", { name: "Install and relaunch" }));
+  prompt = await screen.findByRole("alertdialog");
   await user.click(within(prompt).getByRole("button", { name: "Cancel" }));
   expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument();
   expect(updater.install).not.toHaveBeenCalled();

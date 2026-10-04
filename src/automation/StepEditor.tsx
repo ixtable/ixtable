@@ -309,15 +309,23 @@ function StepFields({
       );
     case "openDashboard":
       return (
-        <div className="ax-row">
-          <SelectField
-            label="Dashboard"
-            value={step.dashboardId}
-            onChange={(v) => set({ dashboardId: v })}
-            options={dashboards}
+        <>
+          <div className="ax-row">
+            <SelectField
+              label="Dashboard"
+              value={step.dashboardId}
+              onChange={(v) => set({ dashboardId: v })}
+              options={dashboards}
+            />
+            {when}
+          </div>
+          <ValueMapEditor
+            label="Parameters"
+            keyLabel="Parameter"
+            value={step.params}
+            onChange={(v) => set({ params: v })}
           />
-          {when}
-        </div>
+        </>
       );
     case "setState":
       return (

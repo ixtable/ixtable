@@ -8,6 +8,7 @@ import {
   resizePlacement,
   validateLayout,
 } from "../grid/engine";
+import { type DesignForm, FORM_MODES, type FormMode } from "../design/schema";
 import { clampRegions, type RegionRenames, remapRegion } from "../grid/regions";
 import type { GridIssue, GridLayout, SpanConstraints } from "../grid/types";
 import type { DocumentConfig } from "../lib/types";
@@ -229,4 +230,14 @@ export function dashboardQueryParameters(
     for (const p of q.parameters ?? []) if (!seen.has(p.name)) seen.set(p.name, p.logicalType);
   }
   return [...seen].map(([name, logicalType]) => ({ name, logicalType }));
+}
+
+/**
+ * Modes a dashboard can open `form` in: the form's own modes, minus create and
+ * edit for read-only query sources (all modes while no form is chosen).
+ */
+export function embeddableModes(form: DesignForm | null | undefined): FormMode[] {
+  if (!form) return [...FORM_MODES];
+  const readOnly = form.source?.kind === "query";
+  return form.modes.filter((m) => !(readOnly && (m === "create" || m === "edit")));
 }

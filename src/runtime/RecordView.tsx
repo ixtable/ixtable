@@ -3,7 +3,7 @@ import { runAction } from "../automation/runner";
 import type { DesignControl, DesignForm, FormMode } from "../design/schema";
 import { isInputKind } from "../design/schema";
 import { useDocumentConfig } from "../lib/config-store";
-import { deleteRecord, insertRecord, updateRecord } from "../lib/records";
+import { CommittedWriteError, deleteRecord, insertRecord, updateRecord } from "../lib/records";
 import type { DataValue, TableSchema } from "../lib/types";
 import { useConfirm } from "./Confirm";
 import { type BodyContext, ControlGrid } from "./FormBody";
@@ -41,6 +41,8 @@ type Props = {
   onClose: () => void;
   onNavigate: (target: { kind: string; id: string; mode?: string; recordId?: unknown }) => void;
   onNotify?: (text: string, tone: Notice["tone"]) => void;
+  /** Told whether edit mode holds unsaved changes. */
+  onDirty?: (dirty: boolean) => void;
 };
 
 const message = (reason: unknown) => {
@@ -60,6 +62,7 @@ export function RecordView({
   onClose,
   onNavigate,
   onNotify,
+  onDirty,
 }: Props) {
   const { config } = useDocumentConfig();
   const runtime = useRuntimeNavigation();
@@ -140,7 +143,15 @@ export function RecordView({
       };
     }
     if (!table) {
-      setRecord((recordId as RecordValues) ?? {});
+      // A query-sourced form receives its whole row, never a key.
+      const row =
+        recordId != null && typeof recordId === "object" ? (recordId as RecordValues) : null;
+      setRecord(row ?? {});
+      if (recordId != null && !row)
+        setStatus({
+          text: "This form shows query rows, so it cannot open a record by id.",
+          tone: "error",
+        });
       done();
       return () => {
         live = false;
@@ -181,6 +192,19 @@ export function RecordView({
       schema.columns.filter((c) => c.primaryKeyPosition > 0).forEach((c) => set.add(c.name));
     return set;
   }, [link, mode, schema]);
+
+  const dirty =
+    mode === "edit" &&
+    !loading &&
+    Object.keys(record).some((k) => !sameValue(record[k], original[k]));
+  const onDirtyRef = useRef(onDirty);
+  useEffect(() => {
+    onDirtyRef.current = onDirty;
+  });
+  useEffect(() => {
+    onDirtyRef.current?.(dirty);
+  }, [dirty]);
+  useEffect(() => () => onDirtyRef.current?.(false), []);
 
   const setField = useCallback((column: string, value: unknown) => {
     setRecord((current) => ({ ...current, [column]: value }));
@@ -234,6 +258,19 @@ export function RecordView({
     else runtime.notify(text, tone);
   };
 
+  /**
+   * Runs a write; when it committed but a sync trigger failed, reports that and
+   * returns the committed result so the form moves on as after a clean save.
+   */
+  const committed = async <T,>(run: () => Promise<T>): Promise<{ result: T; problem?: string }> => {
+    try {
+      return { result: await run() };
+    } catch (e) {
+      if (!(e instanceof CommittedWriteError)) throw e;
+      return { result: e.results[0] as T, problem: `Saved. ${e.message}` };
+    }
+  };
+
   const save = async () => {
     const result = validateForm(form, scope);
     setErrors(result);
@@ -259,13 +296,15 @@ export function RecordView({
         const columns = def.columns.filter(
           (c) => !keys.has(c.name) && values[c.name] != null && !c.generated,
         );
-        const id = await insertRecord(table, namedValues(values, columns));
+        const { result: id, problem } = await committed(() =>
+          insertRecord(table, namedValues(values, columns)),
+        );
         const keyNames = def.columns.filter((c) => c.primaryKeyPosition > 0).map((c) => c.name);
         const saved = { ...values };
         keyNames.forEach((name, i) => {
           if (saved[name] == null) saved[name] = fromDataValue(id[i]);
         });
-        announce("Record created.");
+        announce(problem ?? "Record created.", problem ? "error" : "info");
         if (embedded) onClose();
         else onMode("detail", recordIdFor(def, saved, id));
       } else {
@@ -274,12 +313,15 @@ export function RecordView({
         const changed = def.columns.filter(
           (c) => !c.generated && c.name in values && !sameValue(values[c.name], original[c.name]),
         );
-        if (changed.length)
-          await updateRecord(table, namedValues(values, changed), identity, {
-            expected: expectedValues(),
-            old: original,
-          });
-        announce("Changes saved.");
+        const { problem } = changed.length
+          ? await committed(() =>
+              updateRecord(table, namedValues(values, changed), identity, {
+                expected: expectedValues(),
+                old: original,
+              }),
+            )
+          : {};
+        announce(problem ?? "Changes saved.", problem ? "error" : "info");
         if (embedded) onClose();
         else onMode("detail", recordId);
       }
@@ -310,6 +352,7 @@ export function RecordView({
     const result = await runAction(control.actionId, {
       config,
       record: { ...record },
+      ...(mode !== "create" && table && { snapshot: { ...original } }),
       form: formState,
       app,
       navigate: (target) => onNavigate(target),

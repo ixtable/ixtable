@@ -74,6 +74,25 @@ connection string). Saved queries
 use `$name` placeholders. `queries::params` rewrites them to DuckDB
 parameters and binds the values, so values are never spliced into SQL text.
 
+Forms whose source is a saved query page through `run_saved_query_page`
+(`queries::page`). Like `run_saved_query`, it first checks that a runtime role
+may read the query (`authz::check`). The saved SQL runs as a subquery
+(`SELECT * FROM (<sql>) AS ixt_page`), and the filters, sort, `LIMIT`/`OFFSET`
+wrap it in DuckDB, and a `count(*) OVER ()` column returns the exact total with
+the page, so the saved query runs once per page (a separate count runs only
+for an empty page past the first). There is no row cap, and the total counts
+every matching row. Sort and filter columns must be result columns of the
+query and are quoted; an unknown name is reported after a `LIMIT 0` probe.
+An `in` filter binds each candidate (`col IN ($n, …)`) and an empty list
+matches nothing, as on table pages.
+Text search on tables and saved queries is the same case-insensitive `ILIKE`,
+with `\`, `%` and `_` in the typed text escaped so they match literally. Filter values, limit and offset bind as
+further positional parameters after the query's own, so the same guard and
+binding rules apply. Without a sort, the order is whatever the saved query
+produces. The form binds each query parameter to an expression over `app` and
+the page `params`, which TypeScript evaluates (`sourceParams` in
+`src/runtime/data.ts`).
+
 ### Pinned extensions
 
 - `duckdb` is pinned to `=1.10505.0` with the `bundled` feature, which embeds

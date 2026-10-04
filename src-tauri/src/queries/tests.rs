@@ -1,7 +1,7 @@
 use super::*;
 use serde_json::json;
 
-fn conn() -> duckdb::Connection {
+pub(super) fn conn() -> duckdb::Connection {
     let c = duckdb::Connection::open_in_memory().unwrap();
     c.execute_batch(
         "CREATE TABLE orders(id INTEGER, customer TEXT, amount DOUBLE, paid BOOLEAN, placed DATE, placed_at TIMESTAMP);
@@ -13,7 +13,7 @@ fn conn() -> duckdb::Connection {
     .unwrap();
     c
 }
-fn param(
+pub(super) fn param(
     name: &str,
     t: &str,
     default: Option<serde_json::Value>,
@@ -26,7 +26,7 @@ fn param(
         required,
     }
 }
-fn nv(name: &str, value: DataValue) -> NamedValue {
+pub(super) fn nv(name: &str, value: DataValue) -> NamedValue {
     NamedValue {
         column: name.into(),
         value,

@@ -1,4 +1,5 @@
 import { useEffect, useId, useState } from "react";
+import { DialogFrame } from "../components/DialogFrame";
 import { saveDocument } from "../lib/api";
 import { archiveSizeReport } from "../persistence/api";
 import type { ArchiveSizeReport } from "../persistence/types";
@@ -123,7 +124,13 @@ export function VersionsPanel({ app, revision }: { app: CloudApp | null; revisio
         </ul>
       )}
       {pending && (
-        <div className="cloud-dialog" role="dialog" aria-label="Restore warning">
+        <DialogFrame
+          className="cloud-dialog"
+          role="dialog"
+          aria-label="Restore warning"
+          busy={busy}
+          onClose={() => setPending(null)}
+        >
           <h3>PostgreSQL records are not restored</h3>
           <p>
             {pending.target.warning ??
@@ -138,11 +145,11 @@ export function VersionsPanel({ app, revision }: { app: CloudApp | null; revisio
             >
               Restore definition only
             </button>
-            <button type="button" disabled={busy} onClick={() => setPending(null)}>
+            <button type="button" data-autofocus disabled={busy} onClick={() => setPending(null)}>
               Cancel
             </button>
           </div>
-        </div>
+        </DialogFrame>
       )}
       {app.backupsEnabled && (
         <div className="cloud-actions">

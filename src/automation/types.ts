@@ -24,7 +24,8 @@ export type StepBody =
   | { kind: "navigate"; target: NavigateTarget }
   | { kind: "openForm"; formId: string; mode?: string; recordId?: Expr }
   | { kind: "openReport"; reportId: string; params?: ValueMap }
-  | { kind: "openDashboard"; dashboardId: string }
+  /** `params` become the dashboard's initial filter values (by parameter name) and `params` scope. */
+  | { kind: "openDashboard"; dashboardId: string; params?: ValueMap }
   | { kind: "setState"; scope: "app" | "form"; key: string; value: Expr }
   | { kind: "confirm"; message: Expr }
   | { kind: "message"; text: Expr; tone?: "info" | "error" }

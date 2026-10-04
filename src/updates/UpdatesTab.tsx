@@ -1,5 +1,6 @@
 import { useContext, useState } from "react";
 import { documentState } from "../persistence/api";
+import { DialogFrame } from "../components/DialogFrame";
 import { ShellContext } from "../shell/context";
 import { UpdatesPanel } from "./UpdatesPanel";
 
@@ -49,9 +50,14 @@ export function UpdatesTab() {
   return (
     <>
       {pending && (
-        <div
+        <DialogFrame
           className="updates-confirm"
           role="alertdialog"
+          aria-modal="true"
+          busy={saving}
+          onClose={() => {
+            answer(false).catch(() => undefined);
+          }}
           aria-labelledby="updates-confirm-title"
           aria-describedby="updates-confirm-text"
         >
@@ -62,14 +68,20 @@ export function UpdatesTab() {
               : "ixtable relaunches after installing. Your unsaved changes are saved first."}
           </p>
           <div className="settings-actions">
-            <button className="save" disabled={saving} onClick={() => answer(true)}>
+            <button
+              type="button"
+              className="save"
+              data-autofocus
+              disabled={saving}
+              onClick={() => answer(true)}
+            >
               Save and install
             </button>
-            <button disabled={saving} onClick={() => answer(false)}>
+            <button type="button" disabled={saving} onClick={() => answer(false)}>
               Cancel
             </button>
           </div>
-        </div>
+        </DialogFrame>
       )}
       <UpdatesPanel beforeInstall={beforeInstall} />
     </>

@@ -148,6 +148,9 @@ pub struct DashboardComponent {
     pub form_id: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub mode: Option<FormMode>,
+    /// form (detail, edit): record id expression over `params` and `app`; blank opens the source's first row.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub record_id: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub report_id: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -427,7 +430,18 @@ impl Checker<'_> {
                     ),
                 },
                 ComponentKind::Form => match &c.form_id {
-                    Some(f) if config.design.forms.iter().any(|x| &x.id == f) => {}
+                    Some(f) if config.design.forms.iter().any(|x| &x.id == f) => {
+                        let form = config.design.forms.iter().find(|x| &x.id == f);
+                        if let (Some(form), Some(mode)) = (form, c.mode) {
+                            if !form_supports(form, mode) {
+                                self.warning(
+                                    kind,
+                                    id,
+                                    format!("\"{title}\" opens its form in a mode the form does not support"),
+                                );
+                            }
+                        }
+                    }
                     Some(_) => self.error(
                         kind,
                         id,
@@ -445,7 +459,24 @@ impl Checker<'_> {
                     None => self.warning(kind, id, format!("\"{title}\" has no report")),
                 },
                 ComponentKind::Button => match &c.action_id {
-                    Some(a) if config.actions.iter().any(|x| &x.id == a) => {}
+                    Some(a) if config.actions.iter().any(|x| &x.id == a) => {
+                        let action = config.actions.iter().find(|x| &x.id == a);
+                        let sets_form = action.is_some_and(|action| {
+                            crate::automation::all_steps(&action.steps).iter().any(|s| {
+                                s.kind == "setState"
+                                    && s.fields.get("scope").and_then(|v| v.as_str())
+                                        == Some("form")
+                            })
+                        });
+                        // A warning: the step may sit in a branch that never runs here.
+                        if sets_form {
+                            self.warning(
+                                kind,
+                                id,
+                                format!("button \"{title}\" runs an action that sets form state, but a dashboard button has no form"),
+                            );
+                        }
+                    }
                     Some(_) => self.error(
                         kind,
                         id,
@@ -457,6 +488,16 @@ impl Checker<'_> {
             }
         }
     }
+}
+
+/// Whether an embedded form can open in `mode`: the form offers it, and query
+/// sources (read-only) only list and show records.
+fn form_supports(form: &crate::design::Form, mode: FormMode) -> bool {
+    let read_only = form
+        .source
+        .as_ref()
+        .is_some_and(|s| s.kind == crate::design::SourceKind::Query);
+    form.modes.contains(&mode) && !(read_only && matches!(mode, FormMode::Create | FormMode::Edit))
 }
 
 fn component_queries<'a>(

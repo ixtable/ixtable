@@ -183,6 +183,38 @@ fn reader_runs_without_external_access() {
 }
 
 #[test]
+fn like_patterns_escape_wildcards() {
+    assert_eq!(like_pattern("50%", true), "%50\\%%");
+    assert_eq!(like_pattern("a_b\\c", false), "a\\_b\\\\c%");
+}
+
+#[test]
+fn table_page_search_is_case_insensitive_and_literal() {
+    let workspace = std::env::temp_dir().join(format!("ixtable-search-{}", uuid::Uuid::new_v4()));
+    std::fs::create_dir_all(&workspace).unwrap();
+    rusqlite::Connection::open(workspace.join("data.db"))
+        .unwrap()
+        .execute_batch(
+            "CREATE TABLE t(id INTEGER PRIMARY KEY, v TEXT);
+             INSERT INTO t VALUES (1,'50% off'),(2,'500 units'),(3,'a_b'),(4,'axb'),(5,'ACME');",
+        )
+        .unwrap();
+    let reader = ReadRuntime::for_test(&workspace).unwrap();
+    let search = |text: &str| {
+        let filters = [Filter {
+            column: "v".into(),
+            operator: FilterOperator::Contains,
+            value: Some(DataValue::Text(text.into())),
+            values: None,
+        }];
+        reader.page("t", 0, 10, &[], &filters).unwrap().total
+    };
+    assert_eq!(search("50%"), 1);
+    assert_eq!(search("a_b"), 1);
+    assert_eq!(search("acme"), 1);
+}
+
+#[test]
 fn in_filters_match_any_listed_value_and_nothing_when_empty() {
     let dir = std::env::temp_dir().join(format!("ixtable-in-{}", uuid::Uuid::new_v4()));
     std::fs::create_dir_all(&dir).unwrap();

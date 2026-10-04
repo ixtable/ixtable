@@ -37,8 +37,9 @@ on. The import is then resolved only if a dialog is shown, which tests never do.
 
 ## Not yet verified
 
-None of this has run on Windows. The Windows golden job now prints the bridge
-DLL's imports with `dumpbin /imports` (non-blocking). If the load still fails, that
+None of this has run on Windows, so the delay-load fix is pending Windows CI
+verification. The Windows `test` and golden jobs both print the bridge
+DLL's imports with `dumpbin /imports` (non-blocking), right after the bridge build. If the load still fails, that
 output names the DLL and function. If the cause is not `comctl32`, delay-load that
 DLL in the same way or remove the import. We also checked directory renames and
 open handles in the installation paths (`install_fresh`, `update_existing`,

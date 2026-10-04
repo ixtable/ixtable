@@ -549,6 +549,7 @@ impl RecordStore for PostgresRecordStore {
             .health
             .push(format!("unvalidated constraints: {unvalidated}"));
         for (record_sql, binds) in record {
+            let binds = crate::recordstore::resolve_binds(binds, &report.health);
             let params: Vec<&(dyn ToSql + Sync)> =
                 binds.iter().map(|b| b as &(dyn ToSql + Sync)).collect();
             tx.execute(&numbered(record_sql), &params).map_err(pe)?;

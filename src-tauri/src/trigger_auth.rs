@@ -11,7 +11,8 @@
 //! (and on the reads those steps need); Rust accepts the write without role
 //! checks only when the grant is live for this window and the trigger is
 //! enabled, runs as the app and declares a step with that id, table and
-//! operation (nested branches and called actions included). The runner
+//! operation (nested branches, called actions, and the custom action an
+//! update or delete of a `customAction` entity is routed to included). The runner
 //! releases the grant when the trigger finishes, so it is single use. Async
 //! app-mode jobs authorize with the job id and its current lease token
 //! instead. A modified client can still choose the values written, but only
@@ -127,7 +128,19 @@ fn step_kind(op: Op) -> Option<&'static str> {
     }
 }
 
-/// Every step the action runs, following condition branches and runAction calls.
+/// The action an update or delete step runs instead of writing, when its table
+/// uses the `customAction` concurrency policy (src/automation/custom.ts).
+fn routed_action(config: &DocumentConfig, step: &Step) -> Option<String> {
+    if !matches!(step.kind.as_str(), "updateRecord" | "deleteRecord") {
+        return None;
+    }
+    crate::recordstore::entity_policy(config, step_table(step))
+        .filter(|e| e.concurrency == "customAction")
+        .and_then(|e| e.action_id.clone())
+}
+
+/// Every step the action runs, following condition branches, runAction calls
+/// and the custom actions its updates and deletes are routed to.
 pub fn action_steps(config: &DocumentConfig, action_id: &str) -> Vec<Step> {
     let mut out = vec![];
     let mut seen = HashSet::new();
@@ -145,6 +158,7 @@ pub fn action_steps(config: &DocumentConfig, action_id: &str) -> Vec<Step> {
                     queue.push(child.to_string());
                 }
             }
+            queue.extend(routed_action(config, &step));
             out.push(step);
         }
     }
@@ -289,6 +303,9 @@ pub fn needed_grants(config: &DocumentConfig, trigger: &Trigger) -> Vec<(String,
             "runQuery" => out.push(("query".into(), field("queryId"), Op::Read)),
             "runAction" => out.push(("action".into(), field("actionId"), Op::Execute)),
             _ => {}
+        }
+        if let Some(custom) = routed_action(config, &step) {
+            out.push(("action".into(), custom, Op::Execute));
         }
     }
     out

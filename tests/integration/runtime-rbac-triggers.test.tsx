@@ -1,7 +1,8 @@
 import { invoke } from "@tauri-apps/api/core";
 import { afterEach, beforeEach, expect, it } from "vitest";
 import { browserContext } from "../../src/automation/context";
-import { installTriggers } from "../../src/automation/triggers";
+import { installCustomActions } from "../../src/automation/custom";
+import { installTriggers, type TriggerEnv } from "../../src/automation/triggers";
 import { asTauriError } from "../../src/lib/api";
 import { insertRecord, updateRecord } from "../../src/lib/records";
 import type { DocumentConfig } from "../../src/lib/types";
@@ -11,6 +12,10 @@ import { value } from "./helpers";
 const W = "main";
 let config: DocumentConfig;
 let uninstall: () => void = () => undefined;
+const env: TriggerEnv = {
+  getConfig: () => config,
+  context: (base) => browserContext(config, () => undefined, base),
+};
 
 const table = (name: string, columns: string[]) =>
   invoke("create_database_table", {
@@ -119,10 +124,7 @@ beforeEach(async () => {
   await invoke("update_document_config", { windowLabel: W, config });
   await invoke("set_runtime_role_preview", { windowLabel: W, roleId: "clerk" });
   setPreviewedRole("clerk");
-  uninstall = installTriggers({
-    getConfig: () => config,
-    context: (base) => browserContext(config, () => undefined, base),
-  });
+  uninstall = installTriggers(env);
 });
 
 afterEach(async () => {
@@ -186,6 +188,72 @@ it("user-mode triggers refuse the initiating save up front", async () => {
   expect(error?.message).toContain("Stock on change");
   expect(error?.message).toContain("inventory");
   expect(await rows("orders")).toEqual(before);
+});
+
+const routeTo = async (table: string, action: DocumentConfig["actions"][number]) => {
+  config = {
+    ...config,
+    actions: [...config.actions, action],
+    entities: config.entities.map((e) =>
+      e.table === table ? { ...e, concurrency: "customAction", actionId: action.id } : e,
+    ),
+  };
+  await invoke("update_document_config", { windowLabel: W, config });
+};
+
+it("app-mode trigger writes routed to a custom action run under the trigger's grant", async () => {
+  await routeTo("inventory", {
+    id: "a-guard",
+    name: "Guard stock",
+    onError: "stop",
+    steps: [
+      {
+        id: "g-upd",
+        kind: "updateRecord",
+        table: "inventory",
+        match: "current",
+        values: { qty: "record.qty" },
+      },
+      { id: "g-log", kind: "createRecord", table: "audit_log", values: { message: "'guarded'" } },
+    ],
+  });
+  await insertRecord("orders", [text("status", "new")]);
+  expect(await rows("inventory")).toEqual([[1, "9"]]);
+  expect(await rows("audit_log")).toEqual([
+    [1, "guarded"],
+    [2, "ok"],
+  ]);
+});
+
+it("Rust authorizes the writes of a custom action a save is routed to", async () => {
+  await insertRecord("orders", [text("status", "new")]);
+  config = { ...config, triggers: [] };
+  await routeTo("orders", {
+    id: "a-order",
+    name: "Guard order",
+    onError: "rollback",
+    steps: [
+      {
+        id: "o-upd",
+        kind: "updateRecord",
+        table: "orders",
+        match: "current",
+        values: { status: "record.status" },
+      },
+      { id: "o-log", kind: "createRecord", table: "audit_log", values: { message: "'changed'" } },
+    ],
+  });
+  const before = [await rows("orders"), await rows("audit_log")];
+  const uninstallCustom = installCustomActions(env);
+  const error = await updateRecord("orders", [text("status", "changed")], [value("integer", 1)], {
+    expected: [text("status", "new")],
+  }).then(
+    () => null,
+    (e: unknown) => (e instanceof Error ? e.message : String(e)),
+  );
+  uninstallCustom();
+  expect(error).toMatch(/cannot create table "audit_log"/);
+  expect([await rows("orders"), await rows("audit_log")]).toEqual(before);
 });
 
 it("gates checkpoints, installation reset and schema listing by role", async () => {

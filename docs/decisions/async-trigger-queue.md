@@ -48,8 +48,9 @@ Each trigger has `runAs`: `app` (the default when absent) or `user`.
   (`read_table_page`, `inspect_table`). Rust (`src-tauri/src/trigger_auth.rs`)
   accepts it without role checks only when the grant is live for that
   window, the trigger is enabled and runs as the app, and the action
-  declares a step with that id, table and operation (condition branches and
-  called actions included). The runner releases the grant when the trigger
+  declares a step with that id, table and operation (condition branches,
+  called actions, and the custom action that an update or delete of a
+  `customAction` entity is routed to included). The runner releases the grant when the trigger
   finishes (`release_trigger_grant`), so it is single use. Async app-mode
   jobs present their job id and current lease token instead; Rust checks the
   lease is live (`JobStore::active_lease`) and belongs to that trigger.
@@ -57,7 +58,8 @@ Each trigger has `runAs`: `app` (the default when absent) or `user`.
 - **user**: steps run under the user's role, as before. Rust refuses the
   initiating insert or update before it commits when the role lacks a
   permission the trigger's steps need (action execute, table operations,
-  saved query reads), naming the trigger and the missing grants. The
+  saved query reads, and the routed custom actions of `customAction`
+  entities), naming the trigger and the missing grants. The
   trigger's condition is not evaluated in Rust, so the check applies even
   when the condition would skip the trigger. The Roles settings tab warns
   about user-mode triggers a role cannot run.

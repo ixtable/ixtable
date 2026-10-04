@@ -290,6 +290,8 @@ async function runCustom(
 ) {
   if (frame.stack.length >= MAX_ACTION_DEPTH)
     throw new Error(`Actions nested deeper than ${MAX_ACTION_DEPTH}`);
+  // Like a form save routed to it (src/automation/custom.ts), the role must be allowed to run it.
+  authorize(frame, "action", action.id, "execute");
   const scope = customScope(request);
   const child: Frame = {
     ...frame,

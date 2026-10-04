@@ -13,6 +13,8 @@
  *   `params.expected` (original values the caller started from, or null).
  * A `match: current` step on the routed row sends those original values (else the
  * row as read when the write began) as its `expected`, not a fresh read.
+ * The action runs under the user's role (which must be allowed to run it), and Rust
+ * authorizes each of its writes like any other record write.
  */
 import type { RecordWrite } from "../lib/records";
 import { setRecordRouter } from "../lib/records";

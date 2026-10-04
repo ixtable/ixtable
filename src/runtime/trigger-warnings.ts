@@ -5,8 +5,17 @@ import type { Operation } from "./types";
 
 type Needed = { kind: string; id: string; op: Operation };
 
-/** Permissions a trigger's action needs, following branches and runAction calls. */
-function needed(config: Pick<DocumentConfig, "actions">, actionId: string): Needed[] {
+/** The action a `customAction` entity routes updates and deletes of `table` to. */
+const routedTo = (config: Pick<DocumentConfig, "entities">, table: string) => {
+  const entity = (config.entities ?? []).find((e) => e.table === table);
+  return entity?.concurrency === "customAction" ? entity.actionId : undefined;
+};
+
+/**
+ * Permissions a trigger's action needs, following branches, runAction calls and
+ * the custom actions its updates and deletes are routed to (trigger_auth.rs).
+ */
+function needed(config: Pick<DocumentConfig, "actions" | "entities">, actionId: string): Needed[] {
   const out: Needed[] = [{ kind: "action", id: actionId, op: "execute" }];
   const seen = new Set<string>();
   const queue = [actionId];
@@ -26,6 +35,13 @@ function needed(config: Pick<DocumentConfig, "actions">, actionId: string): Need
         out.push({ kind: "action", id: step.actionId, op: "execute" });
         queue.push(step.actionId);
       }
+      const custom =
+        (step.kind === "updateRecord" || step.kind === "deleteRecord") &&
+        routedTo(config, step.table);
+      if (custom) {
+        out.push({ kind: "action", id: custom, op: "execute" });
+        queue.push(custom);
+      }
     }
   }
   return out;
@@ -43,7 +59,7 @@ export interface TriggerGap {
  * warning may also list access a form grant would imply.
  */
 export function userTriggerGaps(
-  config: Pick<DocumentConfig, "roles" | "actions" | "triggers">,
+  config: Pick<DocumentConfig, "roles" | "actions" | "triggers" | "entities">,
   roleId: string,
 ): TriggerGap[] {
   return (config.triggers ?? [])

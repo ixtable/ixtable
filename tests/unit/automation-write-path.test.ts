@@ -256,6 +256,19 @@ describe("customAction entities", () => {
     expect(steps("update_row")).toEqual(["g3"]);
   });
 
+  it("need a role allowed to run the routed action", async () => {
+    const a = action("caller", [
+      { id: "c1", kind: "updateRecord", table: "orders", match: { id: "1" }, values: {} },
+    ]);
+    config.actions.push(a);
+    const authorize = (kind: string, id: string) => kind !== "action" || id !== "guard";
+    expect(await runAction(a, ctx({ authorize }))).toMatchObject({
+      ok: false,
+      error: expect.stringContaining("Not permitted"),
+    });
+    expect(db.rows("audit")).toHaveLength(0);
+  });
+
   it("rejects the write when the action fails", async () => {
     config.actions = [
       action("guard", [{ id: "f", kind: "fail", message: "'Use the approval form'" }]),

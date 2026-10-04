@@ -167,6 +167,13 @@ The action's own record steps write directly, with no re-routing, under its
 send `expected` like any optimistic write, so a row that changed after the
 action read it still conflicts. A failing action rejects the caller's write.
 
+Each of those writes goes through the same Rust authorization as any record
+write (`authz::check`, or a trigger grant). A custom action started by a user's
+save, or by a user-mode trigger, runs under the user's role, which must be
+allowed to run the action. Inside an app-mode trigger it runs with the
+trigger's grant: Rust counts the routed action's steps as steps the trigger
+declares (`trigger_auth::action_steps`).
+
 ### Credentials and TLS
 
 `DatasourceConfig` holds host, port, database, user, `sslmode`, schema,

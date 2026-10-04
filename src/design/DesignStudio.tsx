@@ -186,8 +186,8 @@ export function DesignStudio({ objects }: { objects: DbObject[] }) {
                   <LayoutSettings
                     layout={form.layout}
                     items={gridItems(form, null)}
-                    onChange={(layout) =>
-                      editForm(form.id, (f) => setLayout(f, null, layout), "Edit grid")
+                    onChange={(layout, renames) =>
+                      editForm(form.id, (f) => setLayout(f, null, layout, renames), "Edit grid")
                     }
                   />
                 }
@@ -204,8 +204,8 @@ export function DesignStudio({ objects }: { objects: DbObject[] }) {
                     ? (activeTabs[control.id] ?? control.tabs?.[0]?.id ?? null)
                     : undefined,
                 )}
-                onChange={(layout) =>
-                  editForm(form.id, (f) => setLayout(f, control.id, layout), "Edit grid")
+                onChange={(layout, renames) =>
+                  editForm(form.id, (f) => setLayout(f, control.id, layout, renames), "Edit grid")
                 }
               />
             )}

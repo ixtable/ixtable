@@ -1,5 +1,5 @@
 import type { DesignControl, DesignForm } from "../design/schema";
-import { isInputKind } from "../design/schema";
+import { hasEnabledState, isInputKind } from "../design/schema";
 import { check, evaluate, evaluateBoolean, formatValue } from "../expr";
 import type { RecordValues } from "./values";
 
@@ -127,9 +127,15 @@ function inherited(form: DesignForm, own: (control: DesignControl) => boolean): 
 export const visibleControls = (form: DesignForm, scope: FormScope): Set<string> =>
   inherited(form, (control) => condition(control.visibleWhen, scope));
 
-/** Container enabled state: a control is disabled when it or any ancestor container is. */
+/**
+ * Container enabled state: a control is disabled when it or any ancestor container is.
+ * `enabledWhen` on a static kind (label, image) does not apply and is ignored.
+ */
 export const enabledControls = (form: DesignForm, scope: FormScope): Set<string> =>
-  inherited(form, (control) => condition(control.enabledWhen, scope));
+  inherited(
+    form,
+    (control) => !hasEnabledState(control.kind) || condition(control.enabledWhen, scope),
+  );
 
 export type FormErrors = { fields: Record<string, string>; form: string[] };
 
@@ -153,6 +159,23 @@ export function validateForm(form: DesignForm, scope: FormScope): FormErrors {
     .filter((rule) => present(rule.expression) && !condition(rule.expression, scope, true))
     .map((rule) => rule.message || "The record is not valid.");
   return { fields, form: messages };
+}
+
+/**
+ * Columns the user cannot edit right now because their only controls are disabled (by
+ * their own `enabledWhen` or a container's). Their edits are left out of a save so the
+ * stored value is kept: a value typed before the field was disabled is never written.
+ */
+export function disabledColumns(form: DesignForm, scope: FormScope): Set<string> {
+  const enabled = enabledControls(form, scope);
+  const editable = new Set<string>();
+  const disabled = new Set<string>();
+  for (const control of form.controls) {
+    const column = control.binding?.column;
+    if (!column || !isInputKind(control.kind)) continue;
+    (enabled.has(control.id) ? editable : disabled).add(column);
+  }
+  return new Set([...disabled].filter((column) => !editable.has(column)));
 }
 
 export const hasErrors = (errors: FormErrors) =>

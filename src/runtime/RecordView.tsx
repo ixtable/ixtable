@@ -11,6 +11,7 @@ import { loadRecord, recordIdFor, tableSchema } from "./data";
 import {
   compute,
   defaultRecord,
+  disabledColumns,
   type FormErrors,
   type FormScope,
   hasErrors,
@@ -129,7 +130,8 @@ export function RecordView({
       const initial = defaultRecord(form, { form: {}, app });
       if (link) initial[link.column] = link.value;
       setRecord(initial);
-      setOriginal({});
+      // In create mode the defaults are the stored values a disabled field keeps.
+      setOriginal({ ...initial });
       setIdentity(null);
       done();
       return () => {
@@ -194,13 +196,20 @@ export function RecordView({
     });
   };
 
-  /** Record values to write: bound inputs plus derived (computed) bound fields. */
+  /**
+   * Record values to write: bound inputs plus derived (computed) bound fields. Fields whose
+   * controls are disabled keep their stored value (or default, when creating).
+   */
   const valuesToWrite = (): RecordValues => {
     const values: RecordValues = { ...record };
     for (const control of form.controls) {
       const column = control.binding?.column;
       if (column && control.computed && isInputKind(control.kind))
         values[column] = compute(control.computed, scope).value;
+    }
+    for (const column of disabledColumns(form, scope)) {
+      if (column in original) values[column] = original[column];
+      else delete values[column];
     }
     return values;
   };

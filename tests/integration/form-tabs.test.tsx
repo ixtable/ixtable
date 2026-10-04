@@ -2,7 +2,7 @@ import { join } from "node:path";
 import { screen, waitFor, within } from "@testing-library/react";
 import { invoke } from "@tauri-apps/api/core";
 import { expect, it } from "vitest";
-import { createTable, renderNewDocument } from "./helpers";
+import { createTable, readPage, renderNewDocument } from "./helpers";
 import { dialogMock } from "./setup";
 
 const LONG = { timeout: 20_000 };
@@ -94,10 +94,8 @@ async function seedTicketForm() {
   await invoke("update_document_config", { windowLabel: "main", config });
 }
 
-it("switches tabs at runtime, flags a tab with errors, and disables a section's controls", async () => {
-  const user = await renderNewDocument();
-  await seedTicketForm();
-  const archive = join(process.env.IXTABLE_STATE_DIR ?? "", "form-tabs.ixt");
+async function reopen(user: Awaited<ReturnType<typeof renderNewDocument>>, file: string) {
+  const archive = join(process.env.IXTABLE_STATE_DIR ?? "", file);
   dialogMock.save.mockResolvedValueOnce(archive);
   await user.click(screen.getByRole("button", { name: "Save project" }));
   await screen.findByText("Saved archive", {}, LONG);
@@ -105,7 +103,12 @@ it("switches tabs at runtime, flags a tab with errors, and disables a section's 
   dialogMock.open.mockResolvedValueOnce(archive);
   await user.click(await screen.findByRole("button", { name: /Open document/i }, LONG));
   await screen.findByText("Saved archive", {}, LONG);
+}
 
+it("switches tabs at runtime, flags a tab with errors, and disables a section's controls", async () => {
+  const user = await renderNewDocument();
+  await seedTicketForm();
+  await reopen(user, "form-tabs.ixt");
   await user.click(screen.getByRole("button", { name: "Runtime" }));
   await screen.findByRole("region", { name: "Application page" }, LONG);
   const nav = screen.getByRole("navigation", { name: "Application navigation" });
@@ -141,4 +144,47 @@ it("switches tabs at runtime, flags a tab with errors, and disables a section's 
   await user.keyboard("{ArrowLeft}");
   await waitFor(() => expect(generalTab).toHaveAttribute("aria-selected", "true"));
   expect(within(form).getByRole("textbox", { name: "Title" })).toHaveValue("Printer jam");
+}, 120_000);
+
+it("keeps the stored value of a field disabled after it was typed in", async () => {
+  const user = await renderNewDocument();
+  await seedTicketForm();
+  await reopen(user, "form-disabled.ixt");
+  await user.click(screen.getByRole("button", { name: "Runtime" }));
+  await screen.findByRole("region", { name: "Application page" }, LONG);
+  const nav = screen.getByRole("navigation", { name: "Application navigation" });
+  await user.click(within(nav).getByRole("button", { name: "Tickets" }));
+  const create = await screen.findByRole("form", { name: "New Ticket" }, LONG);
+  const enterPriority = async (form: HTMLElement, value: string) => {
+    await user.click(await within(form).findByRole("tab", { name: /Planning/ }, LONG));
+    const priority = within(form).getByRole("spinbutton", { name: /Priority/ });
+    await user.clear(priority);
+    await user.type(priority, value);
+  };
+  const stored = async () =>
+    (await readPage("tickets")).rows.map((row) => row.map((cell) => cell.value ?? null));
+
+  await user.type(within(create).getByRole("textbox", { name: "Title" }), "Jam");
+  await enterPriority(create, "2");
+  const notes = within(create).getByRole("textbox", { name: "Notes" });
+  await waitFor(() => expect(notes).toBeEnabled());
+  await user.type(notes, "typed while enabled");
+  await enterPriority(create, "0");
+  await waitFor(() => expect(notes).toBeDisabled());
+  await user.click(within(create).getByRole("button", { name: "Create" }));
+  await waitFor(async () => expect(await stored()).toEqual([[1, "Jam", 0, null]]), LONG);
+
+  const detail = await screen.findByRole("form", { name: "Ticket" }, LONG);
+  await within(detail).findByDisplayValue("Jam", {}, LONG);
+  await user.click(within(detail).getByRole("button", { name: "Edit" }));
+  const edit = await screen.findByRole("form", { name: "Edit Ticket" }, LONG);
+  await enterPriority(edit, "3");
+  const editNotes = within(edit).getByRole("textbox", { name: "Notes" });
+  await waitFor(() => expect(editNotes).toBeEnabled());
+  await user.type(editNotes, "also typed");
+  await enterPriority(edit, "0");
+  await waitFor(() => expect(editNotes).toBeDisabled());
+  await user.click(within(edit).getByRole("button", { name: "Save" }));
+  await screen.findByRole("form", { name: "Ticket" }, LONG);
+  expect(await stored()).toEqual([[1, "Jam", 0, null]]);
 }, 120_000);

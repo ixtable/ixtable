@@ -82,6 +82,7 @@ it("edits tracks, alignment and regions, and hides 'Enabled when' on static cont
   expect(properties().getByRole("textbox", { name: "Visible when" })).toBeInTheDocument();
   await user.selectOptions(properties().getByRole("combobox", { name: "Region" }), "region1");
   await waitFor(async () => expect((await control("label"))?.placement.region).toBe("region1"));
+  expect(properties().getByRole("spinbutton", { name: "Column span" })).toBeDisabled();
 
   await user.click(screen.getByRole("button", { name: "Add Section" }));
   expect(properties().getByRole("textbox", { name: "Enabled when" })).toBeInTheDocument();
@@ -89,8 +90,57 @@ it("edits tracks, alignment and regions, and hides 'Enabled when' on static cont
   await user.click(properties().getByRole("button", { name: "Back to form properties" }));
   const span = properties().getByRole("spinbutton", { name: "Region 1 column span" });
   await user.type(span, "0");
-  const problems = await screen.findByRole("list", { name: "Grid problems" }, LONG);
-  expect(problems).toHaveTextContent(/region region1/);
+  await user.tab();
+  await waitFor(async () =>
+    expect((await readForm()).layout.namedRegions[0]).toMatchObject({ columnSpan: 12 }),
+  );
+}, 120_000);
+
+it("renames and removes a region a control uses and keeps the document saveable", async () => {
+  const user = await renderNewDocument();
+  await openDesigner(user);
+  await user.click(properties().getByRole("button", { name: "Add region" }));
+  await user.click(screen.getByRole("button", { name: "Add Text" }));
+  await user.selectOptions(properties().getByRole("combobox", { name: "Region" }), "region1");
+  await waitFor(async () => expect((await control("label"))?.placement.region).toBe("region1"));
+
+  await user.click(properties().getByRole("button", { name: "Back to form properties" }));
+  const name = properties().getByRole("textbox", { name: "Region 1 name" });
+  await user.clear(name);
+  await user.tab();
+  expect(await properties().findByRole("alert", {}, LONG)).toHaveTextContent(
+    "Region name is required.",
+  );
+  await user.type(name, "header{Enter}");
+  await waitFor(async () => {
+    const form = await readForm();
+    expect(form.layout.namedRegions.map((r) => r.name)).toEqual(["header"]);
+    expect(form.controls.find((c) => c.kind === "label")?.placement.region).toBe("header");
+  }, LONG);
+
+  await user.selectOptions(properties().getByLabelText("Horizontal alignment"), "end");
+  await waitFor(async () => expect((await readForm()).layout.justifyItems).toBe("end"), LONG);
+
+  await user.click(properties().getByRole("button", { name: "Remove region 1" }));
+  await waitFor(async () => {
+    const form = await readForm();
+    expect(form.layout.namedRegions).toEqual([]);
+    expect(form.controls.find((c) => c.kind === "label")?.placement.region ?? null).toBeNull();
+  }, LONG);
+  await user.selectOptions(properties().getByLabelText("Horizontal alignment"), "start");
+  await waitFor(async () => expect((await readForm()).layout.justifyItems).toBe("start"), LONG);
+}, 120_000);
+
+it("applies a typed span on blur instead of snapping each keystroke", async () => {
+  const user = await renderNewDocument();
+  await openDesigner(user);
+  await user.click(screen.getByRole("button", { name: "Add Related records" }));
+  const span = properties().getByRole("spinbutton", { name: "Column span" });
+  await user.clear(span);
+  await user.type(span, "10");
+  expect(span).toHaveValue(10);
+  await user.tab();
+  await waitFor(async () => expect((await control("relatedList"))?.placement.columnSpan).toBe(10));
 }, 120_000);
 
 it("picks an image asset by its stable id and previews it", async () => {

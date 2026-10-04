@@ -4,6 +4,7 @@ import type { DbObject } from "../lib/types";
 import { resizePlacement } from "../grid/engine";
 import { AssetPicker } from "./AssetPicker";
 import { controlConstraints } from "./constraints";
+import { DraftInput } from "./DraftInput";
 import { ExpressionField } from "./ExpressionField";
 import { clampPlacement, moveToContainer, removeControl } from "./operations";
 import {
@@ -12,6 +13,7 @@ import {
   controlKindLabel,
   type DesignControl,
   type DesignForm,
+  hasEnabledState,
   isInputKind,
 } from "./schema";
 import { ColumnSelect, RelatedListProperties, TabsProperties } from "./KindProperties";
@@ -19,8 +21,6 @@ import { RegionPicker } from "./RegionEditor";
 import { useColumns } from "./useColumns";
 import { useDesignEditor } from "./useDesignEditor";
 
-/** Static kinds have nothing to enable or disable. */
-const hasEnabledState = (kind: DesignControl["kind"]) => kind !== "label" && kind !== "image";
 const numberOrNull = (value: string) => (value === "" ? null : Number(value));
 const parentKey = (parent?: ControlParent | null) =>
   parent ? `${parent.id}|${parent.tab ?? ""}` : "";
@@ -63,19 +63,24 @@ export function ControlProperties({
   const input = isInputKind(control.kind);
   const grid = containerLayout(form, control.parent);
   const limits = controlConstraints(control.kind, grid.columns.length);
+  const inRegion = !!control.placement.region;
+  // Applied on blur or Enter, so typing "10" is not clamped at "1" first.
   const span = (field: "column" | "row" | "columnSpan" | "rowSpan", label: string) => (
     <label>
       {label}
-      <input
+      <DraftInput
         type="number"
         min={1}
-        value={control.placement[field]}
-        onChange={(e) =>
+        disabled={inRegion}
+        value={String(control.placement[field])}
+        onCommit={(text) => {
+          const parsed = Math.round(Number(text));
+          if (text.trim() === "" || !Number.isFinite(parsed)) return "Enter a whole number.";
           change(
             {
               placement: resizePlacement(
                 clampPlacement(
-                  { ...control.placement, [field]: Math.max(1, Number(e.target.value) || 1) },
+                  { ...control.placement, [field]: Math.max(1, parsed) },
                   grid.columns.length,
                 ),
                 {},
@@ -84,8 +89,9 @@ export function ControlProperties({
               ),
             },
             "Move control",
-          )
-        }
+          );
+          return "";
+        }}
       />
     </label>
   );
@@ -156,6 +162,9 @@ export function ControlProperties({
         {span("columnSpan", "Column span")}
         {span("rowSpan", "Row span")}
       </div>
+      {inRegion && (
+        <p className="fd-hint">Placed in a region; choose None to set column and row.</p>
+      )}
       <RegionPicker
         layout={grid}
         placement={control.placement}
@@ -319,6 +328,11 @@ export function ControlProperties({
             columns={columns}
             onChange={(enabledWhen) => change({ enabledWhen })}
           />
+        )}
+        {!hasEnabledState(control.kind) && control.enabledWhen && (
+          <button type="button" onClick={() => change({ enabledWhen: null }, "Clear enabled when")}>
+            Clear unused "Enabled when"
+          </button>
         )}
         {(input || control.kind === "computed") && (
           <ExpressionField

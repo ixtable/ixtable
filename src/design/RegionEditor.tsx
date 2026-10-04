@@ -1,10 +1,7 @@
 import { Plus, Trash2 } from "lucide-react";
+import { clampRegion, type RegionRenames, regionNameProblem } from "../grid/regions";
 import type { GridLayout, NamedRegion, Placement } from "../grid/types";
-
-const whole = (value: string, fallback: number) => {
-  const parsed = Number(value);
-  return Number.isFinite(parsed) && parsed >= 1 ? Math.round(parsed) : fallback;
-};
+import { DraftInput } from "./DraftInput";
 
 /** A name not used by any region yet ("region1", "region2", ...). */
 const freshName = (regions: NamedRegion[]) => {
@@ -15,26 +12,39 @@ const freshName = (regions: NamedRegion[]) => {
 
 type NumberKey = Exclude<keyof NamedRegion, "name">;
 
-/** Editor for a layout's named regions (name, column, row, spans). */
+/**
+ * Editor for a layout's named regions (name, column, row, spans). Positions are kept inside
+ * the grid; a name is applied on blur or Enter only when it is non-empty and unique, and a
+ * rename is reported in `renames` so items placed in the region follow it.
+ */
 export function RegionEditor({
   layout,
   onChange,
 }: {
   layout: GridLayout;
-  onChange: (regions: NamedRegion[]) => void;
+  onChange: (regions: NamedRegion[], renames?: RegionRenames) => void;
 }) {
   const regions = layout.namedRegions;
-  const set = (index: number, patch: Partial<NamedRegion>) =>
-    onChange(regions.map((r, i) => (i === index ? { ...r, ...patch } : r)));
+  const columns = layout.columns.length;
+  const set = (index: number, patch: Partial<NamedRegion>, renames?: RegionRenames) =>
+    onChange(
+      regions.map((r, i) => (i === index ? clampRegion({ ...r, ...patch }, columns) : r)),
+      renames,
+    );
   const field = (index: number, key: NumberKey, label: string) => (
     <label>
       {label}
-      <input
+      <DraftInput
         type="number"
         min={1}
         aria-label={`Region ${index + 1} ${label.toLowerCase()}`}
-        value={regions[index][key]}
-        onChange={(e) => set(index, { [key]: whole(e.target.value, regions[index][key]) })}
+        value={String(regions[index][key])}
+        onCommit={(text) => {
+          const parsed = Number(text);
+          if (text.trim() === "" || !Number.isFinite(parsed)) return "Enter a whole number.";
+          set(index, { [key]: parsed });
+          return "";
+        }}
       />
     </label>
   );
@@ -45,10 +55,14 @@ export function RegionEditor({
           <div className="fd-row">
             <label>
               Name
-              <input
+              <DraftInput
                 aria-label={`Region ${index + 1} name`}
                 value={region.name}
-                onChange={(e) => set(index, { name: e.target.value })}
+                onCommit={(name) => {
+                  const problem = regionNameProblem(regions, index, name);
+                  if (!problem) set(index, { name }, { [region.name]: name });
+                  return problem;
+                }}
               />
             </label>
             <button
@@ -74,13 +88,7 @@ export function RegionEditor({
         onClick={() =>
           onChange([
             ...regions,
-            {
-              name: freshName(regions),
-              column: 1,
-              row: 1,
-              columnSpan: layout.columns.length,
-              rowSpan: 1,
-            },
+            { name: freshName(regions), column: 1, row: 1, columnSpan: columns, rowSpan: 1 },
           ])
         }
       >

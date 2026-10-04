@@ -4,6 +4,7 @@ import {
   compute,
   condition,
   defaultRecord,
+  disabledColumns,
   enabledControls,
   expressionProblem,
   hasErrors,
@@ -165,5 +166,27 @@ describe("form validation and expressions", () => {
     f.controls.push(section, { ...name, validation: { ...name.validation, required: true } });
     expect(hasErrors(validateForm(f, scope({ open: false })))).toBe(false);
     expect(Object.keys(validateForm(f, scope({ open: true })).fields)).toEqual([name.id]);
+  });
+
+  it("finds columns whose only controls are disabled", () => {
+    const f = newForm("Orders", { kind: "table", table: "orders" });
+    const a = { ...newControl("boolean", f), binding: { column: "a" } };
+    const b = { ...newControl("text", f), binding: { column: "b" }, enabledWhen: "not record.a" };
+    const section = { ...newControl("section", f), enabledWhen: "not record.a" };
+    const c = { ...newControl("text", f, { id: section.id }), binding: { column: "c" } };
+    const shared = [
+      { ...newControl("text", f, { id: section.id }), binding: { column: "d" } },
+      { ...newControl("text", f), binding: { column: "d" } },
+    ];
+    f.controls.push(a, b, section, c, ...shared);
+    expect([...disabledColumns(f, scope({ a: true }))].sort()).toEqual(["b", "c"]);
+    expect(disabledColumns(f, scope({ a: false })).size).toBe(0);
+  });
+
+  it("ignores enabledWhen on static kinds", () => {
+    const f = newForm("Orders", { kind: "table", table: "orders" });
+    const label = { ...newControl("label", f), enabledWhen: "false" };
+    f.controls.push(label);
+    expect(enabledControls(f, scope()).has(label.id)).toBe(true);
   });
 });

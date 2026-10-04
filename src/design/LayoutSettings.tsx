@@ -1,5 +1,6 @@
 import { Plus, Trash2 } from "lucide-react";
 import { validateLayout } from "../grid/engine";
+import { clampRegions, type RegionRenames } from "../grid/regions";
 import type { GridAlign, GridIssue, GridItemRef, GridLayout } from "../grid/types";
 import { resizeTracks, withColumnCount } from "./operations";
 import { RegionEditor } from "./RegionEditor";
@@ -10,24 +11,35 @@ const num = (value: string, fallback: number) => {
   return Number.isFinite(parsed) && parsed >= 0 ? Math.round(parsed) : fallback;
 };
 
+const errorCount = (layout: GridLayout) =>
+  validateLayout(layout, []).filter((issue) => issue.severity === "error").length;
+
 const ALIGNS: GridAlign[] = ["stretch", "start", "center", "end"];
 
 /**
  * Grid settings shared by the form and dashboard designers: column and row tracks, gaps,
  * padding, item alignment, named regions, and breakpoints. When `items` is given, the
  * problems `validateLayout` finds (the same rules as Rust `design::validate_layout`) are listed.
+ * Regions are kept inside the columns, and a layout with an error is never passed to
+ * `onChange`, so the editor cannot send a grid the backend would refuse.
  */
 export function LayoutSettings({
   layout,
-  onChange,
+  onChange: emit,
   title = "Grid",
   items,
 }: {
   layout: GridLayout;
-  onChange: (layout: GridLayout) => void;
+  onChange: (layout: GridLayout, renames?: RegionRenames) => void;
   title?: string;
   items?: readonly (GridItemRef & { label?: string })[];
 }) {
+  const onChange = (next: GridLayout, renames?: RegionRenames) => {
+    const clamped = { ...next, namedRegions: clampRegions(next.namedRegions, next.columns.length) };
+    // An already-invalid stored grid can still be repaired one edit at a time.
+    if (errorCount(clamped) > errorCount(layout)) return;
+    emit(clamped, renames);
+  };
   const issues = items ? validateLayout(layout, items) : [];
   const labelOf = (id: string) => items?.find((item) => item.id === id)?.label ?? id;
   const text = (issue: GridIssue) =>
@@ -118,7 +130,7 @@ export function LayoutSettings({
       <small>Named regions</small>
       <RegionEditor
         layout={layout}
-        onChange={(namedRegions) => onChange({ ...layout, namedRegions })}
+        onChange={(namedRegions, renames) => onChange({ ...layout, namedRegions }, renames)}
       />
       <small>Breakpoints</small>
       <p className="fd-hint">

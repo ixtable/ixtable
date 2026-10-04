@@ -1,4 +1,5 @@
 import type { GridLayout, GridTrack, Placement } from "../grid/types";
+import { clampRegions, type RegionRenames, remapRegion } from "../grid/regions";
 import { newId } from "../lib/utils";
 import {
   type ControlKind,
@@ -52,20 +53,27 @@ export function removeTab(form: DesignForm, tabsId: string, tabId: string): Desi
   };
 }
 
-/** Replaces a container's (or the form's) grid and clamps the controls placed on it. */
+/**
+ * Replaces a container's (or the form's) grid, keeps its regions inside the columns, and
+ * clamps the controls placed on it. Region references follow `renames`; references to a
+ * region that no longer exists are cleared, so the control uses its column and row again.
+ */
 export function setLayout(
   form: DesignForm,
   containerId: string | null,
-  layout: GridLayout,
+  next: GridLayout,
+  renames: RegionRenames = {},
 ): DesignForm {
-  const columns = layout.columns.length;
+  const columns = next.columns.length;
+  const layout = { ...next, namedRegions: clampRegions(next.namedRegions, columns) };
   return {
     ...form,
     layout: containerId ? form.layout : layout,
     controls: form.controls.map((control) => {
       const onGrid = (control.parent?.id ?? null) === containerId;
-      const next = control.id === containerId ? { ...control, layout } : control;
-      return onGrid ? { ...next, placement: clampPlacement(next.placement, columns) } : next;
+      const placement = remapRegion(control.placement, layout.namedRegions, renames);
+      const updated = control.id === containerId ? { ...control, layout } : control;
+      return onGrid ? { ...updated, placement: clampPlacement(placement, columns) } : updated;
     }),
   };
 }

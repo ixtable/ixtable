@@ -52,6 +52,16 @@ placed controls so `validateLayout` problems are listed under the settings. Each
 item's properties offer a region picker (`RegionPicker`) when the grid has named
 regions.
 
+The editor never sends a layout the backend refuses, because one refused edit
+blocks every later edit to the document until it is undone. Track sizes,
+pixel limits, region names, and control positions are typed into a local draft
+and applied on blur or Enter only when valid; the problem is shown next to the
+input otherwise. Regions are clamped to the columns (`src/grid/regions.ts`), and
+`LayoutSettings` drops any change that adds a `validateLayout` error. Renaming a
+region renames every placement that uses it in the same update; removing a
+region, or a column it no longer fits, clears or clamps it, and controls in a
+removed region fall back to their column and row (`setLayout`, `withLayout`).
+
 Rust validates layouts in `design::validate_layout` and `validate_span`. The
 dashboard module calls the same functions, so a placement that overflows the
 grid fails the same way in both. `validateLayout` in TypeScript returns the
@@ -73,10 +83,14 @@ same `Issue` shape, plus rendering warnings such as overlapping regions.
   named regions, resize and move limits, overlap detection, validation that
   mirrors the Rust errors, and serialization.
 - `tests/unit/layout-settings.test.tsx`: track, alignment, and region editing,
-  listed validation problems, and the region picker.
+  drafts that keep invalid values out, listed validation problems, and the
+  region picker.
+- `tests/unit/grid-regions.test.ts`: region clamping, renames, and cleared
+  references in forms and dashboards.
 - `tests/unit/form-constraints.test.ts`: per-kind form control limits.
 - `tests/integration/form-grid-designer.test.tsx`: keyboard resizing stops at a
-  control's limit, and grid edits reach the saved definition.
+  control's limit, grid edits reach the saved definition, and renaming or
+  removing a used region keeps the document saveable.
 - `tests/unit/grid-canvas.test.tsx`: labelled resize buttons, keyboard resize
   and move within limits, breakpoint by measured width, pointer drag snapping.
 - `src-tauri/src/design/tests.rs`: placements cannot overflow columns, and

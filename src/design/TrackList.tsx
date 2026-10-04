@@ -1,5 +1,7 @@
 import { Plus, Trash2 } from "lucide-react";
 import type { GridTrack, TrackKind } from "../grid/types";
+import { DraftInput } from "./DraftInput";
+import { parseTrackLimit, parseTrackSize } from "./trackInput";
 
 const KINDS: { kind: TrackKind; label: string }[] = [
   { kind: "fr", label: "Share (fr)" },
@@ -7,17 +9,14 @@ const KINDS: { kind: TrackKind; label: string }[] = [
   { kind: "content", label: "Fit content" },
 ];
 
-/** Blank input clears an optional pixel limit; anything else is a whole non-negative number. */
-const optional = (value: string): number | null => {
-  if (value.trim() === "") return null;
-  const parsed = Number(value);
-  return Number.isFinite(parsed) && parsed >= 0 ? Math.round(parsed) : null;
-};
-
 const defaultValue = (kind: TrackKind): number | null =>
   kind === "fixed" ? 120 : kind === "fr" ? 1 : null;
 
-/** Editor for a list of grid tracks (columns or rows): kind, size, and min/max in pixels. */
+/**
+ * Editor for a list of grid tracks (columns or rows): kind, size, and min/max in pixels.
+ * Numbers are applied on blur or Enter only when valid, so a cleared size or a minimum above
+ * the maximum is shown here instead of being saved.
+ */
 export function TrackList({
   name,
   tracks,
@@ -32,6 +31,11 @@ export function TrackList({
 }) {
   const set = (index: number, patch: Partial<GridTrack>) =>
     onChange(tracks.map((t, i) => (i === index ? { ...t, ...patch } : t)));
+  const commit = (index: number, key: "value" | "min" | "max", parsed: number | null | string) => {
+    if (typeof parsed === "string") return parsed;
+    set(index, { [key]: parsed });
+    return "";
+  };
   return (
     <div className="fd-tracks" role="group" aria-label={`${name} tracks`}>
       {tracks.map((track, index) => {
@@ -53,36 +57,30 @@ export function TrackList({
               ))}
             </select>
             {track.kind !== "content" && (
-              <input
+              <DraftInput
                 type="number"
                 min={0}
                 step={track.kind === "fr" ? 0.5 : 1}
                 aria-label={`${label} size`}
-                value={track.value ?? ""}
-                onChange={(e) => {
-                  const parsed = Number(e.target.value);
-                  const valid = e.target.value !== "" && Number.isFinite(parsed) && parsed >= 0;
-                  set(index, {
-                    value: !valid ? null : track.kind === "fixed" ? Math.round(parsed) : parsed,
-                  });
-                }}
+                value={String(track.value ?? "")}
+                onCommit={(text) => commit(index, "value", parseTrackSize(track.kind, text))}
               />
             )}
-            <input
+            <DraftInput
               type="number"
               min={0}
               placeholder="min px"
               aria-label={`${label} minimum pixels`}
-              value={track.min ?? ""}
-              onChange={(e) => set(index, { min: optional(e.target.value) })}
+              value={String(track.min ?? "")}
+              onCommit={(text) => commit(index, "min", parseTrackLimit(track, "min", text))}
             />
-            <input
+            <DraftInput
               type="number"
               min={0}
               placeholder="max px"
               aria-label={`${label} maximum pixels`}
-              value={track.max ?? ""}
-              onChange={(e) => set(index, { max: optional(e.target.value) })}
+              value={String(track.max ?? "")}
+              onCommit={(text) => commit(index, "max", parseTrackLimit(track, "max", text))}
             />
             <button
               type="button"

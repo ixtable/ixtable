@@ -1,2 +1,4 @@
+# Archive upgrade fixtures are committed bytes; never convert line endings.
+*.ixt binary
 # Golden report PDFs are compared byte for byte.
 tests/fixtures/report-goldens/** -text

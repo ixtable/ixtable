@@ -307,13 +307,19 @@ pub fn validate(config: &DocumentConfig) -> Vec<Issue> {
 }
 
 /// Writes PDF bytes produced by the TS PDF writer to `path` (Export PDF…).
+/// A runtime role must be allowed to read `report_id`.
 #[tauri::command]
 pub fn write_report_pdf(
     window_label: String,
     path: String,
     bytes_base64: String,
+    report_id: Option<String>,
 ) -> Result<(), AppError> {
     crate::manager()?.state(&window_label)?;
+    match &report_id {
+        Some(id) => crate::authz::check(&window_label, "report", id, crate::authz::Op::Read)?,
+        None => crate::authz::require_unrestricted(&window_label, "export this PDF")?,
+    }
     let bytes = base64::engine::general_purpose::STANDARD
         .decode(bytes_base64.as_bytes())
         .map_err(|e| AppError::new("VALIDATION_ERROR", format!("invalid PDF data: {e}")))?;

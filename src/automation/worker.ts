@@ -6,6 +6,7 @@
  */
 import { asTauriError } from "../lib/api";
 import type { DocumentConfig } from "../lib/types";
+import { authorizer } from "../runtime/rbac";
 import { claimNextJob, completeJob, failJob, JOBS_CHANGED_EVENT } from "./api";
 import { type ActionContext, runAction } from "./runner";
 import type { JobPayload } from "./triggers";
@@ -18,13 +19,21 @@ export interface WorkerEnv {
   onJob?(job: Job, ok: boolean): void;
 }
 
-/** A context without a user: navigation, confirmation and form state fail clearly. */
+/**
+ * A context without a user: navigation, confirmation and form state fail clearly.
+ * A user-mode job never exceeds the active role nor the role it was created under;
+ * an app-mode job (`job` given, its trigger running as the app) presents its lease
+ * to Rust instead, which allows only the writes its trigger declares.
+ */
 export function headlessContext(
   config: DocumentConfig,
   payload: Partial<JobPayload>,
   app: Record<string, unknown>,
   messages: { text: string; tone: string }[],
+  job?: Job,
 ): ActionContext {
+  const trigger = job && config.triggers?.find((t) => t.id === job.triggerId);
+  const asApp = trigger && trigger.runAs !== "user";
   const unavailable = (what: string) => () => {
     throw new Error(`${what} is not available in background jobs`);
   };
@@ -34,6 +43,15 @@ export function headlessContext(
     old: payload.old ?? undefined,
     app,
     triggerDepth: payload.triggerDepth ?? 1,
+    ...(asApp
+      ? {
+          triggerAuth: {
+            triggerId: trigger.id,
+            jobId: job.id,
+            leaseToken: job.leaseToken ?? "",
+          },
+        }
+      : { authorize: authorizer(config, payload.roleId ?? null) }),
     navigate: unavailable("Navigation"),
     confirm: async () => unavailable("Confirmation")(),
     setState: (scope) => {
@@ -61,6 +79,7 @@ export async function runNextJob(env: WorkerEnv): Promise<Job | null> {
       (job.payload ?? {}) as Partial<JobPayload>,
       env.app?.() ?? {},
       messages,
+      job,
     );
     const result = await runAction(action, ctx);
     const log = { steps: result.steps, messages };

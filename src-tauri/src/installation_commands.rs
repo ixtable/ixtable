@@ -292,11 +292,13 @@ pub fn reset_runtime_installation_data(
             "Resetting installation data needs explicit confirmation",
         ));
     }
+    crate::authz::require_unrestricted(&window_label, "reset installation data")?;
     let rt = current_runtime(&window_label)?;
     let m = crate::manager()?;
     m.close(&window_label, true)?;
     let result = installation::reset_data(&rt.dir);
-    let state = open_session(m, &window_label, &rt.dir)?;
+    // Reapply the installation's role (a cloud install would otherwise deny all).
+    let state = crate::cloud::install::open_with_role(m, &window_label, &rt.dir)?;
     result.map(|_| state)
 }
 

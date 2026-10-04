@@ -4,10 +4,27 @@ import type { TableSchema } from "../../src/lib/types";
 
 const calls = vi.hoisted(() => [] as Array<{ command: string; args: Record<string, unknown> }>);
 const schemas = vi.hoisted(() => new Map<string, unknown>());
+const role = vi.hoisted(() => ({ restricted: false }));
 vi.mock("@tauri-apps/api/core", () => ({
   invoke: async (command: string, args: Record<string, unknown>) => {
     calls.push({ command, args });
     if (command === "inspect_table") return schemas.get(String(args.table));
+    if (command === "execute_parameterized_query" && role.restricted)
+      throw { code: "FORBIDDEN", message: 'The role "Clerk" cannot run ad hoc SQL' };
+    if (command === "read_table_page") {
+      const [filter] = args.filters as Array<{ operator: string; values: { value: unknown }[] }>;
+      const ids = filter.operator === "in" ? filter.values.map((v) => Number(v.value)) : [];
+      const codes: Record<number, string> = { 1: "AC", 2: "GX" };
+      return {
+        columns: [{ name: "id" }, { name: "code" }],
+        rows: ids
+          .filter((id) => codes[id])
+          .map((id) => [
+            { type: "integer", value: id },
+            { type: "text", value: codes[id] },
+          ]),
+      };
+    }
     if (command === "execute_parameterized_query" && String(args.sql).includes("lookup_key0"))
       return {
         columns: ["lookup_key0", "lookup_key1", "lookup_display"],
@@ -52,6 +69,7 @@ const table = (name: string, columns: ReturnType<typeof column>[], fks = []): Ta
 
 beforeEach(() => {
   calls.length = 0;
+  role.restricted = false;
   schemas.set(
     "customers",
     table("customers", [
@@ -121,6 +139,20 @@ describe("runtime relationship lookups", () => {
     ]);
     await lookupLabels(lookups, rows);
     expect(calls.filter((c) => c.command === "execute_parameterized_query")).toHaveLength(1);
+  });
+
+  it("reads labels with one in-filtered read_table_page when a runtime role may not run SQL", async () => {
+    role.restricted = true;
+    const lookups = {
+      customer_id: { table: "customers", valueColumn: "id", displayColumn: "code" },
+    };
+    const labels = await lookupLabels(lookups, [{ customer_id: 1 }, { customer_id: 2 }]);
+    expect([...labels.customer_id.entries()]).toEqual([
+      ["1", "AC"],
+      ["2", "GX"],
+    ]);
+    const pages = calls.filter((c) => c.command === "read_table_page");
+    expect(pages.map((c) => c.args.table)).toEqual(["customers"]);
   });
 
   it("labels a multi-column relationship by every key column", async () => {

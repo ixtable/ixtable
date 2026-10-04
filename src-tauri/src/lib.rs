@@ -2,6 +2,7 @@ pub mod archive;
 pub mod archive_io;
 pub mod asset_data;
 pub mod assets;
+pub mod authz;
 pub mod automation;
 pub mod bundle;
 pub mod bundle_export;
@@ -26,6 +27,7 @@ pub mod reports;
 pub mod roles;
 pub mod storage;
 pub mod templates;
+pub mod trigger_auth;
 pub mod updater;
 pub mod validation;
 
@@ -115,6 +117,7 @@ fn list_attachments(window_label: String) -> Result<Vec<Attachment>, AppError> {
 }
 #[tauri::command]
 fn export_attachment(window_label: String, id: String, path: String) -> Result<(), AppError> {
+    authz::require_unrestricted(&window_label, "export attachments")?;
     manager()?.export_attachment(&window_label, &id, &PathBuf::from(path))
 }
 #[tauri::command]
@@ -150,15 +153,29 @@ fn list_recovery_sessions() -> Result<Vec<storage::RecoveryRecord>, AppError> {
 fn discard_recovery(session_id: String) -> Result<(), AppError> {
     manager()?.discard_recovery(&session_id)
 }
+/// Under a role, only the tables (and views) it may read are listed.
 #[tauri::command]
 fn list_database_objects(window_label: String) -> Result<Vec<data::DbObject>, AppError> {
-    manager()?.database_objects(&window_label)
+    let objects = manager()?.database_objects(&window_label)?;
+    manager()?.with_session(&window_label, |s| {
+        Ok(objects
+            .into_iter()
+            .filter(|o| authz::can_read_table(s, &o.name))
+            .collect())
+    })
 }
+/// `trigger` marks a read made by an app-mode trigger step (trigger_auth.rs).
 #[tauri::command]
-fn inspect_table(window_label: String, table: String) -> Result<data::TableSchema, AppError> {
+fn inspect_table(
+    window_label: String,
+    table: String,
+    trigger: Option<trigger_auth::TriggerWrite>,
+) -> Result<data::TableSchema, AppError> {
+    trigger_auth::authorize(&window_label, &table, authz::Op::Read, trigger.as_ref())?;
     manager()?.table_schema(&window_label, &table)
 }
 #[tauri::command]
+#[allow(clippy::too_many_arguments)]
 fn read_table_page(
     window_label: String,
     table: String,
@@ -166,41 +183,15 @@ fn read_table_page(
     limit: u64,
     sorts: Vec<data::Sort>,
     filters: Vec<data::Filter>,
+    trigger: Option<trigger_auth::TriggerWrite>,
 ) -> Result<data::Page, AppError> {
+    trigger_auth::authorize(&window_label, &table, authz::Op::Read, trigger.as_ref())?;
     manager()?.table_page(&window_label, &table, offset, limit, &sorts, &filters)
 }
 #[tauri::command]
 fn execute_read_query(window_label: String, sql: String) -> Result<data::QueryResult, AppError> {
+    authz::require_unrestricted(&window_label, "run ad hoc SQL")?;
     manager()?.read_query(&window_label, &sql)
-}
-#[tauri::command]
-fn insert_row(
-    window_label: String,
-    table: String,
-    values: Vec<data::NamedValue>,
-) -> Result<Vec<data::DataValue>, AppError> {
-    recordstore::insert_row(&window_label, &table, &values)
-}
-/// `expected` carries the values the user started from; entities with the
-/// optimistic policy reject the update with CONFLICT when they changed.
-#[tauri::command]
-fn update_row(
-    window_label: String,
-    table: String,
-    values: Vec<data::NamedValue>,
-    identity: Vec<data::DataValue>,
-    expected: Option<Vec<data::NamedValue>>,
-) -> Result<u64, AppError> {
-    recordstore::update_row(&window_label, &table, &values, &identity, expected)
-}
-#[tauri::command]
-fn delete_row(
-    window_label: String,
-    table: String,
-    identity: Vec<data::DataValue>,
-    expected: Option<Vec<data::NamedValue>>,
-) -> Result<u64, AppError> {
-    recordstore::delete_row(&window_label, &table, &identity, expected)
 }
 #[tauri::command]
 fn create_database_table(
@@ -363,9 +354,9 @@ pub fn run() {
             inspect_table,
             read_table_page,
             execute_read_query,
-            insert_row,
-            update_row,
-            delete_row,
+            recordstore::commands::insert_row,
+            recordstore::commands::update_row,
+            recordstore::commands::delete_row,
             create_database_table,
             alter_database_table,
             save_query,
@@ -419,11 +410,13 @@ pub fn run() {
             recordstore::commands::drop_index,
             recordstore::commands::list_indexes,
             recordstore::commands::execute_write_batch,
+            trigger_auth::release_trigger_grant,
             recordstore::commands::test_datasource_connection,
             recordstore::commands::set_datasource_password,
             recordstore::commands::clear_datasource_password,
             recordstore::commands::connect_datasource,
             // roles commands
+            authz::set_runtime_role_preview,
             // design commands
             design::validate_design,
             // queries commands

@@ -202,3 +202,51 @@ it("ignores a stale lease instead of recording a failure", async () => {
   await runNextJob({ getConfig: () => config });
   expect(failed).not.toHaveBeenCalled();
 });
+
+it("passes the write's grant to app-mode step writes and releases it afterwards", async () => {
+  config.triggers = [trigger({})];
+  const released = vi.fn();
+  db.on("release_trigger_grant", ({ grant }) => released(grant));
+  const base = db.invoke.bind(db);
+  db.invoke = async (command, args = {}) => {
+    const result = await base(command, args);
+    return command === "insert_row" && args.table === "orders"
+      ? { ...(result as object), triggerGrant: "g-1" }
+      : result;
+  };
+  await insertRecord("orders", [{ column: "status", value: text("open") }]);
+  const step = db.calls.find(
+    (c) => c.command === "insert_row" && c.args.table === "audit",
+  );
+  expect(step?.args.trigger).toEqual({ triggerId: "t1", grant: "g-1", stepId: "s1" });
+  expect(released).toHaveBeenCalledWith("g-1");
+});
+
+it("runs user-mode triggers without trigger auth", async () => {
+  config.triggers = [trigger({ runAs: "user" })];
+  await insertRecord("orders", [{ column: "status", value: text("open") }]);
+  const step = db.calls.find(
+    (c) => c.command === "insert_row" && c.args.table === "audit",
+  );
+  expect(step?.args.trigger).toBeNull();
+});
+
+it("app-mode jobs present their lease on step writes", async () => {
+  config.triggers = [trigger({ mode: "async" })];
+  await insertRecord("orders", [{ column: "status", value: text("open") }]);
+  const job = db.jobs[0];
+  db.on("claim_next_job", () =>
+    job.status === "queued" ? ((job.status = "running"), { ...job, leaseToken: "1:abc" }) : null,
+  );
+  db.on("complete_job", () => job);
+  await runNextJob({ getConfig: () => config });
+  const step = db.calls.find(
+    (c) => c.command === "insert_row" && c.args.table === "audit",
+  );
+  expect(step?.args.trigger).toEqual({
+    triggerId: "t1",
+    jobId: "job1",
+    leaseToken: "1:abc",
+    stepId: "s1",
+  });
+});

@@ -1,4 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
+import type { TriggerStepAuth } from "./records";
 import type {
   DbObject,
   DbPage,
@@ -77,10 +78,13 @@ export const applyDocumentConfigYaml = (yaml: string) =>
 export const validateDocument = () => call<Issue[]>("validate_document");
 
 export const listDatabaseObjects = () => call<DbObject[]>("list_database_objects");
-export const inspectTable = (table: string) => call<TableSchema>("inspect_table", { table });
+/** `trigger` marks a read made by an app-mode trigger step (src-tauri/src/trigger_auth.rs). */
+export const inspectTable = (table: string, trigger?: TriggerStepAuth) =>
+  call<TableSchema>("inspect_table", { table, ...(trigger && { trigger }) });
 export const readTablePage = (
   table: string,
   options: { offset?: number; limit?: number; sorts?: Sort[]; filters?: Filter[] } = {},
+  trigger?: TriggerStepAuth,
 ) =>
   call<DbPage>("read_table_page", {
     table,
@@ -88,5 +92,6 @@ export const readTablePage = (
     limit: options.limit ?? 100,
     sorts: options.sorts ?? [],
     filters: options.filters ?? [],
+    ...(trigger && { trigger }),
   });
 export const executeReadQuery = (sql: string) => call<QueryResult>("execute_read_query", { sql });

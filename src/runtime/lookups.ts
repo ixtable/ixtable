@@ -2,8 +2,9 @@ import { useEffect, useState } from "react";
 import { kindForColumn } from "../design/generate";
 import type { DesignControl, Relationship } from "../design/schema";
 import { registerRecordHook } from "../lib/records";
-import type { TableSchema } from "../lib/types";
-import { runQuerySql } from "../query/api";
+import type { DataValue, TableSchema } from "../lib/types";
+import { asTauriError, readTablePage } from "../lib/api";
+import { runQuerySql, toDataValue } from "../query/api";
 import { tableSchema } from "./data";
 import { fromDataValue, type RecordValues } from "./values";
 
@@ -75,6 +76,37 @@ export async function columnLookups(
   return Object.fromEntries(entries.filter((e): e is [string, Relationship] => !!e));
 }
 
+/**
+ * The rows `labelQuery` returns (key columns, then display), read with one `in` filtered
+ * `read_table_page` for a runtime role (Rust refuses it ad hoc SQL but authorizes lookup
+ * table reads). Composite keys filter on their first column, then match the rest here.
+ */
+async function labelsByKey(lookup: Relationship, column: string, rows: RecordValues[]) {
+  const pairs = compositeKeys(lookup) ?? [{ column, target: lookup.valueColumn }];
+  const page = await readTablePage(lookup.table, {
+    limit: pairs.length > 1 ? 1000 : rows.length,
+    filters: [
+      {
+        column: pairs[0].target,
+        operator: "in",
+        values: rows.map((row) => toDataValue(row[pairs[0].column])),
+      },
+    ],
+  });
+  const at = (row: DataValue[], name: string) =>
+    row[page.columns.findIndex((c) => c.name === name)];
+  const wanted = new Set(
+    rows.map((row) => JSON.stringify(pairs.map((p) => String(row[p.column])))),
+  );
+  return {
+    rows: page.rows
+      .filter((row) =>
+        wanted.has(JSON.stringify(pairs.map((p) => String(fromDataValue(at(row, p.target)))))),
+      )
+      .map((row) => [...pairs.map((p) => at(row, p.target)), at(row, lookup.displayColumn)]),
+  };
+}
+
 /** Bound query reading display text for the keys of `rows` (one row per distinct key). */
 function labelQuery(
   lookup: Relationship,
@@ -126,9 +158,12 @@ export async function lookupLabels(lookups: Lookups, rows: RecordValues[]): Prom
         } else missing.set(key, row);
       }
       if (missing.size) {
-        const found = await runQuerySql(
-          ...labelQuery(lookup, column, [...missing.values()]),
-        ).catch(() => null);
+        const found = await runQuerySql(...labelQuery(lookup, column, [...missing.values()])).catch(
+          (error) =>
+            asTauriError(error).code === "FORBIDDEN"
+              ? labelsByKey(lookup, column, [...missing.values()]).catch(() => null)
+              : null,
+        );
         for (const row of found?.rows ?? []) {
           const values = row.slice(0, pairs?.length ?? 1).map((v) => String(fromDataValue(v)));
           const key = pairs ? JSON.stringify(values) : values[0];

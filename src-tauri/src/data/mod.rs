@@ -224,6 +224,8 @@ pub enum FilterOperator {
     StartsWith,
     IsNull,
     IsNotNull,
+    /// Matches any of `values` (an empty list matches nothing).
+    In,
 }
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -231,6 +233,9 @@ pub struct Filter {
     pub column: String,
     pub operator: FilterOperator,
     pub value: Option<DataValue>,
+    /// The candidates of an `in` filter.
+    #[serde(default)]
+    pub values: Option<Vec<DataValue>>,
 }
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq)]
 #[serde(rename_all = "camelCase")]

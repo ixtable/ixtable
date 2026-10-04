@@ -232,6 +232,8 @@ pub fn create_checkpoint(
     window_label: String,
     reason: Option<String>,
 ) -> Result<CheckpointInfo, AppError> {
+    // A checkpoint copies every table, so a role may not take one.
+    crate::authz::require_unrestricted(&window_label, "create checkpoints")?;
     crate::manager()?.create_checkpoint(&window_label, reason.as_deref().unwrap_or("manual"))
 }
 #[tauri::command]
@@ -244,6 +246,7 @@ pub fn restore_checkpoint_as_copy(
     checkpoint_id: String,
     path: String,
 ) -> Result<String, AppError> {
+    crate::authz::require_unrestricted(&window_label, "restore checkpoints")?;
     crate::manager()?.restore_checkpoint_as_copy(&window_label, &checkpoint_id, Path::new(&path))
 }
 

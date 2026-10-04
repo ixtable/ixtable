@@ -3,9 +3,8 @@ import { beforeEach, expect, it, vi } from "vitest";
 const call = vi.fn();
 vi.mock("../../src/lib/api", () => ({ call: (...args: unknown[]) => call(...args) }));
 
-const { deleteRecord, insertRecord, registerRecordHook, updateRecord } = await import(
-  "../../src/lib/records"
-);
+const { deleteRecord, insertRecord, registerRecordHook, updateRecord, writeRecordBatch } =
+  await import("../../src/lib/records");
 
 beforeEach(() => call.mockReset());
 
@@ -13,7 +12,7 @@ it("runs before hooks, the command, then after hooks with the result", async () 
   const events: string[] = [];
   call.mockImplementation(async (command: string) => {
     events.push(command);
-    return [{ type: "integer", value: 7 }];
+    return { changed: 1, identity: [{ type: "integer", value: 7 }] };
   });
   const unregister = registerRecordHook({
     before: (write) => {
@@ -25,7 +24,7 @@ it("runs before hooks, the command, then after hooks with the result", async () 
   });
   const values = [{ column: "name", value: { type: "text" as const, value: "A" } }];
   await expect(insertRecord("people", values)).resolves.toEqual([{ type: "integer", value: 7 }]);
-  expect(call).toHaveBeenCalledWith("insert_row", { table: "people", values });
+  expect(call).toHaveBeenCalledWith("insert_row", { table: "people", values, trigger: null });
   expect(events).toEqual([
     "before insert people",
     "insert_row",
@@ -48,7 +47,7 @@ it("aborts the write when a before hook throws", async () => {
 });
 
 it("passes identity and values for updates and stops calling unregistered hooks", async () => {
-  call.mockResolvedValue(1);
+  call.mockResolvedValue({ changed: 1 });
   const after = vi.fn();
   const unregister = registerRecordHook({ after });
   const identity = [{ type: "integer" as const, value: 3 }];
@@ -59,6 +58,7 @@ it("passes identity and values for updates and stops calling unregistered hooks"
     values,
     identity,
     expected: null,
+    trigger: null,
   });
   expect(after).toHaveBeenCalledWith(
     {
@@ -69,6 +69,7 @@ it("passes identity and values for updates and stops calling unregistered hooks"
       meta: { writeId: expect.stringMatching(/^[0-9a-f-]{36}$/) },
     },
     1,
+    undefined,
   );
   await updateRecord("people", values, identity);
   await updateRecord("people", values, identity, { writeId: "retry-1" });
@@ -82,5 +83,38 @@ it("passes identity and values for updates and stops calling unregistered hooks"
     table: "people",
     identity,
     expected: null,
+    trigger: null,
   });
+});
+
+it("passes trigger step auth to Rust and the issued grant to after hooks", async () => {
+  const after = vi.fn();
+  const unregister = registerRecordHook({ after });
+  const identity = [{ type: "integer" as const, value: 3 }];
+  const trigger = { triggerId: "t1", grant: "g0", stepId: "s1" };
+  call.mockResolvedValueOnce({ changed: 1, triggerGrant: "g1" });
+  await updateRecord("stock", [], identity, { trigger });
+  expect(call).toHaveBeenLastCalledWith("update_row", {
+    table: "stock",
+    values: [],
+    identity,
+    expected: null,
+    trigger,
+  });
+  expect(after.mock.calls[0][2]).toEqual({ triggerGrant: "g1" });
+  call.mockResolvedValueOnce([{ changed: 1, identity, triggerGrant: "g2" }, { changed: 1 }]);
+  await writeRecordBatch([
+    { operation: "insert", table: "a", values: [], identity: null, meta: { trigger } },
+    { operation: "delete", table: "b", values: [], identity },
+  ]);
+  expect(call).toHaveBeenLastCalledWith("execute_write_batch", {
+    ops: [
+      { op: "insert", table: "a", values: [] },
+      { op: "delete", table: "b", identity, expected: null },
+    ],
+    triggers: [trigger, null],
+  });
+  expect(after.mock.calls[1].slice(1)).toEqual([identity, { triggerGrant: "g2" }]);
+  expect(after.mock.calls[2].slice(1)).toEqual([1, undefined]);
+  unregister();
 });

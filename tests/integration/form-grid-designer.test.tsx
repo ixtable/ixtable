@@ -15,6 +15,7 @@ type Control = {
   label: string;
   assetId?: string | null;
   placement: { column: number; columnSpan: number; region?: string | null };
+  enabledWhen?: string | null;
 };
 type Form = {
   controls: Control[];
@@ -167,4 +168,39 @@ it("picks an image asset by its stable id and previews it", async () => {
     const image = within(preview).getByRole("img", { name: "New image" });
     expect(image.getAttribute("src")).toMatch(/^data:image\/png;base64,/);
   }, LONG);
+}, 120_000);
+
+it("clears a stored 'Enabled when' that a label cannot use", async () => {
+  const user = await renderNewDocument();
+  const config = await invoke<{ design: { forms: Array<Record<string, unknown>> } }>(
+    "read_document_config",
+    { windowLabel: "main" },
+  );
+  const form = config.design.forms[0] as { controls: unknown[] };
+  form.controls = [
+    ...form.controls,
+    {
+      id: crypto.randomUUID(),
+      kind: "label",
+      label: "Note",
+      validation: { required: false },
+      placement: { column: 1, row: 1, columnSpan: 12, rowSpan: 1 },
+      enabledWhen: "true",
+    },
+  ];
+  await invoke("update_document_config", { windowLabel: "main", config });
+  const archive = join(process.env.IXTABLE_STATE_DIR ?? "", "clear-enabled-when.ixt");
+  dialogMock.save.mockResolvedValueOnce(archive);
+  await user.click(screen.getByRole("button", { name: "Save project" }));
+  await screen.findByText("Saved archive", {}, LONG);
+  await user.click(screen.getByRole("button", { name: "Close project" }));
+  dialogMock.open.mockResolvedValueOnce(archive);
+  await user.click(await screen.findByRole("button", { name: /Open document/i }, LONG));
+  await screen.findByText("Saved archive", {}, LONG);
+  await openDesigner(user);
+
+  await user.click(await screen.findByRole("group", { name: "Note" }, LONG));
+  await user.click(properties().getByRole("button", { name: 'Clear unused "Enabled when"' }));
+  await waitFor(async () => expect((await control("label"))?.enabledWhen ?? null).toBeNull(), LONG);
+  expect(properties().queryByRole("button", { name: 'Clear unused "Enabled when"' })).toBeNull();
 }, 120_000);

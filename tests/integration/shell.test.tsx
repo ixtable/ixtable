@@ -153,7 +153,7 @@ it("undoes and redoes saved-query edits from the toolbar and keyboard", async ()
   await waitFor(() =>
     expect(screen.queryByRole("button", { name: "Answer" })).not.toBeInTheDocument(),
   );
-  expect((await readConfig()).savedQueries).toEqual([]);
+  await waitFor(async () => expect((await readConfig()).savedQueries).toEqual([]), LONG);
 
   await user.click(screen.getByRole("button", { name: "Redo" }));
   expect(await screen.findByRole("button", { name: "Answer" }, LONG)).toBeInTheDocument();

@@ -74,6 +74,9 @@ pub struct DocumentConfig {
     pub roles: Vec<roles::Role>,
     #[serde(default)]
     pub release: ReleaseInfo,
+    /// Bundled read-only CSV, JSON, and Parquet files (`import::sources`).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub file_sources: Vec<crate::import::FileSource>,
     /// The ixtable Cloud application this document publishes to.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub cloud: Option<crate::cloud::CloudLink>,
@@ -153,6 +156,7 @@ impl Default for DocumentConfig {
             entities: vec![],
             roles: vec![],
             release: ReleaseInfo::default(),
+            file_sources: vec![],
             cloud: None,
             extra: serde_json::Map::new(),
         }

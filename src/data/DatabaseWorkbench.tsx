@@ -1,7 +1,8 @@
-import { Columns3, GitBranch, Plus, Rows3, Search, Table2, Trash2 } from "lucide-react";
+import { Columns3, FileUp, GitBranch, Plus, Rows3, Search, Table2, Trash2 } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { asTauriError, inspectTable, readTablePage } from "../lib/api";
 import { CreateFormsOffer } from "../design/CreateFormsOffer";
+import { ImportWizard } from "../import";
 import { useDocumentConfig } from "../lib/config-store";
 import { deleteRecord, insertRecord, updateRecord } from "../lib/records";
 import type { CreateTableSpec, DbPage, NamedValue, Sort, TableSchema } from "../lib/types";
@@ -28,6 +29,7 @@ export function DatabaseWorkbench() {
   const [capabilities, setCapabilities] = useState<StoreCapabilities | null>(null);
   // The relationship editor, opened by drawing on the diagram or by the New relationship button.
   const [relating, setRelating] = useState<{ drawn: DrawnRelationship | null } | null>(null);
+  const [importing, setImporting] = useState(false);
   const positions = useMemo(
     () =>
       ((config.navigationState as Record<string, unknown> | null)?.relationshipLayout ??
@@ -202,6 +204,10 @@ export function DatabaseWorkbench() {
             </b>
           </div>
           <span className="canvas-help">Drag to arrange · Scroll to zoom</span>
+          <button onClick={() => setImporting(true)}>
+            <FileUp />
+            Import records
+          </button>
           {schemas.length > 0 && (
             <button onClick={() => setRelating({ drawn: null })}>
               <Plus />
@@ -221,6 +227,13 @@ export function DatabaseWorkbench() {
           onArrange={arrange}
           onRelate={(drawn) => setRelating({ drawn })}
         />
+        {importing && (
+          <ImportWizard
+            tables={schemas.filter((s) => s.objectType !== "view")}
+            onClose={() => setImporting(false)}
+            onImported={(table) => afterSchemaChange(table)}
+          />
+        )}
         {relating && (
           <RelateDialog
             schemas={schemas}

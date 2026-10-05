@@ -484,7 +484,10 @@ impl DocumentManager {
             .get_mut(window)
             .ok_or_else(|| AppError::new("NO_DOCUMENT", "No document is open"))?;
         read_only_guard(s)?;
-        let datasource_changed = s.doc.config.datasource != c.datasource;
+        let reattach = |old: &DocumentConfig| {
+            old.datasource != c.datasource || old.file_sources != c.file_sources
+        };
+        let datasource_changed = reattach(&s.doc.config);
         let workspace = s.workspace.clone();
         drop(all);
         // Attaching a datasource can block (PostgreSQL connect timeout), so a new
@@ -493,7 +496,7 @@ impl DocumentManager {
             let mut reader = ReadRuntime::new(&workspace, &sqlite_extension_path()?)
                 .map_err(|e| AppError::new("EXTENSION_STARTUP", e))?;
             crate::recordstore::attach_configured(&mut reader, &c);
-            Some((c.datasource.clone(), reader))
+            Some(((c.datasource.clone(), c.file_sources.clone()), reader))
         } else {
             None
         };
@@ -502,9 +505,13 @@ impl DocumentManager {
             .get_mut(window)
             .ok_or_else(|| AppError::new("NO_DOCUMENT", "No document is open"))?;
         read_only_guard(s)?;
-        if s.doc.config.datasource != c.datasource {
+        if reattach(&s.doc.config) {
             match prepared {
-                Some((ds, reader)) if ds == c.datasource && s.workspace == workspace => {
+                Some(((ds, files), reader))
+                    if ds == c.datasource
+                        && files == c.file_sources
+                        && s.workspace == workspace =>
+                {
                     s.reader = reader
                 }
                 // Another edit changed the datasource meanwhile: attach inline.
@@ -726,6 +733,7 @@ impl DocumentManager {
     ) -> Result<SessionState, AppError> {
         // The reader follows the bundle's datasource, like the record store does
         // (built before the sessions lock: a PostgreSQL attach can block).
+        crate::import::sources::materialize(installation, &doc);
         let mut reader = ReadRuntime::new(installation, &sqlite_extension_path()?)
             .map_err(|e| AppError::new("EXTENSION_STARTUP", e))?;
         crate::recordstore::attach_configured(&mut reader, &doc.config);

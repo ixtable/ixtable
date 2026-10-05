@@ -167,8 +167,9 @@ pub fn read_target(datasource: &DatasourceConfig) -> Result<ReadTarget, String> 
 /// unreachable database still opens.
 pub fn attach_configured(reader: &mut ReadRuntime, config: &DocumentConfig) {
     let target = read_target(&config.datasource);
+    let files = crate::import::sources::views(&reader.workspace, &config.file_sources);
     let result = match target {
-        Ok(t) => reader.set_target(t),
+        Ok(t) => reader.configure(t, files),
         Err(e) => Err(e),
     };
     if let Err(e) = result {

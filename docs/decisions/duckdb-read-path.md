@@ -2,7 +2,7 @@
 
 Status: accepted on Linux. macOS and Windows are wired into CI
 (`.github/workflows/desktop.yml`) and become proven when that matrix passes.
-Covers PRD §9.4, §10, and the Phase 0 DuckDB spikes.
+Covers PRD §3.2 (file import), §9.4, §10, and the Phase 0 DuckDB spikes.
 
 ## Context
 
@@ -39,6 +39,55 @@ instead. Either way the next read sees committed rows and DDL. Because writes
 commit before the refresh returns, a workflow that writes and then reads gets
 its own write back. Config edits re-attach only when `datasource` changed, and
 build the new reader outside the sessions lock.
+
+### External files
+
+DuckDB reads CSV, JSON, and Parquet with its own readers. The `json` and
+`parquet` crate features compile them into the bundled DuckDB, so they are
+part of the pinned binary and not loadable extensions: the extension
+allowlist stays `sqlite_scanner` and `postgres_scanner`, and nothing is
+installed at runtime. XLSX is read in Rust with `calamine`. Global external
+access stays off in both uses below; each connection may open only the files
+listed in its `allowed_paths`, set before the lock.
+
+**Import** (`import/`, `data::files::sandbox`). The wizard parses the chosen
+file in a fresh in-memory DuckDB whose `allowed_paths` is that one file, with
+external access off and the configuration locked. `read_csv` (header and
+delimiter options, types sniffed from the whole file), `read_json`, and
+`read_parquet` give the columns, DuckDB's inferred types (mapped to logical
+types by `logical_from_duckdb`), a 50-row preview, and the row count. XLSX
+columns get the narrowest logical type that holds every cell (whole numbers
+are integers, Excel dates are dates, or timestamps when any has a time, and
+mixed columns are text). The import itself never writes through DuckDB.
+Each mapped value is converted with `LogicalType::normalize` for its target
+field, the same check every store write uses, and a row that fails it or
+leaves a required field empty is reported and skipped. The remaining rows
+go to the RecordStore (SQLite or PostgreSQL) in batches of 500, one
+transaction each. A batch the store rejects is retried row by row, so only
+the rows that break a constraint are reported; a connection or busy error
+stops the import. Rows already committed stay, and the report counts them.
+A new-table import creates the table through the usual `create_table` path
+(with an `id` integer key unless a file column is chosen as the key). Record
+triggers do not run for imported rows, and runtime roles cannot import.
+
+**File sources** (`import::sources`, `data::files::create_views`). A bundled
+source is an application asset plus a `fileSources` entry in the config
+(`{id, name, assetId, format, csv}`), so the file travels in the archive's
+`attachments` table and in runtime bundles without an archive format change.
+A runtime installation keeps no extracted assets, so opening one writes the
+source files to `<installation>/attachments/<id>/content` first.
+When the reader is built, it attaches an in-memory `files` catalog and
+creates `files.main.<name>` as a view over the asset's extracted file
+(`attachments/<id>/content`) while external access is still on. The lockdown
+then adds exactly those files to `allowed_paths` next to `data.db`. Queries,
+reports, and dashboards read `files.<name>`; `read_only_guard` still rejects
+writes and direct `read_*` calls, and DuckDB refuses any other file even
+when the guard is bypassed. A config change to `fileSources` (like a
+datasource change) builds a new reader outside the sessions lock. A source
+whose file is missing or unreadable is skipped and its error is shown in
+Settings, File sources. Asset ids in the config must be plain ids, so a
+crafted archive cannot point a view outside `attachments/`. XLSX stays
+import-only.
 
 ### Writes and reads of one file never overlap
 
@@ -95,8 +144,9 @@ the page `params`, which TypeScript evaluates (`sourceParams` in
 
 ### Pinned extensions
 
-- `duckdb` is pinned to `=1.10505.0` with the `bundled` feature, which embeds
-  DuckDB 1.5.5. Extensions are ABI-specific, so the crate version and the
+- `duckdb` is pinned to `=1.10505.0` with the `bundled`, `json`, and
+  `parquet` features, which embed DuckDB 1.5.5 and its JSON and Parquet
+  readers. Extensions are ABI-specific, so the crate version and the
   extension version move together.
 - `scripts/prepare-duckdb-artifacts.sh <linux-x64|macos-universal|windows-x64>`
   downloads `sqlite_scanner` and `postgres_scanner` v1.5.5 from
@@ -136,6 +186,11 @@ Linux for extensions that do.
 
 - Reads cannot write. Writes cannot skip the RecordStore and its
   capabilities, constraint mapping, and concurrency checks.
+- An import holds the parsed rows in memory before writing them, which is
+  fine for spreadsheet-sized files. A streaming import is a later change.
+- File sources are read in place on every query. A large Parquet file
+  costs no memory until a query scans it; a large CSV is parsed on each
+  scan.
 - Reattaching after each write is simple and correct. It costs one detach and
   attach per write, which is cheap for a local file and a network round trip
   for PostgreSQL.
@@ -155,6 +210,22 @@ Linux for extensions that do.
   and leave no temp files; override paths are still verified; every platform
   has both pins in the manifest; the official archive for the host platform
   unpacks to a file DuckDB loads.
+- `src-tauri/src/data/files_tests.rs`: the import sandbox reads the chosen
+  file and refuses other files, `COPY TO`, `glob`, `INSTALL`, and `SET`;
+  the reader serves CSV, JSON, and Parquet views (joined with each other),
+  keeps them across a refresh, skips a missing file, and refuses writes and
+  other files even past the guard.
+- `src-tauri/src/import/tests.rs`: type inference for CSV, JSON, Parquet,
+  and XLSX (fixture `tests/fixtures/imports/people.xlsx`), header and
+  delimiter options, field mapping checks, per-row type and required-field
+  errors, unique-constraint failures isolated by the row-by-row retry, and
+  file source validation (no path escape).
+- `src-tauri/src/manager_config_tests.rs`: a runtime installation session
+  reads a bundled CSV source.
+- `tests/integration/file-import.test.tsx`: the wizard imports a CSV into a
+  new table, an XLSX worksheet, and a CSV into an existing table with a row
+  error report; a bundled CSV source is queried, refuses writes, and still
+  reads after save and reopen.
 - `src-tauri/src/data/tests.rs`: autoload is rejected, values convert
   losslessly to canonical forms, `read_only_guard` rejects writes and scanner
   functions but accepts keywords inside literals and identifiers, and file

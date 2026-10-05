@@ -9,6 +9,9 @@ mod ddl_tests;
 pub mod extensions;
 #[cfg(test)]
 mod extensions_tests;
+pub mod files;
+#[cfg(test)]
+mod files_tests;
 pub mod gate;
 pub mod logical;
 #[cfg(test)]

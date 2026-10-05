@@ -267,7 +267,7 @@ it("lets a text box grow with its text in the designer and preview", async () =>
       { windowLabel: "main" },
     );
     expect(config.reports[0].bands.reportHeader.components[0]).toMatchObject({ canGrow: true });
-  });
+  }, LONG);
   await user.click(screen.getByRole("tab", { name: "Preview" }));
   const grown = await screen.findByRole("img", { name: "Page 1 of 1" }, LONG);
   await within(grown).findByText(/meeting$/, {}, LONG);

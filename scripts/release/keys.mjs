@@ -154,6 +154,9 @@ export function embeddedKeyProblems(binary, env, root = ROOT) {
   return problems;
 }
 
+/** The Tauri CLI's JavaScript entry point in this checkout. */
+export const tauriCli = (root = ROOT) => join(root, "node_modules/@tauri-apps/cli/tauri.js");
+
 /**
  * Signs a probe file with the Tauri CLI (TAURI_SIGNING_PRIVATE_KEY[_PASSWORD] from env) and
  * verifies the signature against `pubkey`. Throws when the pair does not match.
@@ -164,14 +167,14 @@ export async function probeUpdaterKeyPair(env, pubkey, root = ROOT) {
   try {
     const file = join(dir, "probe.bin");
     writeFileSync(file, `ixtable updater key probe ${Date.now()}\n`);
-    const run = spawnSync("npx", ["--no-install", "tauri", "signer", "sign", file], {
+    // Node runs the CLI's JS entry directly: no shell, so arguments reach it unchanged on Windows.
+    const run = spawnSync(process.execPath, [tauriCli(root), "signer", "sign", file], {
       cwd: root,
       env: {
         ...env,
         TAURI_SIGNING_PRIVATE_KEY_PASSWORD: env.TAURI_SIGNING_PRIVATE_KEY_PASSWORD ?? "",
       },
       encoding: "utf8",
-      shell: process.platform === "win32",
     });
     if (run.status !== 0 || !existsSync(`${file}.sig`))
       throw new Error("the Tauri CLI could not sign with TAURI_SIGNING_PRIVATE_KEY");

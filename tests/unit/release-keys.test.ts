@@ -15,6 +15,7 @@ import {
   releaseCloudKey,
   releaseKeyProblems,
   releaseUpdaterPubkey,
+  tauriCli,
 } from "../../scripts/release/keys.mjs";
 import { tauriConfigOverride } from "../../scripts/release/signing.mjs";
 
@@ -136,9 +137,9 @@ describe("updater key pair probe", () => {
   it("passes for a matching pair and fails for another key", { timeout: 60_000 }, async () => {
     const key = join(scratch, "probe.key");
     const made = spawnSync(
-      "npx",
-      ["--no-install", "tauri", "signer", "generate", "--ci", "-p", "", "-w", key],
-      { cwd: root, encoding: "utf8", shell: process.platform === "win32" },
+      process.execPath,
+      [tauriCli(root), "signer", "generate", "--ci", "-p", "", "-w", key],
+      { cwd: root, encoding: "utf8" },
     );
     expect(made.status, made.stderr).toBe(0);
     const env = { ...process.env, TAURI_SIGNING_PRIVATE_KEY: readFileSync(key, "utf8") };

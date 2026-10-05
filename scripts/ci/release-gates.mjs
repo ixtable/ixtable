@@ -56,11 +56,13 @@ export function unreviewedCrypto(cargoToml, packageJson) {
 // PEM private keys, and Tauri/minisign secret key files (raw or base64, as `tauri signer generate`
 // writes). Built at runtime so this file does not match its own scan.
 const SECRET_KEY_COMMENT = ["untrusted comment:", "rsign encrypted secret key"].join(" ");
-const PRIVATE_KEY_MARKERS = [
-  /-----BEGIN (?:[A-Z]+ )?PRIVATE KEY-----/,
-  new RegExp(SECRET_KEY_COMMENT.replace("rsign", "(?:rsign|minisign)")),
-  new RegExp(Buffer.from(SECRET_KEY_COMMENT).toString("base64").slice(0, 56)),
+// Extended regular expressions, valid for both `git grep -E` and JavaScript.
+const PRIVATE_KEY_PATTERNS = [
+  "-----BEGIN ([A-Z]+ )?PRIVATE KEY-----",
+  SECRET_KEY_COMMENT.replace("rsign", "(rsign|minisign)"),
+  Buffer.from(SECRET_KEY_COMMENT).toString("base64").slice(0, 56),
 ];
+const PRIVATE_KEY_MARKERS = PRIVATE_KEY_PATTERNS.map((pattern) => new RegExp(pattern));
 const PRIVATE_KEY_FILE = /\.(p12|pfx|p8|keystore|jks)$|(^|\/)[^/]*\.key$/i;
 
 /** Tracked files that hold, or are named like, private keys. `read(path)` returns text or null. */
@@ -146,15 +148,21 @@ export const GATES = [
     prd: "§27.2",
     title: "No private signing key is committed",
     check: (root) => {
-      const files = execFileSync("git", ["ls-files", "-z"], { cwd: root, encoding: "utf8" })
-        .split("\0")
-        .filter(Boolean);
-      const read = (path) => {
-        const full = join(root, path);
-        if (!existsSync(full) || statSync(full).size > 2_000_000) return null;
-        return readFileSync(full, "latin1");
-      };
-      return committedPrivateKeys(files, read).map((path) => `${path} looks like a private key`);
+      const git = (args) => execFileSync("git", args, { cwd: root, encoding: "utf8" });
+      const files = git(["ls-files", "-z"]).split("\0").filter(Boolean);
+      // One git grep over the tracked text files: reading ~1000 files from Node is slow on Windows.
+      const patterns = PRIVATE_KEY_PATTERNS.flatMap((pattern) => ["-e", pattern]);
+      let matched = [];
+      try {
+        matched = git(["grep", "-l", "-z", "-I", "-E", ...patterns])
+          .split("\0")
+          .filter(Boolean);
+      } catch (error) {
+        // Exit status 1 means no match; anything else is a real failure.
+        if (error.status !== 1) throw error;
+      }
+      const flagged = new Set([...files.filter((path) => PRIVATE_KEY_FILE.test(path)), ...matched]);
+      return [...flagged].sort().map((path) => `${path} looks like a private key`);
     },
   },
   {

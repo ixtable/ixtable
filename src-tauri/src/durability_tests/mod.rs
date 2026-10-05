@@ -5,6 +5,7 @@ use std::path::PathBuf;
 
 mod fixtures;
 mod heavy;
+mod incremental;
 mod kill;
 
 /// A fresh state directory and a manager over it.

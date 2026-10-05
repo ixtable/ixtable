@@ -4,7 +4,7 @@
 // each human sign-off as PENDING. Exit 1 when an automated gate fails.
 //   node scripts/ci/release-gates.mjs [--json]
 import { execFileSync } from "node:child_process";
-import { existsSync, readFileSync, statSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { readVersions } from "../release/plan.mjs";

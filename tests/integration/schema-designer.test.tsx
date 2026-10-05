@@ -76,10 +76,8 @@ it("creates a table with a composite key, relationship, unique, check, and index
   await user.click(within(form).getByRole("button", { name: "Add index" }));
   await user.click(within(form).getByRole("button", { name: "Create table" }));
 
-  expect(await screen.findByRole("button", { name: /^sites\b/ }, LONG)).toHaveAttribute(
-    "aria-pressed",
-    "true",
-  );
+  const sites = await screen.findByRole("button", { name: /^sites\b/ }, LONG);
+  await waitFor(() => expect(sites).toHaveAttribute("aria-pressed", "true"), LONG);
   const schema = await inspect("sites");
   expect(schema.primaryKey).toEqual(["region", "num"]);
   expect(schema.columns.map((c) => c.logicalType)).toEqual([

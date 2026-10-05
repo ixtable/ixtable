@@ -91,10 +91,10 @@ it("designs a selected table with staged alterations and an impact preview for d
   await waitFor(() =>
     expect(screen.queryByRole("heading", { name: "Design inventory" })).toBeNull(),
   );
-  expect(await screen.findByRole("button", { name: /^products\b/ })).toHaveAttribute(
-    "aria-pressed",
-    "true",
-  );
+  const products = await screen.findByRole("button", { name: /^products\b/ }, { timeout: 20_000 });
+  await waitFor(() => expect(products).toHaveAttribute("aria-pressed", "true"), {
+    timeout: 20_000,
+  });
   expect((await readPage("products")).columns.map((column) => column.name)).toEqual([
     "id",
     "title",

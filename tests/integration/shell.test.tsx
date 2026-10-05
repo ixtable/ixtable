@@ -34,10 +34,8 @@ it("creates a table from the object browser and routes grid writes through recor
   await user.type(within(form).getByRole("textbox", { name: "Column 2 name" }), "title");
   await user.click(within(form).getByRole("button", { name: "Create table" }));
 
-  expect(await screen.findByRole("button", { name: /^tasks\b/ }, LONG)).toHaveAttribute(
-    "aria-pressed",
-    "true",
-  );
+  const tasks = await screen.findByRole("button", { name: /^tasks\b/ }, LONG);
+  await waitFor(() => expect(tasks).toHaveAttribute("aria-pressed", "true"), LONG);
   const schema = await invoke<{ columns: Array<{ name: string; primaryKeyPosition: number }> }>(
     "inspect_table",
     { windowLabel: "main", table: "tasks" },

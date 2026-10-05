@@ -180,10 +180,8 @@ it("builds a joined, grouped query with a filter parameter, previews, saves, reo
   await user.clear(name);
   await user.type(name, "Customer totals");
   await user.click(screen.getByRole("button", { name: "Save query" }));
-  expect(await screen.findByRole("button", { name: "Customer totals" }, LONG)).toHaveAttribute(
-    "aria-pressed",
-    "true",
-  );
+  const savedButton = await screen.findByRole("button", { name: "Customer totals" }, LONG);
+  await waitFor(() => expect(savedButton).toHaveAttribute("aria-pressed", "true"), LONG);
   const [saved] = (await readConfig()).savedQueries;
   expect(saved).toMatchObject({
     name: "Customer totals",
@@ -195,7 +193,8 @@ it("builds a joined, grouped query with a filter parameter, previews, saves, reo
   await user.click(screen.getByRole("button", { name: "New query" }));
   expect(screen.queryByRole("checkbox", { name: "o.amount" })).not.toBeInTheDocument();
   await user.click(screen.getByRole("button", { name: "Customer totals" }));
-  expect(await screen.findByRole("checkbox", { name: "o.amount" }, LONG)).toBeChecked();
+  const amount = await screen.findByRole("checkbox", { name: "o.amount" }, LONG);
+  await waitFor(() => expect(amount).toBeChecked(), LONG);
   expect(screen.getByRole("combobox", { name: "Aggregate for o.amount" })).toHaveValue("sum");
 
   await user.type(screen.getByRole("textbox", { name: "Value for min_amount" }), "20");

@@ -1,7 +1,8 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { DesignForm } from "../../src/design/schema";
 
-const reads: Array<{ offset: number; limit: number }> = [];
+type Filter = { column: string; operator: string; value?: { value: number } };
+const reads: Array<{ offset: number; limit: number; filters?: Filter[] }> = [];
 const queryCalls: Array<Record<string, unknown>> = [];
 let size = 0;
 vi.mock("../../src/lib/api", () => ({
@@ -23,18 +24,29 @@ vi.mock("../../src/lib/api", () => ({
     columns: [{ name: "n", declaredType: "INTEGER", primaryKeyPosition: 1 }],
     foreignKeys: [],
   }),
-  readTablePage: async (_table: string, options: { offset: number; limit: number }) => {
-    reads.push({ offset: options.offset, limit: options.limit });
-    const count = Math.max(0, Math.min(options.limit, size - options.offset));
+  readTablePage: async (
+    _table: string,
+    options: { offset: number; limit: number; filters: Filter[] },
+  ) => {
+    const filters = options.filters ?? [];
+    reads.push({
+      offset: options.offset,
+      limit: options.limit,
+      ...(filters.length && { filters }),
+    });
+    const test = (n: number, f: Filter) => {
+      const v = f.value?.value as number;
+      return { gt: n > v, gte: n >= v, lt: n < v, lte: n <= v, eq: n === v }[f.operator];
+    };
+    const matching = Array.from({ length: size }, (_, n) => n).filter((n) =>
+      filters.every((f) => test(n, f)),
+    );
+    const shown = matching.slice(options.offset, options.offset + options.limit);
     return {
       columns: [{ name: "n", declaredType: "INTEGER" }],
-      rows: Array.from({ length: count }, (_, i) => [
-        { type: "integer", value: options.offset + i },
-      ]),
-      identities: Array.from({ length: count }, (_, i) => [
-        { type: "integer", value: options.offset + i },
-      ]),
-      total: size,
+      rows: shown.map((n) => [{ type: "integer", value: n }]),
+      identities: shown.map((n) => [{ type: "integer", value: n }]),
+      total: matching.length,
       offset: options.offset,
       limit: options.limit,
     };
@@ -79,7 +91,7 @@ describe("filtered table paging", () => {
 
   it("rescans when the filter inputs change and after a cache invalidation", async () => {
     size = 2000;
-    const filtered = form("record.n < app.max");
+    const filtered = form("record.n + 0 < app.max");
     expect((await loadPage(filtered, request(0), { app: { max: 5 } })).total).toBe(5);
     const scanned = reads.length;
     expect((await loadPage(filtered, request(0), { app: { max: 50 } })).total).toBe(50);
@@ -92,9 +104,36 @@ describe("filtered table paging", () => {
 
   it("marks a page truncated when the table is larger than the scan limit", async () => {
     size = 60_000;
-    const page = await loadPage(form("record.n >= 49990"), request(0));
+    const page = await loadPage(form("record.n + 0 >= 49990"), request(0));
     expect(page.truncated).toBe(true);
     expect(page.total).toBe(10);
+  });
+
+  it("applies a pushable filter in DuckDB: one read, exact total, no scan limit", async () => {
+    size = 60_000;
+    const page = await loadPage(form("record.n >= app.min"), request(10), { app: { min: 59_000 } });
+    expect(page.truncated).toBeUndefined();
+    expect(page.total).toBe(1000);
+    expect(page.rows.map((r) => r.n)).toEqual(Array.from({ length: 10 }, (_, i) => 59_010 + i));
+    expect(reads).toEqual([
+      {
+        offset: 10,
+        limit: 10,
+        filters: [{ column: "n", operator: "gte", value: { type: "integer", value: 59_000 } }],
+      },
+    ]);
+  });
+
+  it("scans only the rows the pushed part keeps for the residual part", async () => {
+    size = 60_000;
+    const page = await loadPage(form("record.n >= 59000 and record.n % 100 = 0"), request(0));
+    expect(page.truncated).toBe(false);
+    expect(page.rows.map((r) => r.n)).toEqual(
+      Array.from({ length: 10 }, (_, i) => 59_000 + i * 100),
+    );
+    expect(page.total).toBe(10);
+    expect(reads.every((r) => r.filters?.[0].operator === "gte")).toBe(true);
+    expect(reads.map((r) => r.offset)).toEqual([0, 500, 1000]);
   });
 });
 
@@ -140,11 +179,15 @@ describe("first record and row filter checks", () => {
     await expect(firstRecordId(form(""))).resolves.toBe(0);
     expect(reads).toEqual([{ offset: 0, limit: 1 }]);
     reads.length = 0;
-    const later = form("record.n > app.min");
+    const later = form("record.n + 0 > app.min");
     await expect(firstRecordId(later, {}, { app: { min: 1234 } })).resolves.toBe(1235);
     expect(reads.map((r) => r.offset)).toEqual([0, 500, 1000]);
     await expect(firstRecordId(later, {}, { app: { min: 29_990 } })).resolves.toBe(29_991);
     await expect(firstRecordId(later, {}, { app: { min: 99_999 } })).resolves.toBeNull();
+    reads.length = 0;
+    const pushed = form("record.n > app.min");
+    await expect(firstRecordId(pushed, {}, { app: { min: 29_990 } })).resolves.toBe(29_991);
+    expect(reads.map((r) => r.offset)).toEqual([0]);
   });
 
   it("returns the whole first passing row of a query source", async () => {

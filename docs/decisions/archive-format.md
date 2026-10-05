@@ -59,6 +59,30 @@ parent directory. Any failure removes the temp file and leaves the old archive
 in place. Leftover temp files from a killed process are never read and are
 removed on the next successful save.
 
+Saves are incremental. When the destination's previous archive is the
+session's own file (`Snapshot::reuse_from`: the file the session opened or
+last saved, with an unchanged fingerprint, current format, same document id),
+`archive_io::write` copies unchanged payloads into the temp archive as
+compressed rows (`archive_io/reuse.rs`) instead of compressing them again:
+
+- an attachment whose id, SHA-256, and size match its row in that archive;
+- the data payload when `data.db` has the same `DataStamp` as when that
+  archive's payload was taken (`Payload::Reuse`). The stamp is SQLite's file
+  change counter, page count, schema cookie, and version-valid-for number
+  from the file header, plus file size and modification time, read under the
+  shared read gate. In rollback-journal mode every commit bumps the counter,
+  whichever connection made it. A WAL-mode file or a leftover journal has no
+  stamp, so it is always packed again. The stamp is taken right after open
+  extracts the archive and before each save's `VACUUM INTO`, so a commit that
+  races the save makes the next save pack the data again.
+
+Everything else is unchanged: the result is still a complete temp file that
+is synced, verified, and renamed over the old archive, so an interrupted save
+still leaves the last valid archive. Verification skips decompressing reused
+payloads only: they are byte copies of rows that were verified when that
+archive was opened (extraction checks every checksum) or written. A reuse
+failure (the file moved or lost a row) falls back to a full write.
+
 Before saving, the manager compares the file's fingerprint with the one it
 recorded at open. A file changed by another program blocks the save with
 `EXTERNAL_CONFLICT` until the user reloads or uses Save As.
@@ -105,8 +129,11 @@ checkpoints are validated archive copies under
   atomic on all three platforms when source and target share a directory.
 - Any SQLite tool can inspect an archive. Editing one by hand changes its
   fingerprint and triggers the conflict check.
-- A save rewrites the whole file. Save time grows with archive size, which the
-  500 MB cloud limit bounds.
+- A save still writes a whole new file, but only changed payloads are
+  compressed. A definition edit copies the data payload and every asset; a
+  record edit compresses `data.db` again and copies the assets. Save time
+  after a record edit grows with `data.db` size, which the 500 MB cloud limit
+  bounds. Measured in [performance budgets](./performance-budgets.md).
 - Unknown-table preservation only works for plain tables. A future format
   that needs views or triggers must bump `FORMAT_VERSION`.
 - Every released format stays openable. `tests/fixtures/archives/format-<N>/`
@@ -136,6 +163,15 @@ checkpoints are validated archive copies under
   journal left by a crash is rolled back instead of rejected, recovery never
   overwrites a file it could not checkpoint, and another process never lists,
   cleans, or discards a live workspace.
+- `src-tauri/src/archive_io/reuse_tests.rs`: unchanged payloads are copied
+  and read back identical, changed ones are compressed again, nothing is
+  reused from another document or a missing archive (and a failed write keeps
+  the last archive), and the data stamp changes with every commit and refuses
+  WAL files.
+- `src-tauri/src/durability_tests/incremental.rs`: definition edits reuse
+  data and assets after save and after open, an unannounced commit packs the
+  data again, an externally touched file reuses nothing, and Save As reuses
+  from the current file.
 - `src-tauri/src/archive.rs` tests: a newer config version is
   `UNSUPPORTED_VERSION`, and unknown top-level config fields survive save,
   reopen, and the YAML round trip.
@@ -169,3 +205,4 @@ checkpoints are validated archive copies under
 - 2026-10-05: Described the recovery outcomes the code has (`before-recovery`
   checkpoint, `RECOVERY_NEEDS_SAVE_AS`, `EXTERNAL_CONFLICT`, workspace lock)
   and added the matching `archive_io` and `recovery.rs` tests to Evidence.
+- 2026-10-05 (after merging #36): re-checked the incremental-save text and evidence #36 added (`archive_io/reuse.rs`, `reuse_tests.rs`, `durability_tests/incremental.rs`, `Snapshot::reuse_from`, `DataStamp`); they match the code. No changes.

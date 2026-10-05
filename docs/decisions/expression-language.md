@@ -64,6 +64,20 @@ Filters and conditional styles (PRD §17.1) use the same evaluator through
   load and pages the matches with the child list form's page size. A lookup
   scans until it fills 50 rows. A dashboard table already holds the whole
   query result, so its page count is exact.
+- A list form over a table pushes what it safely can of its filter into
+  DuckDB (`src/runtime/pushdown.ts`). Each top-level `and` operand that
+  compares `record.<column>` with a value that does not read the row becomes
+  a `read_table_page` filter: `=`, `!=`, `<`, `<=`, `>`, `>=` and `between`
+  with a number on an integer or real column, `=` and `!=` with text that is
+  not a date on a text column, `in` lists of those, and `is [not] null` on any
+  column. TypeScript computes every compared value; Rust only binds it. An
+  operand whose SQL result could differ from the expression (decimal columns,
+  text ordering, dates, booleans, `or`, `not`, arithmetic on the row) stays in
+  the residual expression, evaluated per row as before over only the rows
+  DuckDB kept. A row passes `a and b` exactly when both are true, so the split
+  keeps the same rows. A fully pushed filter reads one page with an exact
+  total and no 50,000-row limit. Query sources, related lists, and lookups
+  still filter in TypeScript.
 - A related list or lookup reloads only when a value its filter reads changes
   (`filterInputs` uses `referencedNames` to pick `parent.x`, `form.y`, and so
   on), debounced by 250 ms, so typing in other fields does not rescan.
@@ -128,3 +142,4 @@ it does not know loads as `Tone::Other` and saves back unchanged.
 
 - 2026-10-05: Added the dashboard editor to the editors that run `check`; the
   rest matched the code.
+- 2026-10-05 (after merging #36): re-checked the list-filter pushdown text #36 added against `src/runtime/pushdown.ts`; it matches. No changes.

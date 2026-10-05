@@ -80,6 +80,13 @@ it("Work orders: nested navigation, queries, printable sheet, and operations das
       "Printable work-order sheet: page 1 of N, headers, footers, totals",
       async () => {
         await openPage(user, "Work order sheet");
+        const prompt = await screen.findByRole(
+          "dialog",
+          { name: "Work order sheet parameters" },
+          LONG,
+        );
+        expect(within(prompt).getByRole("textbox", { name: "number" })).toHaveValue("");
+        await user.click(within(prompt).getByRole("button", { name: "Run report" }));
         const first = await within(runtimePage()).findByRole(
           "img",
           { name: /^Page 1 of \d+$/ },

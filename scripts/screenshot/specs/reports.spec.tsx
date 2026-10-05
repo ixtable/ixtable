@@ -1,6 +1,8 @@
 import { readFileSync } from "node:fs";
 import { screen, waitFor, within } from "@testing-library/react";
+import { invoke } from "@tauri-apps/api/core";
 import { expect, it, vi } from "vitest";
+import { newReport } from "../../../src/reports/model";
 import { captureDocument } from "../capture";
 import {
   dialogMock,
@@ -183,6 +185,100 @@ it("sets page breaks and group paging, and repeats a group header across pages",
     expectations: [
       "The preview page repeats the 'Status: open' group header above the continued detail row.",
       "The page footer reads 'Part 2 of 2' for the open group.",
+    ],
+  });
+});
+
+it("prompts for parameters in the Runtime and prints grown Unicode text", async () => {
+  const user = await renderNewDocument();
+  await seedSales();
+  await saveQuery(
+    "Orders by status",
+    "SELECT o.id, c.name AS customer, o.status, o.amount FROM orders o JOIN customers c ON c.id = o.customer_id WHERE o.status = $status AND o.amount >= $minimum ORDER BY o.id",
+    [
+      { name: "status", logicalType: "text", required: true },
+      { name: "minimum", logicalType: "number", defaultValue: 0 },
+    ],
+  );
+  const config = await invoke<
+    Record<string, unknown> & {
+      savedQueries: { id: string; name: string }[];
+      design: Record<string, unknown>;
+    }
+  >("read_document_config", { windowLabel: "main" });
+  const report = newReport("Orders for review");
+  report.datasetQueryId = config.savedQueries.find((q) => q.name === "Orders by status")?.id;
+  report.params = { status: "open" };
+  report.bands.reportHeader.components = [
+    {
+      id: crypto.randomUUID(),
+      kind: "staticText",
+      text: "Revue des commandes · Обзор заказов · Ανασκόπηση παραγγελιών · 订单审核 → ✓ Notes for the review meeting grow with their text.",
+      x: 0,
+      y: 0,
+      w: 260,
+      h: 16,
+      canGrow: true,
+      style: { borderWidth: 0.5 },
+    },
+    {
+      id: crypto.randomUUID(),
+      kind: "staticText",
+      text: "Customer · Amount",
+      x: 0,
+      y: 22,
+      w: 260,
+      h: 16,
+      style: { bold: true },
+    },
+  ];
+  report.bands.detail.components = [
+    {
+      id: crypto.randomUUID(),
+      kind: "field",
+      expression: "record.customer & ' · ' & record.amount",
+      x: 0,
+      y: 0,
+      w: 260,
+      h: 16,
+    },
+  ];
+  await invoke("update_document_config", {
+    windowLabel: "main",
+    config: {
+      ...config,
+      reports: [report],
+      design: {
+        ...config.design,
+        navigation: [
+          { id: crypto.randomUUID(), label: "Review", kind: "report", targetId: report.id },
+        ],
+      },
+    },
+  });
+  await saveAndReopen(user, "review.ixt");
+  await openMode(user, "Runtime");
+  const nav = await screen.findByRole("navigation", { name: "Application navigation" }, LONG);
+  await user.click(within(nav).getByRole("button", { name: "Review" }));
+  const dialog = await screen.findByRole("dialog", { name: "Orders for review parameters" }, LONG);
+  expect(within(dialog).getByRole("textbox", { name: /status/ })).toHaveValue("open");
+  await captureDocument(document, {
+    name: "reports-06-parameter-prompt",
+    expectations: [
+      "A dialog titled 'Orders for review' asks for status (prefilled 'open', required) and minimum (0).",
+      "The dialog has Cancel and Run report buttons and no report page is shown behind it.",
+    ],
+  });
+  await user.click(within(dialog).getByRole("button", { name: "Run report" }));
+  const page = await screen.findByRole("img", { name: "Page 1 of 1" }, LONG);
+  await within(page).findByText(/Northstar Goods/, {}, LONG);
+  expect(page.textContent).toContain("订单审核");
+  expect(page.textContent).not.toContain("Harbor");
+  await captureDocument(document, {
+    name: "reports-07-unicode-can-grow",
+    expectations: [
+      "The header text with French, Russian, Greek and Chinese wraps over several lines inside a grown bordered box.",
+      "The bold 'Customer · Amount' heading and the open orders sit below the grown box without overlapping it.",
     ],
   });
 });

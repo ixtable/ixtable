@@ -4,6 +4,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { screen, waitFor, within } from "@testing-library/react";
 import type userEvent from "@testing-library/user-event";
 import { expect, it, vi } from "vitest";
+import type { Band } from "../../src/reports/types";
 import { createTable, insertRow, renderNewDocument, value } from "./helpers";
 import { dialogMock } from "./setup";
 
@@ -239,4 +240,35 @@ it("sets pagination controls in the designer and keeps tables out of page bands"
     windowLabel: "main",
   });
   expect(issues.filter((issue) => issue.objectKind === "report")).toEqual([]);
+});
+
+it("lets a text box grow with its text in the designer and preview", async () => {
+  const user = await renderNewDocument();
+  await openNewReport(user);
+  await screen.findByRole("textbox", { name: "Report name" }, LONG);
+  await addComponent(user, "Report header", "Add text");
+  const text = screen.getByRole("textbox", { name: "Text" });
+  await user.clear(text);
+  await user.type(text, "Quarterly notes for the regional sales review meeting");
+  const canGrow = screen.getByRole("checkbox", { name: "Can grow" });
+  expect(canGrow).not.toBeChecked();
+
+  await user.click(screen.getByRole("tab", { name: "Preview" }));
+  const clipped = await screen.findByRole("img", { name: "Page 1 of 1" }, LONG);
+  expect(within(clipped).getByText("Quarterly notes for the")).toBeInTheDocument();
+  expect(within(clipped).queryByText("meeting")).toBeNull();
+
+  await user.click(screen.getByRole("tab", { name: "Design" }));
+  await user.click(screen.getByRole("button", { name: /^Text Quarterly/ }));
+  await user.click(screen.getByRole("checkbox", { name: "Can grow" }));
+  await waitFor(async () => {
+    const config = await invoke<{ reports: Array<{ bands: { reportHeader: Band } }> }>(
+      "read_document_config",
+      { windowLabel: "main" },
+    );
+    expect(config.reports[0].bands.reportHeader.components[0]).toMatchObject({ canGrow: true });
+  });
+  await user.click(screen.getByRole("tab", { name: "Preview" }));
+  const grown = await screen.findByRole("img", { name: "Page 1 of 1" }, LONG);
+  await within(grown).findByText(/meeting$/, {}, LONG);
 });

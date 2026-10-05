@@ -89,7 +89,12 @@ export function MigrationsTab() {
       refresh().catch(() => undefined);
     }
   };
+  // Close only the editor the save or delete came from: the list shows the change before
+  // the write resolves, so the user may already have opened another editor.
+  const closeEditor = (opened: typeof editing) =>
+    setEditing((current) => (current === opened ? null : current));
   const save = async (next: Migration) => {
+    const opened = editing;
     await update(
       (draft) => ({
         ...draft,
@@ -99,14 +104,15 @@ export function MigrationsTab() {
       }),
       `Save migration ${next.name}`,
     );
-    setEditing(null);
+    closeEditor(opened);
   };
   const remove = async (id: string) => {
+    const opened = editing;
     await update(
       (draft) => ({ ...draft, migrations: draft.migrations.filter((m) => m.id !== id) }),
       "Delete migration",
     );
-    setEditing(null);
+    closeEditor(opened);
   };
   // Runs apply or rollback and lists only the definition problems the run introduced.
   const runAndCheck = async (task: () => Promise<MigrationRun>) => {

@@ -181,11 +181,17 @@ it("styles a table cell by condition and hides or disables components by filter 
       ),
     LONG,
   );
+  await within(screen.getByRole("region", { name: "Form 1" })).findAllByRole(
+    "cell",
+    { name: "Northstar Goods" },
+    LONG,
+  );
   await captureDocument(document, {
     name: "dashboards-05-conditions",
     expectations: [
       "In the table, amounts above 300 (340, 410) carry a warning tone; smaller amounts are plain.",
-      "With Status = open the 'Showing one status only' text appears and the embedded Orders list is greyed out as disabled.",
+      "With Status = open the 'Showing one status only' text appears and the embedded Orders list is greyed out as disabled, with a 'Not available right now.' note.",
+      "The embedded Orders list shows customer names, not ids, and its New orders button fits inside the card.",
     ],
   });
 });

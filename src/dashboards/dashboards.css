@@ -327,13 +327,36 @@
     display: none;
   }
 }
-/* Component disabled by its enabledWhen expression; text keeps full contrast. */
+/* Component disabled by its enabledWhen expression: dashed frame, dimmed body, readable note. */
 .dash-disabled {
   background: #f1f1ee;
+  border-style: dashed;
+  border-color: #b9bdb6;
+}
+.dash-disabled-note {
+  margin: 0;
+  font-size: 12px;
+  color: var(--ix-muted);
 }
 .dash-disabled-body {
   border: 0;
   margin: 0;
   padding: 0;
   min-width: 0;
+  opacity: 0.55;
+  filter: grayscale(1);
+}
+/* Dashboard tables wrap cell text to fit their card; a table still too wide scrolls inside it. */
+.dash-table {
+  min-width: 0;
+}
+.dash-table .data-grid {
+  overflow-x: auto;
+}
+.dash-table .data-grid th,
+.dash-table .data-grid td {
+  white-space: normal;
+  height: auto;
+  padding-top: 5px;
+  padding-bottom: 5px;
 }

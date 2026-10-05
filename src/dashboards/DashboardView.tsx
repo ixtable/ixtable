@@ -275,6 +275,9 @@ function LiveDashboard({
                       {problem}
                     </p>
                   ))}
+                  {!enabled && !enabledWhen.error && (
+                    <p className="dash-disabled-note">Not available right now.</p>
+                  )}
                   {visible.error ? null : enabled ? (
                     body(c)
                   ) : (

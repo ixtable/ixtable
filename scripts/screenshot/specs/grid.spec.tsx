@@ -31,7 +31,7 @@ it("edits grid tracks and named regions and places a control in a region", async
   await captureDocument(document, {
     name: "grid-01-tracks-and-regions",
     expectations: [
-      "Form properties list the column tracks with Column 1 set to a fixed size.",
+      "Form properties list the column tracks with Column 1 set to 'Fixed (px)', its name, kind, and labelled Size, Min, and Max inputs readable.",
       "A named region 'header' appears in the region editor with its column, row, and span inputs.",
     ],
   });

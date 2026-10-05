@@ -47,6 +47,17 @@ function needed(config: Pick<DocumentConfig, "actions" | "entities">, actionId: 
   return out;
 }
 
+/** `op kind "name"`, naming actions and queries by their display name (ids are uuids). */
+function describe(config: Pick<DocumentConfig, "actions" | "savedQueries">, n: Needed): string {
+  const name =
+    n.kind === "action"
+      ? config.actions?.find((a) => a.id === n.id)?.name
+      : n.kind === "query"
+        ? config.savedQueries?.find((q) => q.id === n.id)?.name
+        : undefined;
+  return `${n.op} ${n.kind} "${name ?? n.id}"`;
+}
+
 export interface TriggerGap {
   triggerId: string;
   name: string;
@@ -59,7 +70,7 @@ export interface TriggerGap {
  * warning may also list access a form grant would imply.
  */
 export function userTriggerGaps(
-  config: Pick<DocumentConfig, "roles" | "actions" | "triggers" | "entities">,
+  config: Pick<DocumentConfig, "roles" | "actions" | "triggers" | "entities" | "savedQueries">,
   roleId: string,
 ): TriggerGap[] {
   return (config.triggers ?? [])
@@ -67,7 +78,7 @@ export function userTriggerGaps(
     .map((t) => {
       const missing = needed(config, t.actionId)
         .filter((n) => !can(config, roleId, n.kind, n.id, n.op))
-        .map((n) => `${n.op} ${n.kind} ${n.id}`);
+        .map((n) => describe(config, n));
       return { triggerId: t.id, name: t.name, missing: [...new Set(missing)] };
     })
     .filter((gap) => gap.missing.length > 0);

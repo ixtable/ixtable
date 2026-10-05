@@ -61,7 +61,7 @@ it("lists the grants a role lacks for user-mode triggers only", () => {
     {
       triggerId: "t-user",
       name: "User stock",
-      missing: ["execute action audit", "create table audit_log"],
+      missing: [`execute action "Audit"`, `create table "audit_log"`],
     },
   ]);
 });
@@ -81,9 +81,9 @@ it("follows updates of custom-action entities to the action they run", () => {
     entities: [{ id: "e", table: "inventory", concurrency: "customAction", actionId: "guard" }],
   } as unknown as DocumentConfig;
   expect(userTriggerGaps(routed, "clerk")[0].missing.sort()).toEqual([
-    "create table audit_log",
-    "create table stock_audit",
-    "execute action audit",
-    "execute action guard",
+    `create table "audit_log"`,
+    `create table "stock_audit"`,
+    `execute action "Audit"`,
+    `execute action "Guard"`,
   ]);
 });

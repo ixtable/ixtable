@@ -75,6 +75,7 @@
 }
 .rt-record-head {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   justify-content: space-between;
   gap: 12px;
@@ -87,8 +88,10 @@
 }
 .rt-actions {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   gap: 8px;
+  min-width: 0;
 }
 .rt-actions button,
 .rt-pager button,
@@ -101,7 +104,8 @@
   padding: 7px 12px;
   font-size: 13px;
 }
-.rt-actions .primary {
+.rt-actions .primary,
+.rt-button.primary {
   background: var(--ix-primary);
   color: var(--ix-on-primary);
   border-color: var(--ix-primary);
@@ -390,5 +394,21 @@
   display: flex;
   flex-direction: column;
   align-items: flex-start;
-  gap: 8px;
+  gap: 10px;
+  padding: 20px;
+  border: 1px dashed #c9cdd2;
+  border-radius: 8px;
+  background: #fafbfa;
+}
+.rt-empty p {
+  margin: 0;
+}
+.rt-empty button {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.rt-empty svg {
+  width: 14px;
+  height: 14px;
 }

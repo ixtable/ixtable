@@ -1,4 +1,4 @@
-import { useId } from "react";
+import { useEffect, useId, useState } from "react";
 import { check } from "../../expr";
 import { REPORT_SCOPE_NAMES } from "../model";
 
@@ -38,7 +38,10 @@ export function ExpressionInput({
   );
 }
 
-/** Number input in points; ignores empty or invalid entries. */
+/**
+ * Number input in points. Valid entries apply as typed; the text is kept as a draft so a
+ * value below `min` or a cleared field can be retyped, and blur restores the stored value.
+ */
 export function PointInput({
   label,
   value,
@@ -50,6 +53,9 @@ export function PointInput({
   onChange: (value: number) => void;
   min?: number;
 }) {
+  const shown = String(Number.isFinite(value) ? value : 0);
+  const [draft, setDraft] = useState(shown);
+  useEffect(() => setDraft(shown), [shown]);
   return (
     <label>
       {label}
@@ -57,11 +63,13 @@ export function PointInput({
         type="number"
         min={min}
         step={1}
-        value={Number.isFinite(value) ? value : 0}
+        value={draft}
         onChange={(e) => {
+          setDraft(e.target.value);
           const n = Number(e.target.value);
           if (e.target.value !== "" && Number.isFinite(n) && n >= min) onChange(n);
         }}
+        onBlur={() => setDraft(shown)}
       />
     </label>
   );

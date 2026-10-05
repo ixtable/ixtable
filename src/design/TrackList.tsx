@@ -42,6 +42,7 @@ export function TrackList({
         const label = `${name} ${index + 1}`;
         return (
           <div className="fd-track" key={index}>
+            <span className="fd-track-name">{label}</span>
             <select
               aria-label={`${label} size kind`}
               value={track.kind}
@@ -56,32 +57,6 @@ export function TrackList({
                 </option>
               ))}
             </select>
-            {track.kind !== "content" && (
-              <DraftInput
-                type="number"
-                min={0}
-                step={track.kind === "fr" ? 0.5 : 1}
-                aria-label={`${label} size`}
-                value={String(track.value ?? "")}
-                onCommit={(text) => commit(index, "value", parseTrackSize(track.kind, text))}
-              />
-            )}
-            <DraftInput
-              type="number"
-              min={0}
-              placeholder="min px"
-              aria-label={`${label} minimum pixels`}
-              value={String(track.min ?? "")}
-              onCommit={(text) => commit(index, "min", parseTrackLimit(track, "min", text))}
-            />
-            <DraftInput
-              type="number"
-              min={0}
-              placeholder="max px"
-              aria-label={`${label} maximum pixels`}
-              value={String(track.max ?? "")}
-              onCommit={(text) => commit(index, "max", parseTrackLimit(track, "max", text))}
-            />
             <button
               type="button"
               aria-label={`Remove ${label.toLowerCase()}`}
@@ -90,6 +65,43 @@ export function TrackList({
             >
               <Trash2 aria-hidden="true" />
             </button>
+            <div className="fd-track-sizes">
+              {track.kind !== "content" && (
+                <label>
+                  <span>{track.kind === "fr" ? "Share" : "Size px"}</span>
+                  <DraftInput
+                    type="number"
+                    min={0}
+                    step={track.kind === "fr" ? 0.5 : 1}
+                    aria-label={`${label} size`}
+                    value={String(track.value ?? "")}
+                    onCommit={(text) => commit(index, "value", parseTrackSize(track.kind, text))}
+                  />
+                </label>
+              )}
+              <label>
+                <span>Min px</span>
+                <DraftInput
+                  type="number"
+                  min={0}
+                  placeholder="–"
+                  aria-label={`${label} minimum pixels`}
+                  value={String(track.min ?? "")}
+                  onCommit={(text) => commit(index, "min", parseTrackLimit(track, "min", text))}
+                />
+              </label>
+              <label>
+                <span>Max px</span>
+                <DraftInput
+                  type="number"
+                  min={0}
+                  placeholder="–"
+                  aria-label={`${label} maximum pixels`}
+                  value={String(track.max ?? "")}
+                  onCommit={(text) => commit(index, "max", parseTrackLimit(track, "max", text))}
+                />
+              </label>
+            </div>
           </div>
         );
       })}

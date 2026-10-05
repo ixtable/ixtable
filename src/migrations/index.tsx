@@ -53,6 +53,8 @@ export function MigrationsTab() {
   const [run, setRun] = useState<MigrationRun | null>(null);
   const [dryRun, setDryRun] = useState<MigrationLog | null>(null);
   const [afterIssues, setAfterIssues] = useState<Issue[] | null>(null);
+  // A dry run refused in preflight blocks Apply until the migrations change: Apply would be refused too.
+  const [preflightFailed, setPreflightFailed] = useState(false);
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
   // Migrations run on the embedded SQLite store only; PostgreSQL schema is managed externally.
@@ -76,6 +78,9 @@ export function MigrationsTab() {
   useEffect(() => {
     refresh().catch((e) => setError(asTauriError(e).message));
   }, [refresh, config.migrations]);
+  useEffect(() => {
+    setPreflightFailed(false);
+  }, [config.migrations]);
 
   const act = async (task: () => Promise<void>) => {
     setBusy(true);
@@ -165,14 +170,22 @@ export function MigrationsTab() {
         <button
           type="button"
           disabled={busy || postgres || !pendingCount}
-          onClick={() => act(async () => setDryRun(await dryRunMigrations()))}
+          onClick={() =>
+            act(async () => {
+              setDryRun(null);
+              setPreflightFailed(true);
+              setDryRun(await dryRunMigrations());
+              setPreflightFailed(false);
+            })
+          }
         >
           Dry run pending
         </button>
         <button
           type="button"
           className="save"
-          disabled={busy || postgres || !pendingCount}
+          disabled={busy || postgres || !pendingCount || preflightFailed}
+          title={preflightFailed ? "Fix the migrations the dry run refused first." : undefined}
           onClick={() => act(() => runAndCheck(applyMigrations))}
         >
           Apply pending ({pendingCount})

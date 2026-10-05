@@ -10,10 +10,12 @@ import { useGenerateApp } from "./generateApp";
 export function GenerateAppButton({
   tables,
   label = "Generate app from tables",
+  className,
   onDone,
 }: {
   tables?: string[];
   label?: string;
+  className?: string;
   onDone?: (added: number) => void;
 }) {
   const generate = useGenerateApp();
@@ -33,7 +35,12 @@ export function GenerateAppButton({
   };
   return (
     <>
-      <button type="button" disabled={busy} onClick={() => run().catch(() => undefined)}>
+      <button
+        type="button"
+        className={className}
+        disabled={busy}
+        onClick={() => run().catch(() => undefined)}
+      >
         <Wand2 aria-hidden="true" />
         {label}
       </button>

@@ -50,6 +50,7 @@ it("starts from the Work orders template and shows its operations dashboard", as
     expectations: [
       "The Operations dashboard shows KPI tiles and a chart built from the template's queries.",
       "Navigation groups Maintenance, Reports, and Setup are visible.",
+      "The Open work order list table fits its card, assignee and progress columns included.",
     ],
   });
 });

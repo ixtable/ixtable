@@ -47,7 +47,9 @@ export function RunMode() {
   const runtime = useRuntimeState(config);
   // Runtime-only windows (bundles, cloud installations) show the app, not Studio chrome.
   const runtimeOnly = useContext(ShellContext)?.doc.runtimeOnly ?? false;
-  const page = runtime.page ?? startPage(config, runtime.roleId);
+  const empty = !runtimeOnly && !hasPages(config);
+  // An empty app's start page is the blank starter form: the build hint replaces it.
+  const page = runtime.page ?? (empty ? null : startPage(config, runtime.roleId));
   const navigation = visibleNavigation(config.design?.navigation ?? [], config, runtime.roleId);
   const roles = config.roles ?? [];
   const assigned = assignedRuntimeRole();
@@ -100,10 +102,11 @@ export function RunMode() {
               {runtime.notice.message}
             </p>
           )}
-          {!runtimeOnly && !hasPages(config) && (
+          {empty && (
             <div className="rt-empty" role="region" aria-label="Build your app">
               <p className="rt-muted">This application has no pages yet.</p>
               <GenerateAppButton
+                className="rt-button primary"
                 onDone={(added) =>
                   !added && runtime.notify("There are no tables to generate from.", "error")
                 }

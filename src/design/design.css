@@ -286,13 +286,45 @@
 }
 .fd-track {
   display: grid;
-  grid-template-columns: minmax(0, 1.4fr) repeat(3, minmax(0, 1fr)) auto;
-  gap: 4px;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 4px 6px;
   align-items: center;
+  padding: 6px 0;
+  border-top: 1px solid #e3e5e8;
 }
-.fd-track input,
-.fd-track select {
+.fd-track-name {
+  font-size: 11px;
+  font-weight: 600;
+}
+.fd-track > select {
+  grid-column: 1 / -1;
+  grid-row: 2;
+}
+.fd-track-sizes {
+  grid-column: 1 / -1;
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 6px;
+}
+/* Plain captions, not the properties panel's boxed label spans. */
+.studio-properties .fd-track-sizes label {
+  gap: 2px;
+  margin: 0;
+  font-size: 10px;
+  font-weight: 400;
+  color: var(--ix-subtle);
+}
+.studio-properties .fd-track-sizes label > span {
+  display: block;
+  border: 0;
+  padding: 0;
+  background: none;
+}
+.studio-properties .fd-track input,
+.studio-properties .fd-track select {
+  width: 100%;
   min-width: 0;
+  padding: 5px 6px;
 }
 .fd-region {
   border-top: 1px solid #e3e5e8;

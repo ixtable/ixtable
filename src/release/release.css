@@ -95,6 +95,7 @@
   border: 1px solid #d3d7d1;
   border-radius: 6px;
   background: #fff;
+  color: var(--ix-text);
   font-size: 12px;
 }
 .bundle-password h2 {
@@ -140,6 +141,8 @@
 .runtime-bar-action.danger {
   color: var(--ix-danger);
 }
+/* The sidebar is too narrow for dialogs: lift them over the workspace instead. */
+.runtime-bar .bundle-password,
 .runtime-diagnostics {
   position: fixed;
   inset: 48px 8% auto;
@@ -149,12 +152,30 @@
   margin: 0;
   box-shadow: 0 8px 28px rgb(0 0 0 / 18%);
 }
+.runtime-bar .bundle-password {
+  inset: 48px auto auto 50%;
+  transform: translateX(-50%);
+  width: min(560px, calc(100vw - 32px));
+}
 .runtime-diagnostics [role="tablist"] {
   display: flex;
-  gap: 6px;
-  margin-bottom: 8px;
+  gap: 4px;
+  margin-bottom: 10px;
+  border-bottom: 1px solid #d3d7d1;
 }
-.runtime-diagnostics [aria-selected="true"] {
+.runtime-diagnostics [role="tab"] {
+  border: 0;
+  border-bottom: 2px solid transparent;
+  background: none;
+  color: var(--ix-muted);
+  padding: 6px 10px;
+  margin-bottom: -1px;
+  font: inherit;
+  cursor: pointer;
+}
+.runtime-diagnostics [role="tab"][aria-selected="true"] {
+  border-bottom-color: var(--ix-accent);
+  color: var(--ix-text);
   font-weight: 700;
 }
 .release-notes {

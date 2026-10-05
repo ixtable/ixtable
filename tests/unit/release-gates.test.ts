@@ -46,14 +46,14 @@ describe("release gates", () => {
   });
 
   it("flags crypto dependencies that are not on the allowlist", () => {
-    const toml = `[package]\nname = "x"\n[dependencies]\nsha2 = "0.10"\nmy-aes = "1"\nserde = "1"\n[dev-dependencies]\nring = "0.17"\n[profile.dev]\ndebug = 1\n`;
-    expect(cargoDependencies(toml)).toEqual(["sha2", "my-aes", "serde", "ring"]);
+    const toml = `[package]\nname = "x"\n[dependencies]\nsha2 = "0.10"\naes-siv = "1"\nserde = "1"\n[dev-dependencies]\nring = "0.17"\n[profile.dev]\ndebug = 1\n`;
+    expect(cargoDependencies(toml)).toEqual(["sha2", "aes-siv", "serde", "ring"]);
     expect(
       unreviewedCrypto(toml, {
         dependencies: { react: "1", "crypto-js": "4" },
         devDependencies: {},
       }),
-    ).toEqual(["my-aes", "ring", "crypto-js"]);
+    ).toEqual(["aes-siv", "ring", "crypto-js"]);
   });
 
   it("finds committed private keys by name or content", () => {
@@ -61,7 +61,9 @@ describe("release gates", () => {
       "a.txt": "hello",
       "b.pem": `-----BEGIN ${"PRIVATE"} KEY-----\nMC4CAQ==\n-----END PRIVATE KEY-----`,
       "release/updater.key": "x",
-      "c.txt": "dW50cnVzdGVkIGNvbW1lbnQ6IHJzaWduIGVuY3J5cHRlZCBzZWNyZXQga2V5Cg==",
+      "c.txt": Buffer.from(
+        ["untrusted comment:", "rsign encrypted secret key\nRWR"].join(" "),
+      ).toString("base64"),
       "cert.p12": "",
     };
     expect(committedPrivateKeys(Object.keys(files), (f: string) => files[f])).toEqual([

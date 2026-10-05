@@ -53,11 +53,13 @@ export function unreviewedCrypto(cargoToml, packageJson) {
   return [...cargo, ...npm];
 }
 
-// PEM private keys, and Tauri/minisign secret key files (raw or base64, as `tauri signer generate` writes).
+// PEM private keys, and Tauri/minisign secret key files (raw or base64, as `tauri signer generate`
+// writes). Built at runtime so this file does not match its own scan.
+const SECRET_KEY_COMMENT = ["untrusted comment:", "rsign encrypted secret key"].join(" ");
 const PRIVATE_KEY_MARKERS = [
   /-----BEGIN (?:[A-Z]+ )?PRIVATE KEY-----/,
-  /untrusted comment: (?:rsign|minisign) encrypted secret key/,
-  /dW50cnVzdGVkIGNvbW1lbnQ6IHJzaWduIGVuY3J5cHRlZCBzZWNyZXQga2V5/,
+  new RegExp(SECRET_KEY_COMMENT.replace("rsign", "(?:rsign|minisign)")),
+  new RegExp(Buffer.from(SECRET_KEY_COMMENT).toString("base64").slice(0, 56)),
 ];
 const PRIVATE_KEY_FILE = /\.(p12|pfx|p8|keystore|jks)$|(^|\/)[^/]*\.key$/i;
 

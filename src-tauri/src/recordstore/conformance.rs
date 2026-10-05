@@ -465,3 +465,42 @@ fn logical_types_round_trip_identically_through_duckdb() {
         assert_eq!(filtered.total, 1, "{}: date parameter binding", h.name);
     });
 }
+
+/// A PostgreSQL refresh keeps the attached database (it only clears postgres_scanner's
+/// catalog cache), and the next read still sees new rows and new tables.
+#[test]
+fn postgres_refresh_keeps_the_attachment_and_sees_writes_and_ddl() {
+    let Some(mut h) = postgres_harness() else {
+        return;
+    };
+    people(&mut h);
+    h.reader.refresh().unwrap();
+    // A rebuilt reader is a new in-memory DuckDB database without this table.
+    h.reader
+        .connection()
+        .execute_batch("CREATE TABLE memory.main.refresh_marker(x INTEGER)")
+        .unwrap();
+    h.store
+        .insert("people", &[nv("name", text("Ada"))])
+        .unwrap();
+    assert_eq!(rows(&mut h, "people").len(), 1);
+    h.store
+        .create_table(&CreateTable {
+            name: "pets".into(),
+            columns: vec![CreateColumn {
+                primary_key_position: 1,
+                nullable: false,
+                ..col("id", "integer")
+            }],
+            ..Default::default()
+        })
+        .unwrap();
+    h.reader.refresh().unwrap();
+    assert!(h.reader.objects().unwrap().iter().any(|o| o.name == "pets"));
+    h.store.insert("pets", &[nv("id", int(1))]).unwrap();
+    assert_eq!(rows(&mut h, "pets"), vec![vec![int(1)]]);
+    h.reader
+        .connection()
+        .execute_batch("SELECT * FROM memory.main.refresh_marker")
+        .expect("refresh kept the same DuckDB database");
+}

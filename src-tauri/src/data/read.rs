@@ -36,8 +36,9 @@ pub enum ReadTarget {
 /// enabled only long enough to load the bundled extensions and attach the
 /// datasource, then `enable_external_access=false` and `lock_configuration=true`
 /// are set. The only file left reachable is `<workspace>/data.db` (via
-/// `allowed_paths`), so a SQLite refresh re-attaches in place; a PostgreSQL
-/// refresh (or a datasource switch) builds a fresh locked database instead,
+/// `allowed_paths`), so a SQLite refresh re-attaches in place. A PostgreSQL
+/// refresh clears postgres_scanner's catalog cache on the live attachment; a
+/// datasource switch (or a failed attach) builds a fresh locked database,
 /// because DuckDB refuses Postgres ATTACH once external access is off.
 /// Bundled file sources are views in the `files` catalog; their extracted
 /// files are added to `allowed_paths` and nothing else.
@@ -109,10 +110,20 @@ impl ReadRuntime {
         self.file_errors = file_errors;
         attached
     }
-    /// Re-attaches the datasource so DuckDB sees committed writes and DDL.
+    /// Makes committed writes and DDL visible to the next read. SQLite re-attaches
+    /// `data`. PostgreSQL keeps its attachment: postgres_scanner reads rows live in a
+    /// new PostgreSQL transaction per DuckDB transaction, so only its catalog cache
+    /// (tables, columns) can be stale, and `pg_clear_cache()` drops it. A failed clear
+    /// or a failed earlier attach rebuilds the reader.
     pub fn refresh(&mut self) -> Result<(), String> {
-        if self.target != ReadTarget::Sqlite || self.attach_error.is_some() {
+        if self.attach_error.is_some() {
             return self.rebuild();
+        }
+        if let ReadTarget::Postgres { .. } = self.target {
+            return match self.connection.execute_batch("CALL pg_clear_cache()") {
+                Ok(()) => Ok(()),
+                Err(_) => self.rebuild(),
+            };
         }
         // Exclusive: connections cloned from this database (`read_connection`)
         // must not run while `data` is detached and re-attached.

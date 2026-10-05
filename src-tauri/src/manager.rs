@@ -1,6 +1,6 @@
 use crate::{
     archive::{self, ArchiveDocument, ArchiveMetadata, Attachment, DocumentConfig, SavedQuery},
-    archive_io::{self, Payload, WriteReport, WriteRequest},
+    archive_io::{self, DataStamp, Payload, WriteReport, WriteRequest},
     data::{self, ReadRuntime},
     logging,
     storage::{GlobalStorage, RecoveryRecord},
@@ -79,6 +79,8 @@ pub struct Session {
     pub config_revision: u64,
     /// Archive the session was opened from or last saved to (source of preserved tables).
     pub origin: Option<PathBuf>,
+    /// The archive whose data payload equals `data.db` at a known stamp (incremental saves).
+    saved_data: Option<SavedData>,
     save_lock: Arc<Mutex<()>>,
     /// OS advisory lock on `<workspace>.lock`, held while the session is open so other ixtable processes never treat the workspace as abandoned.
     pub(crate) workspace_lock: Option<crate::recovery::WorkspaceLock>,
@@ -134,8 +136,16 @@ impl Session {
     }
 }
 
+/// `archive`'s data payload was packed from `data.db` when it had `stamp`.
+#[derive(Clone)]
+pub(crate) struct SavedData {
+    archive: PathBuf,
+    stamp: DataStamp,
+}
+
 /// Everything a save needs, captured under the sessions lock so the archive write
 /// itself runs without holding it.
+#[derive(Clone)]
 pub(crate) struct Snapshot {
     pub session_id: String,
     pub metadata: ArchiveMetadata,
@@ -144,6 +154,10 @@ pub(crate) struct Snapshot {
     pub workspace: PathBuf,
     pub origin: Option<PathBuf>,
     pub revision: u64,
+    /// `origin` when it is the session's file and unchanged on disk: unchanged payloads
+    /// are copied from it instead of recompressed.
+    pub reuse_from: Option<PathBuf>,
+    saved_data: Option<SavedData>,
 }
 
 pub struct DocumentManager {
@@ -198,6 +212,11 @@ impl DocumentManager {
             logging::warn("open", &format!("could not open {}: {e}", path.display()));
             AppError::from(e)
         })?;
+        // Before anything can write: data.db now equals the archive's data payload.
+        let saved_data = archive_io::data_stamp(&workspace).map(|stamp| SavedData {
+            archive: path.to_owned(),
+            stamp,
+        });
         // Studio upgrade: the old default form/navigation id `main` becomes a UUIDv7.
         match crate::design::upgrade::rekey_legacy_ids(&mut doc.config) {
             Ok(ids) if ids != Default::default() => {
@@ -211,7 +230,20 @@ impl DocumentManager {
             .add_recent(path)
             .map_err(|e| AppError::new("IO_ERROR", e))?;
         logging::info("open", &format!("opened {}", path.display()));
-        self.install_workspace(window, id, Some(path.to_owned()), doc, workspace, false)
+        let state = self.install_workspace(
+            window,
+            id.clone(),
+            Some(path.to_owned()),
+            doc,
+            workspace,
+            false,
+        )?;
+        if let Some(s) = self.sessions.lock().unwrap().get_mut(window) {
+            if s.id == id {
+                s.saved_data = saved_data;
+            }
+        }
+        Ok(state)
     }
     /// Starts a session over an extracted workspace (`recovery/<sessionId>`). Any session already in `window` is replaced and its workspace removed.
     pub(crate) fn install_workspace(
@@ -260,6 +292,7 @@ impl DocumentManager {
             id: id.clone(),
             window: window.into(),
             origin: path.clone(),
+            saved_data: None,
             path,
             workspace,
             doc,
@@ -558,6 +591,12 @@ impl DocumentManager {
             workspace: s.workspace.clone(),
             origin: s.origin.clone(),
             revision: s.revision,
+            reuse_from: s
+                .origin
+                .clone()
+                .filter(|o| s.path.as_ref() == Some(o) && s.fingerprint.is_some())
+                .filter(|o| matches!(changed(o, s.fingerprint.as_ref()), Ok(false))),
+            saved_data: s.saved_data.clone(),
         }
     }
     /// Packs a snapshot into a validated archive at `dest` (atomic replace).
@@ -566,10 +605,55 @@ impl DocumentManager {
         snap: &Snapshot,
         dest: &Path,
     ) -> Result<WriteReport, AppError> {
+        // Read before the snapshot: a commit in between makes the next save re-pack.
+        let stamp = {
+            let db = snap.workspace.join("data.db");
+            data::gate::shared(&db)
+                .ok()
+                .and_then(|_gate| archive_io::data_stamp(&snap.workspace))
+        };
+        let reuse_data = match (&snap.reuse_from, &snap.saved_data, &stamp) {
+            (Some(from), Some(saved), Some(now)) => &saved.archive == from && &saved.stamp == now,
+            _ => false,
+        };
+        let result = self.pack(snap, dest, reuse_data);
+        // A previous archive that cannot be reused (moved, damaged) falls back to a full write.
+        let result = match result {
+            Err(e) if snap.reuse_from.is_some() => {
+                logging::warn(
+                    "save",
+                    &format!("incremental save failed, writing in full: {e}"),
+                );
+                self.pack(
+                    &Snapshot {
+                        reuse_from: None,
+                        saved_data: None,
+                        ..snap.clone()
+                    },
+                    dest,
+                    false,
+                )
+            }
+            other => other,
+        };
+        result.map(|report| WriteReport {
+            data_stamp: stamp,
+            ..report
+        })
+    }
+    /// Writes `snap` to `dest`, copying the data payload from `reuse_from` when `reuse_data`.
+    fn pack(
+        &self,
+        snap: &Snapshot,
+        dest: &Path,
+        reuse_data: bool,
+    ) -> Result<WriteReport, AppError> {
         let data = snap
             .workspace
             .join(format!(".snapshot-{}.db", Uuid::new_v4()));
-        vacuum_into(&snap.workspace.join("data.db"), &data)?;
+        if !reuse_data {
+            vacuum_into(&snap.workspace.join("data.db"), &data)?;
+        }
         let assets: Vec<PathBuf> = snap
             .attachments
             .iter()
@@ -580,7 +664,11 @@ impl DocumentManager {
             WriteRequest {
                 metadata: &snap.metadata,
                 config: &snap.config,
-                data: Payload::File(&data),
+                data: if reuse_data {
+                    Payload::Reuse
+                } else {
+                    Payload::File(&data)
+                },
                 attachments: snap
                     .attachments
                     .iter()
@@ -589,6 +677,7 @@ impl DocumentManager {
                     .collect(),
                 preserve_from: snap.origin.as_deref(),
                 preserve_copy: false,
+                reuse_from: snap.reuse_from.as_deref(),
             },
         );
         let _ = fs::remove_file(&data);
@@ -652,6 +741,10 @@ impl DocumentManager {
         }
         s.path = Some(path.clone());
         s.origin = Some(path.clone());
+        s.saved_data = report.data_stamp.clone().map(|stamp| SavedData {
+            archive: path.clone(),
+            stamp,
+        });
         s.fingerprint = Some(fingerprint(&path, &s.doc.metadata.document_id)?);
         s.dirty = s.revision != snap.revision;
         s.conflict = false;
@@ -663,9 +756,10 @@ impl DocumentManager {
         logging::info(
             kind,
             &format!(
-                "saved {} ({} bytes) in {} ms{}",
+                "saved {} ({} bytes, {} payloads reused) in {} ms{}",
                 path.display(),
                 report.bytes,
+                report.reused.len(),
                 started.elapsed().as_millis(),
                 if report.preserved_tables.is_empty() {
                     String::new()

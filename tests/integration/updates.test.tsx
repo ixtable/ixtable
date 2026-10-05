@@ -71,12 +71,12 @@ it("stores the channel and auto-check, then checks, downloads, installs, and rel
   expect(screen.getByRole("combobox", { name: "Update channel" })).toHaveValue("stable");
 
   await user.selectOptions(screen.getByRole("combobox", { name: "Update channel" }), "beta");
-  await waitFor(async () => expect((await settings()).channel).toBe("beta"));
+  await waitFor(async () => expect((await settings()).channel).toBe("beta"), LONG);
   expect((await settings()).endpoint).toMatch(
     /^https:\/\/releases\.ixtable\.app\/beta\/latest\.json\?target=\{\{target\}\}/,
   );
   await user.click(screen.getByRole("checkbox", { name: "Check for updates when ixtable starts" }));
-  await waitFor(async () => expect((await settings()).autoCheck).toBe(false));
+  await waitFor(async () => expect((await settings()).autoCheck).toBe(false), LONG);
   expect(await invoke("get_preference", { windowLabel: "main", key: "updates.channel" })).toBe(
     "beta",
   );

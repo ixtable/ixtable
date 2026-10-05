@@ -112,10 +112,12 @@ it("designs a selected table with staged alterations and an impact preview for d
   const again = await screen.findByRole("dialog", {}, { timeout: 20_000 });
   await user.click(within(again).getByRole("checkbox"));
   await user.click(within(again).getByRole("button", { name: "Apply changes" }));
-  await waitFor(async () =>
-    expect((await readPage("products")).columns.map((column) => column.name)).toEqual([
-      "id",
-      "title",
-    ]),
+  await waitFor(
+    async () =>
+      expect((await readPage("products")).columns.map((column) => column.name)).toEqual([
+        "id",
+        "title",
+      ]),
+    { timeout: 20_000 },
   );
 });

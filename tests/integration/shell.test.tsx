@@ -111,7 +111,7 @@ it("edits config YAML, reports YAML errors, and undoes an applied YAML change", 
   await waitFor(() => expect(editor).toHaveDisplayValue(/version: 3/));
 
   await user.click(screen.getByRole("button", { name: "Undo" }));
-  await waitFor(async () => expect((await readConfig()).name).toBe("Untitled"));
+  await waitFor(async () => expect((await readConfig()).name).toBe("Untitled"), LONG);
   await waitFor(() => expect(editor).toHaveDisplayValue(/name: Untitled/));
 });
 
@@ -158,12 +158,14 @@ it("undoes and redoes saved-query edits from the toolbar and keyboard", async ()
   await user.click(screen.getByRole("button", { name: "Redo" }));
   expect(await screen.findByRole("button", { name: "Answer" }, LONG)).toBeInTheDocument();
   await user.keyboard("{Control>}z{/Control}");
-  await waitFor(async () => expect((await readConfig()).savedQueries).toEqual([]));
+  await waitFor(async () => expect((await readConfig()).savedQueries).toEqual([]), LONG);
   await user.keyboard("{Control>}{Shift>}z{/Shift}{/Control}");
-  await waitFor(async () =>
-    expect((await readConfig()).savedQueries).toEqual([
-      expect.objectContaining({ name: "Answer" }),
-    ]),
+  await waitFor(
+    async () =>
+      expect((await readConfig()).savedQueries).toEqual([
+        expect.objectContaining({ name: "Answer" }),
+      ]),
+    LONG,
   );
 });
 

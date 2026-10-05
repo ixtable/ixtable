@@ -721,9 +721,11 @@ impl DocumentManager {
         &self,
         window: &str,
         installation: &Path,
-        doc: ArchiveDocument,
+        mut doc: ArchiveDocument,
         runtime: crate::installation::RuntimeSession,
     ) -> Result<SessionState, AppError> {
+        // Logins entered in Runtime are stored per installation (secrets::datasource_login).
+        doc.config.datasource.installation = Some(runtime.bundle_id.clone());
         // The reader follows the bundle's datasource, like the record store does
         // (built before the sessions lock: a PostgreSQL attach can block).
         let mut reader = ReadRuntime::new(installation, &sqlite_extension_path()?)

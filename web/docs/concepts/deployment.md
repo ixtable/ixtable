@@ -24,6 +24,8 @@ Each recipient keeps their own records. The bundle's records seed the installati
 
 An application that uses the embedded SQLite database gives every recipient a separate copy of the records. An application that uses PostgreSQL connects each recipient to the database you configured. The bundle never contains the PostgreSQL password. The project file only stores a reference to a password saved on your computer.
 
+When a recipient opens a PostgreSQL bundle, the Runtime asks for a database login. It also asks when the database refuses the saved login. The username starts as the one you configured, and the recipient can change it, so you can give each person their own least-privileged role. The Runtime connects before it saves anything. It then keeps the login encrypted on that computer for that installation, never in the bundle. **Database login…** in the Runtime sidebar changes the login or forgets it.
+
 ## Next steps
 
 - [Overview](/docs/)

@@ -363,8 +363,9 @@ Studio and the Runtime talk to the cloud from two places
   with `owner: true` (the Developer/Owner) gives developer access; any other
   manifest without a role allows nothing.
 - **Credentials.** `key-grant` returns a DEK and the envelope; Rust opens it
-  (XChaCha20-Poly1305) and keeps the password in memory only, for at most
-  24 hours. Revocation, sign-out and closing the app clear it.
+  (XChaCha20-Poly1305) and keeps the password, and a per-user envelope's
+  database username, in memory only, for at most 24 hours. Revocation,
+  sign-out and closing the app clear it.
 - **Offline.** An installed app opens without the cloud. `sync-check`
   failures that mean "cannot reach the cloud" let the installed version run;
   an expired grant means a PostgreSQL datasource stays detached until a new

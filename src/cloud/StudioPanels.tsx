@@ -186,6 +186,7 @@ export function CredentialsPanel({ appId }: { appId: string }) {
   const shared = (config.datasource?.credentialMode ?? "shared") !== "perUser";
   const [scope, setScope] = useState<"shared" | "user">(shared ? "shared" : "user");
   const [userId, setUserId] = useState("");
+  const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
   const { busy, error, notice, run } = useCloudAction();
   const titleId = useId();
@@ -199,6 +200,7 @@ export function CredentialsPanel({ appId }: { appId: string }) {
         scope,
         scope === "user" ? userId.trim() : null,
         password || null,
+        scope === "user" ? username.trim() || null : null,
       );
       setPassword("");
       return scope === "shared"
@@ -238,10 +240,24 @@ export function CredentialsPanel({ appId }: { appId: string }) {
           </label>
         </fieldset>
         {scope === "user" && (
-          <label>
-            Runtime user id
-            <input value={userId} required onChange={(e) => setUserId(e.target.value)} />
-          </label>
+          <>
+            <label>
+              Runtime user id
+              <input value={userId} required onChange={(e) => setUserId(e.target.value)} />
+            </label>
+            <label>
+              Database user{" "}
+              <small>
+                (this runtime user&apos;s own PostgreSQL role; blank connects as “
+                {config.datasource?.user}”)
+              </small>
+              <input
+                value={username}
+                autoComplete="off"
+                onChange={(e) => setUsername(e.target.value)}
+              />
+            </label>
+          </>
         )}
         <label>
           Password {scope === "shared" && <small>(leave blank to use the stored password)</small>}

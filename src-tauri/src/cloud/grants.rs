@@ -12,6 +12,8 @@ use std::{
 };
 
 struct Granted {
+    /// Per-user username from the envelope; `None` uses the datasource's user.
+    user: Option<String>,
     password: String,
     expires_at: DateTime<Utc>,
 }
@@ -24,10 +26,11 @@ fn grants() -> std::sync::MutexGuard<'static, HashMap<String, Granted>> {
 }
 
 /// Holds a credential for `target` until `expires_at`.
-pub fn put(target: &str, password: String, expires_at: DateTime<Utc>) {
+pub fn put(target: &str, user: Option<String>, password: String, expires_at: DateTime<Utc>) {
     grants().insert(
         target.into(),
         Granted {
+            user,
             password,
             expires_at,
         },
@@ -55,10 +58,17 @@ fn wipe(s: &mut String) {
 
 /// The granted password for this datasource, when one is held and unexpired.
 pub fn granted_password(ds: &DatasourceConfig) -> Option<String> {
+    granted_login(ds).map(|(_, password)| password)
+}
+
+/// The granted (username, password) for this datasource, when one is held
+/// and unexpired. The username is set only for a per-user credential that
+/// names its own database user.
+pub fn granted_login(ds: &DatasourceConfig) -> Option<(Option<String>, String)> {
     let target = datasource_target(ds);
     let mut map = grants();
     match map.get(&target) {
-        Some(g) if g.expires_at > Utc::now() => Some(g.password.clone()),
+        Some(g) if g.expires_at > Utc::now() => Some((g.user.clone(), g.password.clone())),
         Some(_) => {
             if let Some(mut g) = map.remove(&target) {
                 wipe(&mut g.password);

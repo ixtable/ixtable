@@ -21,6 +21,7 @@ fn state_dir() -> PathBuf {
     crate::paths::state_dir().join("data")
 }
 
+pub use super::login::*;
 use crate::manager::AppError;
 use serde::{Deserialize, Serialize};
 use std::{io::ErrorKind, sync::Mutex};
@@ -35,13 +36,13 @@ pub struct SecretError {
     pub message: String,
 }
 impl SecretError {
-    fn io(message: impl Into<String>) -> Self {
+    pub(super) fn io(message: impl Into<String>) -> Self {
         Self {
             code: "IO_ERROR",
             message: message.into(),
         }
     }
-    fn mismatch() -> Self {
+    pub(super) fn mismatch() -> Self {
         Self {
             code: "CREDENTIAL_TARGET_MISMATCH",
             message: "The stored password was saved for a different server, database, or user than this datasource now names. Re-enter the password in Datasource settings.".into(),
@@ -288,22 +289,9 @@ pub fn ensure_transport(ds: &DatasourceConfig) -> Result<(), SecretError> {
     Ok(())
 }
 
-/// The password referenced by a datasource config, released only to the
-/// target it was stored for and only over a confirmed transport.
+/// The password a datasource connects with (see [`datasource_login`]).
 pub fn datasource_credential(ds: &DatasourceConfig) -> Result<Option<String>, SecretError> {
-    // A credential delivered by an ixtable Cloud key grant (memory only) wins.
-    if let Some(granted) = crate::cloud::grants::granted_password(ds) {
-        ensure_transport(ds)?;
-        return Ok(Some(granted));
-    }
-    let Some(r) = ds.password_ref.as_deref().filter(|r| !r.is_empty()) else {
-        return Ok(None);
-    };
-    ensure_transport(ds)?;
-    if r != datasource_secret_id(&ds.id) {
-        return Err(SecretError::mismatch());
-    }
-    SecretStore::default_location()?.get_for(r, &datasource_target(ds))
+    Ok(datasource_login(ds)?.password)
 }
 
 /// [`datasource_credential`] with a plain message error.

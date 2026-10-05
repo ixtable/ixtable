@@ -11,6 +11,7 @@ import {
 } from "./api";
 import { BundleError } from "./BundleError";
 import { BundleFileFlow } from "./BundleFileFlow";
+import { DatabaseLogin } from "./DatabaseLogin";
 import type { InstalledBundle, ResetPreview } from "./types";
 
 /** Sidebar block for runtime-only windows: bundle name/version, manual update, data reset. */
@@ -75,6 +76,7 @@ export function RuntimeBar() {
       >
         Check for update…
       </BundleFileFlow>
+      <DatabaseLogin version={doc.bundleVersion} />
       <button
         type="button"
         className="runtime-bar-action danger"

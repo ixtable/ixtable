@@ -6,6 +6,7 @@ use std::path::PathBuf;
 
 mod fixtures;
 mod heavy;
+mod incremental;
 mod kill;
 mod newer_build;
 

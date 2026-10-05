@@ -1,5 +1,5 @@
 import { existsSync, readFileSync, renameSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { basename, join } from "node:path";
 import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { invoke } from "@tauri-apps/api/core";
@@ -208,7 +208,7 @@ it("ignores leftovers of an interrupted archive write and cleans them up on the 
   await invoke("new_document", { windowLabel: "seed" });
   await invoke("save_document_as", { windowLabel: "seed", path });
   await invoke("close_document", { windowLabel: "seed", force: true });
-  const name = path.split("/").pop();
+  const name = basename(path);
   const leftover = join(process.env.IXTABLE_STATE_DIR!, `.${name}.crashed.tmp`);
   writeFileSync(leftover, readFileSync(path).subarray(0, 512));
 

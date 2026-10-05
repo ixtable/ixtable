@@ -40,6 +40,38 @@ function localKey(): string | undefined {
   }
 }
 
+const HEALTH_BUDGET_MS = 60_000;
+const ATTEMPT_MS = 15_000;
+
+/**
+ * GET /functions/v1/health, retried for up to 60 s while the stack is cold or
+ * restarting (timeouts, resets). Only a refused connection (nothing listening)
+ * gives up at once. No AbortSignal: under jsdom it is jsdom's class, which
+ * Node 24's fetch rejects before sending anything.
+ */
+async function probeHealth(): Promise<Response | string> {
+  const deadline = Date.now() + HEALTH_BUDGET_MS;
+  let last = "no answer";
+  while (Date.now() < deadline) {
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const timeout = new Promise<never>((_, reject) => {
+      timer = setTimeout(() => reject(new Error(`no answer in ${ATTEMPT_MS} ms`)), ATTEMPT_MS);
+    });
+    try {
+      return await Promise.race([fetch(`${CLOUD_URL}/functions/v1/health`), timeout]);
+    } catch (error) {
+      const cause = (error as { cause?: { code?: string } }).cause;
+      if (cause?.code === "ECONNREFUSED")
+        return `the local stack at ${CLOUD_URL} is not reachable (npm run service-qa:up)`;
+      last = `${(error as Error).message}${cause?.code ? ` (${cause.code})` : ""}`;
+      await new Promise((resolve) => setTimeout(resolve, 1_000));
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+  return `the local stack at ${CLOUD_URL} did not answer /functions/v1/health in 60 s: ${last}`;
+}
+
 /**
  * Why the cloud tests cannot run here, or "" when they can. On success the
  * process environment points the Rust bridge at the local stack.
@@ -48,20 +80,8 @@ export async function cloudUnavailable(required = REQUIRED): Promise<string> {
   const { hostname } = new URL(CLOUD_URL);
   if (!["127.0.0.1", "localhost"].includes(hostname))
     return `refusing non-local IXTABLE_CLOUD_URL ${CLOUD_URL}`;
-  // A cold Edge Function can take several seconds to boot (e.g. after a long CI
-  // build), so a timeout is retried; a refused connection fails at once.
-  let health: Response | null = null;
-  for (let attempt = 0; attempt < 4 && !health; attempt++) {
-    try {
-      health = await fetch(`${CLOUD_URL}/functions/v1/health`, {
-        signal: AbortSignal.timeout(15_000),
-      });
-    } catch (error) {
-      if ((error as Error).name !== "TimeoutError")
-        return `the local stack at ${CLOUD_URL} is not reachable (npm run service-qa:up)`;
-    }
-  }
-  if (!health) return `the local stack at ${CLOUD_URL} did not answer /functions/v1/health in 60s`;
+  const health = await probeHealth();
+  if (typeof health === "string") return health;
   if (!health.ok) return `health answered ${health.status}`;
   const missing: string[] = [];
   for (const name of required) {

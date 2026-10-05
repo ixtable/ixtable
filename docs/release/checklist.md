@@ -19,9 +19,11 @@ only when every gate below is checked for all three platforms.
       `tests/fixtures/archives/format-<N>/` is committed
       (`node scripts/ci/write-archive-fixtures.mjs`) and no older fixture
       directory changed.
-- [ ] The 500 MB boundary test passed on one machine:
+- [ ] The 500 MB boundary test passed on all three OSes: the `test` job's
+      "500 MB archive boundary" step (locally,
       `IXTABLE_HEAVY_TESTS=1 cargo test --lib durability_tests::heavy` in
-      `src-tauri`.
+      `src-tauri`). PostgreSQL conformance passed on all three (`postgres`
+      and `postgres-native`).
 - [ ] Release notes are written in the draft release body before approving
       step 4. `publish-update-manifest` copies them into `latest.json`
       `notes`, which Settings → Updates shows.

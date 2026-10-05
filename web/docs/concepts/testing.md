@@ -39,7 +39,16 @@ The screenshot suite renders the real React app, drives its controls, and captur
 npm run screenshot
 ```
 
-Continuous integration runs these suites on Windows, macOS, and Linux, plus a PostgreSQL conformance suite on Linux. These commands test ixtable itself. They do not test a user-created ixtable project.
+Continuous integration runs these suites on Windows, macOS, and Linux. It also runs the PostgreSQL conformance suite and the 500 MB archive test on all three systems. Both are off by default on your machine. Set a database URL to run the PostgreSQL tests, or a flag to run the large archive test:
+
+```shell
+IXTABLE_TEST_POSTGRES_URL='postgresql://user:pass@localhost:5432/db?sslmode=disable' npm test
+cd src-tauri && IXTABLE_HEAVY_TESTS=1 cargo test --lib durability_tests::heavy
+```
+
+`node scripts/ci/start-postgres.mjs` starts a throwaway local server and prints its URL. The large archive test takes about a minute and needs 1.5 GB of free disk.
+
+These commands test ixtable itself. They do not test a user-created ixtable project.
 
 ## Next steps
 

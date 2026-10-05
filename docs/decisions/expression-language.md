@@ -105,6 +105,46 @@ Filters and conditional styles (PRD §17.1) use the same evaluator through
   column, then applies its `filter` to them. Lookup choices carry their whole
   row, so a multi-column lookup with a filter still writes every key column.
 
+### Expression errors block distribution
+
+`src/shell/expressionIssues.ts` walks every expression the document stores and
+runs `check` with the names that field's editor uses:
+
+- forms: the query source's parameters, the list filter, form rules, and each
+  control's show and enable conditions, computed and default values,
+  validation, lookup and related-list filters, and styles;
+- reports: field, calculated, and table column expressions in every band, and
+  group keys;
+- dashboards: KPI values and comparisons, embedded form record ids, table
+  filters and styles, and show and enable conditions;
+- actions (every step, including nested condition branches) and triggers
+  (condition, and the idempotency key of async triggers).
+
+`record.<field>` is checked against the current columns of the form's table,
+lookup table, or related table, as in the designer. Other sources accept any
+field. Blank expressions are skipped, because Rust validation already reports
+the required ones.
+
+Each error is an `ExpressionIssue`: an `Issue` plus the object name, the field
+path in the editor's words, and a `RevealTarget`. Settings › Problems lists
+these issues ahead of the `validate_document` issues. Each one has an Open link.
+The link calls `ShellApi.requestReveal`, which switches mode. The target mode
+reads the request with `useReveal`, selects the form and control, report and
+component, dashboard and component, or action or trigger, and clears the
+request.
+
+Rust never evaluates expressions, so it cannot enforce this gate.
+`loadExpressionIssues` runs in TypeScript before the expensive step:
+
+- Release export refuses with `EXPRESSION_ERRORS` before it asks for a
+  destination.
+- The publish panel adds "N expression errors must be fixed first (see Settings
+  › Problems)" to the preflight blockers. It checks again before uploading.
+
+A direct `invoke` from outside the UI can bypass the gate. That is acceptable,
+because the gate protects recipients from shipping a broken app by mistake. It
+is not a security boundary.
+
 Rust stores these fields in `design` and `dashboards` and only flags empty
 ones, and dashboard table style rules with no column, in validation. A tone
 it does not know loads as `Tone::Other` and saves back unchanged.
@@ -115,7 +155,9 @@ it does not know loads as `Tone::Other` and saves back unchanged.
   action behave the same.
 - Rust-side validation cannot catch an expression's syntax errors. The form,
   report, dashboard, and automation editors run `check` on every keystroke and
-  show the diagnostics next to the field.
+  show the diagnostics next to the field. The document-wide walker repeats
+  those checks for Problems, export, and publish, so a new expression field
+  must be added to the walker too.
 - Expressions only see data the caller puts in scope. Adding a capability,
   such as a lookup function, is a language change with tests, not a plugin.
 - Expressions cannot run SQL. Queries stay in the DuckDB read path with bound
@@ -130,6 +172,11 @@ it does not know loads as `Tone::Other` and saves back unchanged.
   filter and styles. `tests/integration/expressions.test.tsx`: designer
   authoring and runtime results for list form, related list, lookup, and
   dashboard table filters and styles.
+- `tests/unit/expression-issues.test.ts`: every walked field, column-aware
+  `record` checks, reveal targets, and nested action steps.
+  `tests/integration/expression-problems.test.tsx`: Problems lists a broken
+  control expression, Open selects that control, export is refused, and the
+  publish panel is blocked.
 - `tests/unit/expr.test.ts`: literals and arithmetic, names, null semantics,
   comparisons, functions, aggregates, dates, formatting, errors, injection
   attempts, `check`, and `referencedNames`.

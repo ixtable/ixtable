@@ -19,6 +19,7 @@ import {
   formTable,
   isContainerKind,
 } from "./schema";
+import { useReveal } from "../shell/reveal";
 import { useColumns } from "./useColumns";
 import { useDesignEditor } from "./useDesignEditor";
 
@@ -52,6 +53,15 @@ export function DesignStudio({ objects }: { objects: DbObject[] }) {
   const form = design.forms.find((f) => f.id === formId) ?? design.forms[0];
   const columns = useColumns(formTable(form));
   const control = form?.controls.find((c) => c.id === selected);
+  useReveal("design", (target) => {
+    setFormId(target.objectId);
+    setSelected(target.elementId);
+    setView("form");
+    const parent = design.forms
+      .find((f) => f.id === target.objectId)
+      ?.controls.find((c) => c.id === target.elementId)?.parent;
+    if (parent?.tab) setActiveTabs((tabs) => ({ ...tabs, [parent.id]: parent.tab as string }));
+  });
 
   const selectForm = (id: string) => {
     setFormId(id);

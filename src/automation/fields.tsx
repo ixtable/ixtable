@@ -2,11 +2,20 @@ import { useId, useState } from "react";
 import { check } from "../expr";
 
 /** Root names an action or trigger expression may use. */
-const SCOPE_NAMES = ["record", "old", "form", "app", "params", "results", "steps", "trigger"];
+export const AUTOMATION_SCOPE_NAMES = [
+  "record",
+  "old",
+  "form",
+  "app",
+  "params",
+  "results",
+  "steps",
+  "trigger",
+];
 
 function expressionProblem(value: string | undefined, required: boolean): string | null {
   if (!value?.trim()) return required ? "Expression is required" : null;
-  const [first] = check(value, SCOPE_NAMES);
+  const [first] = check(value, AUTOMATION_SCOPE_NAMES);
   return first ? first.message : null;
 }
 

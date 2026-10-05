@@ -3,6 +3,7 @@ import { asTauriError, type TauriError } from "../lib/api";
 import { useDocumentConfig } from "../lib/config-store";
 import { chooseBundleDestination } from "../lib/dialog";
 import { useShell } from "../shell/context";
+import { expressionBlocker, loadExpressionIssues } from "../shell/expressionIssues";
 import { documentState, exportRuntimeBundle } from "./api";
 import { BundleError } from "./BundleError";
 import type { BundleInfo } from "./types";
@@ -60,6 +61,15 @@ export function ReleaseTab() {
       };
       await update((draft) => ({ ...draft, release }), "Edit release");
       await settled();
+      // Rust cannot check expressions (they run only in TypeScript), so the gate is here.
+      const expressionErrors = await loadExpressionIssues(config);
+      if (expressionErrors.length) {
+        setError({
+          code: "EXPRESSION_ERRORS",
+          message: expressionBlocker(expressionErrors.length),
+        });
+        return;
+      }
       const path = await chooseBundleDestination(`${config.name}-${release.version}`);
       if (!path) {
         setStatus("Export canceled.");

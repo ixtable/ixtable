@@ -16,6 +16,8 @@ const messages: Record<string, string> = {
   INSTALL_FAILED: "The bundle could not be installed. Nothing was changed.",
   INVALID_VERSION: "Use a semantic version such as 1.2.0.",
   VALIDATION_FAILED: "Fix the problems in this application before exporting.",
+  EXPRESSION_ERRORS:
+    "Some expressions have errors. Fix them in Settings › Problems before exporting.",
   READ_ONLY: "Runtime bundles are read-only.",
   MISSING_FILE: "The file could not be read.",
 };

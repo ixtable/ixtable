@@ -167,6 +167,11 @@ words of PRD §4.1.
 - A fork of the Apache-2.0 desktop code can remove any of these checks for
   its own users. The checks protect honest Runtimes from tampered files.
 
+Export is also refused while any expression has an error
+(`EXPRESSION_ERRORS`). Rust cannot evaluate expressions, so Studio runs that
+check in TypeScript before calling `export_runtime_bundle`; see
+[expression-language.md](expression-language.md).
+
 ## Consequences
 
 - No account or network is needed to export, verify, or update a bundle.

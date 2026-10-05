@@ -211,8 +211,15 @@ it("runs async triggers on the durable queue, with retry after failure and cance
   ]);
   await user.click(screen.getByRole("tab", { name: "Jobs" }));
   await user.selectOptions(await screen.findByLabelText("Status"), "queued");
-  const cancel = await screen.findByRole("button", { name: /^Cancel Async audit job/ }, LONG);
+  const requeued = () =>
+    screen
+      .queryAllByRole("row")
+      .filter((row) => within(row).queryByText("queued") && within(row).queryByText(/Can.t add/));
+  await waitFor(() => expect(requeued()).toHaveLength(1), LONG);
+  const cancel = within(requeued()[0]).getByRole("button", { name: /^Cancel Async audit job/ });
   await user.click(cancel);
+  await waitFor(() => expect(requeued()).toHaveLength(0), LONG);
+  expect(screen.queryByRole("alert")).not.toBeInTheDocument();
   await user.selectOptions(screen.getByLabelText("Status"), "cancelled");
   await waitFor(() => expect(within(jobsTable()).getByText("cancelled")).toBeInTheDocument(), LONG);
   expect(await auditMessages()).toEqual(["queued 1", "retried 2"]);

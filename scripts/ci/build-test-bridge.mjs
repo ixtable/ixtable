@@ -13,8 +13,10 @@ const crate = join(dirname(fileURLToPath(import.meta.url)), "..", "..", "src-tau
 const targetDir = join(crate, "target");
 
 // An empty RUSTC_WRAPPER disables any wrapper (sccache) set in cargo config;
-// the bridge cdylib must be built by plain rustc.
-const result = spawnSync("cargo", ["build", "--lib", "--features", "test-bridge"], {
+// the bridge cdylib must be built by plain rustc. Extra arguments (`--release` for the
+// performance harness) are passed to cargo.
+const args = ["build", "--lib", "--features", "test-bridge", ...process.argv.slice(2)];
+const result = spawnSync("cargo", args, {
   cwd: crate,
   stdio: "inherit",
   env: { ...process.env, RUSTC_WRAPPER: "" },

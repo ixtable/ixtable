@@ -1,7 +1,7 @@
 import { runQuery } from "../automation/runner";
 import { runSavedQueryPage } from "../query/api";
 import type { DesignForm, Relationship } from "../design/schema";
-import { evaluate } from "../expr";
+import { evaluate, evaluateBoolean, parse } from "../expr";
 import { inspectTable, listDatabaseObjects, readTablePage } from "../lib/api";
 import { registerRecordHook } from "../lib/records";
 import type { DataValue, DocumentConfig, Filter, Sort, TableSchema } from "../lib/types";
@@ -13,6 +13,7 @@ import {
   type ScanResult,
   scanFiltered,
 } from "./conditions";
+import { pushdown } from "./pushdown";
 import { fromDataValue, type RecordValues, rowObject } from "./values";
 
 /**
@@ -169,6 +170,37 @@ const filterScope = (scope: Record<string, unknown>) => ({
   ...scope,
 });
 
+/**
+ * A table source's reader with the pushable part of the row filter applied in DuckDB
+ * (`pushdown`), and the predicate for the rest (null when DuckDB applies all of it).
+ * Null when nothing can be pushed; the whole filter then runs per row as before.
+ */
+async function pushedReader(
+  form: DesignForm,
+  read: (request: PageRequest) => Promise<RecordPage>,
+  scope: Record<string, unknown>,
+) {
+  const table = form.source?.kind === "table" ? form.source.table : null;
+  if (!table || !form.filter?.trim()) return null;
+  const split = pushdown(parse(form.filter), scope, (await tableSchema(table)).columns);
+  if (!split.filters.length) return null;
+  const rest = split.rest;
+  const keep: RowPredicate | null = rest
+    ? (record) => {
+        try {
+          return evaluateBoolean(rest, { ...scope, record });
+        } catch {
+          return false;
+        }
+      }
+    : null;
+  return {
+    read: (request: PageRequest) =>
+      read({ ...request, filters: [...request.filters, ...split.filters] }),
+    keep,
+  };
+}
+
 /** Reads pages of a form's source (table page or saved query page), or null without one. */
 function sourceReader(form: DesignForm, bound: Record<string, unknown>) {
   const source = form.source;
@@ -190,8 +222,10 @@ export async function loadPage(
   scope: Record<string, unknown> = {},
   bound: Record<string, unknown> = {},
 ): Promise<RecordPage> {
-  const keep = rowFilter(form.filter, filterScope(scope));
-  const read = sourceReader(form, bound);
+  let keep = rowFilter(form.filter, filterScope(scope));
+  let read = sourceReader(form, bound);
+  const pushed = read && keep ? await pushedReader(form, read, filterScope(scope)) : null;
+  if (pushed) ({ read, keep } = pushed);
   let page: RecordPage;
   if (!read) page = { columns: [], rows: [], identities: null, total: 0 };
   else if (keep) {
@@ -250,9 +284,11 @@ export async function firstRecordId(
   bound: Record<string, unknown> = {},
   scope: Record<string, unknown> = {},
 ): Promise<unknown> {
-  const read = sourceReader(form, bound);
+  let read = sourceReader(form, bound);
   if (!read) return null;
-  const keep = rowFilter(form.filter, filterScope(scope));
+  let keep = rowFilter(form.filter, filterScope(scope));
+  const pushed = keep ? await pushedReader(form, read, filterScope(scope)) : null;
+  if (pushed) ({ read, keep } = pushed);
   const scan = await scanFiltered(
     async (offset, limit) => {
       const chunk = await read({ offset, limit, sorts: [], filters: [] });

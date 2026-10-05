@@ -5,7 +5,7 @@
 pub mod capabilities;
 pub mod commands;
 #[cfg(test)]
-mod conformance;
+pub(crate) mod conformance;
 #[cfg(test)]
 mod conformance_more;
 pub mod model;

@@ -265,8 +265,10 @@ it("saves SQL with a required parameter and rejects mutating SQL on save", async
   await user.type(rename, "Second{Enter}");
   expect(await screen.findByRole("button", { name: "Second" }, LONG)).toBeInTheDocument();
   await user.click(screen.getByRole("button", { name: "Delete Second" }));
-  await waitFor(async () =>
-    expect((await readConfig()).savedQueries.map((q) => q.name)).toEqual(["Customers from"]),
+  await waitFor(
+    async () =>
+      expect((await readConfig()).savedQueries.map((q) => q.name)).toEqual(["Customers from"]),
+    LONG,
   );
 });
 

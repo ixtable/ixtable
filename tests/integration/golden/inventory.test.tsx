@@ -141,8 +141,17 @@ async function newTransfer(
 }
 
 async function post(user: User, form: HTMLElement) {
-  await user.click(await within(form).findByRole("button", { name: "Post transfer" }, LONG));
+  const button = await within(form).findByRole("button", { name: "Post transfer" }, LONG);
+  await waitFor(() => expect(button).toBeEnabled(), LONG);
+  await user.click(button);
 }
+
+const formMessages = (form: HTMLElement) =>
+  within(form)
+    .queryAllByRole(/^(alert|status)$/)
+    .map((node) => node.textContent?.trim())
+    .filter(Boolean)
+    .join(" | ") || "none";
 
 const movements = () => scalar("SELECT count(*) FROM stock_movements");
 const onHand = (sku: string, code: string) =>
@@ -222,6 +231,7 @@ it("Inventory: constraints, transactional transfers, and concurrency policies", 
       await eventually(async () =>
         expect(
           await sql("SELECT status, posted_on IS NOT NULL FROM transfers WHERE id = 1"),
+          `form messages: ${formMessages(form)}`,
         ).toEqual([["posted", true]]),
       );
       journey.check("two movements", Number(await movements()) - Number(before), 2);

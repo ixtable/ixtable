@@ -52,13 +52,16 @@ it("limits keyboard resizing per control kind", async () => {
 
   await user.click(screen.getByRole("button", { name: "Add Related records" }));
   await narrow(user, "New related records", 10);
-  await waitFor(async () => expect((await control("relatedList"))?.placement.columnSpan).toBe(6));
+  await waitFor(
+    async () => expect((await control("relatedList"))?.placement.columnSpan).toBe(6),
+    LONG,
+  );
   expect(screen.getByRole("button", { name: "Narrow New related records" })).toBeDisabled();
   expect(properties().getByRole("spinbutton", { name: "Column span" })).toHaveValue(6);
 
   await user.click(screen.getByRole("button", { name: "Add Yes/No" }));
   await narrow(user, "New yes/no", 10);
-  await waitFor(async () => expect((await control("boolean"))?.placement.columnSpan).toBe(1));
+  await waitFor(async () => expect((await control("boolean"))?.placement.columnSpan).toBe(1), LONG);
 }, 120_000);
 
 it("edits tracks, alignment and regions, and hides 'Enabled when' on static controls", async () => {

@@ -46,11 +46,15 @@ jobs:
           node-version: lts/*
           cache: npm
           cache-dependency-path: web/package-lock.json
+      # Same CLI pin as cloud.yml.
       - uses: supabase/setup-cli@v1
         with:
-          version: latest
-      - name: Start Supabase
-        run: supabase start
+          version: 2.119.0
+      # Bare `supabase start` boots every Edge Function with BOOT_ERROR: up.mjs
+      # also writes the dev function secrets, installs the functions' npm deps
+      # (supabase/functions/node_modules), resets the db and waits for health.
+      - name: Start local Supabase stack
+        run: node scripts/cloud/up.mjs
       - name: Export Supabase env
         run: |
           STATUS=$(supabase status -o env)

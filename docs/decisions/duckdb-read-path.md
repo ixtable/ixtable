@@ -28,7 +28,10 @@ access on only to load the bundled extensions and attach `data`, then runs
 and `SET lock_configuration=true`. After that DuckDB itself refuses
 `read_csv`, `read_text`, `glob`, file replacement scans (`FROM '/etc/passwd'`),
 `COPY TO`, `ATTACH`, `INSTALL`, and loading new extensions, and no `SET` can
-undo the lock. Attached databases keep working.
+undo the lock. Attached databases keep working. The lock is applied even when
+the attach fails. The reader then remembers the error, and every read fails
+with `Datasource unavailable: ...` instead of falling back to the embedded
+file.
 
 After every write, the manager calls `mark_data_dirty`, which runs
 `ReadRuntime::refresh`. For SQLite, refresh detaches and reattaches `data`
@@ -66,7 +69,8 @@ only when `read_only_guard` rejected the SQL.
 
 User SQL also passes `read_only_guard`, as defense in depth. It ignores string
 literals, quoted identifiers, and comments (`data::sqltext::mask`), allows one
-statement with an optional trailing `;`, and rejects writes, DDL, `ATTACH`,
+statement with an optional trailing `;` that starts with `SELECT`, `WITH`,
+`VALUES`, `SHOW`, or `DESCRIBE`, and rejects writes, DDL, `ATTACH`,
 `INSTALL`, `LOAD`, `COPY`, `PRAGMA`, `SET`, and file or scanner table
 functions such as `read_csv_auto`, any `read_*(...)` or `*_scan(...)` call,
 `postgres_query`, and `duckdb_databases` (which would show the PostgreSQL
@@ -153,19 +157,25 @@ Linux for extensions that do.
   0600 into 0700 directories, and reused; a tampered archive (either hash) is
   rejected; a tampered cache file is replaced; eight concurrent unpacks agree
   and leave no temp files; override paths are still verified; every platform
-  has both pins in the manifest; the official archive for the host platform
+  has both pins in the manifest; an unpacked dev copy is preferred and still
+  verified; the official archive for the host platform
   unpacks to a file DuckDB loads.
 - `src-tauri/src/data/tests.rs`: autoload is rejected, values convert
   losslessly to canonical forms, `read_only_guard` rejects writes and scanner
   functions but accepts keywords inside literals and identifiers, and file
   reads, replacement scans, `COPY TO`, `ATTACH`, `INSTALL`/`LOAD`, `glob` and
-  `SET` fail on the reader even when the guard is bypassed.
+  `SET` fail on the reader even when the guard is bypassed. Table-page search
+  escapes `LIKE` wildcards and is case-insensitive, and `in` filters match
+  nothing when the list is empty.
 - `src-tauri/src/recordstore/conformance.rs`: every scenario reads through
   DuckDB after writing through the store, on SQLite and on PostgreSQL when
   `IXTABLE_TEST_POSTGRES_URL` is set (the `postgres` CI job).
 - `src-tauri/src/queries/tests.rs`: named placeholders rewritten outside
   literals, typed binding, injection attempts bound, mutating SQL rejected,
   cancellation.
+- `src-tauri/src/queries/tests_page.rs`: saved-query pages run in DuckDB with
+  exact totals, bound filters and checked column names, `in` filters that
+  match nothing when empty, and literal case-insensitive search.
 - `src-tauri/src/data/race_tests.rs` and `tests/integration/read-write-race.test.tsx`:
   concurrent writes and reads on one file and one session never fail, and
   each write is visible to the next read. Without the gate the integration
@@ -174,3 +184,10 @@ Linux for extensions that do.
   `tests/integration/query-mode.test.tsx`: read SQL, write rejection,
   parameters, and cancel through the UI and the real bridge.
 - [RecordStore and DuckDB type matrix](./recordstore-type-matrix.md).
+
+## Audit log
+
+- 2026-10-05: Added the failed-attach behavior and the guard's allowed leading
+  keywords, and added `queries/tests_page.rs` and the paging, search, and dev
+  copy tests to Evidence. Status unchanged: the macOS and Windows CI jobs have
+  not passed on main.

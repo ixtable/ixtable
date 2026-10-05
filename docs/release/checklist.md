@@ -2,7 +2,10 @@
 
 PRD §6.1 makes Windows, macOS and Linux all release-blocking. PRD Phase 5 asks
 for signed installers and update channels on every platform. A release ships
-only when every gate below is checked for all three platforms.
+only when every gate below is checked for all three platforms. The map of
+PRD gates to automated checks and human sign-offs is
+[../release-checklist.md](../release-checklist.md)
+(`node scripts/ci/release-gates.mjs`).
 
 ## 1. Prepare
 
@@ -36,11 +39,15 @@ Pushing the tag runs these gates. Any failure stops the release.
 | Rust, unit, integration tests | `gates` | `gates` | `gates` |
 | Golden application suites (`tests/integration/golden`) | `gates` | `gates` | `gates` |
 | DuckDB sqlite + postgres scanners fetched and hash-checked | `build` | `build` (arm64 + x64) | `build` |
+| Automated release gates (`scripts/ci/release-gates.mjs`) | | | `plan` |
 | Signing secrets present (beta/stable fail closed) | `build` | `build` | `build` |
+| Production updater and cloud public keys set, not dev/test keys | `build` | `build` | `build` |
+| Updater private key matches `IXTABLE_UPDATER_PUBKEY` (probe) | `build` | `build` | `build` |
+| Binary pins the release cloud key, not the dev updater key | `build` | `build` | `build` |
 | Installers signed | Authenticode `Valid` on exe/msi | `codesign --verify --deep --strict`, `spctl` | — |
 | Notarized and stapled | — | `stapler validate` on each dmg | — |
 | Universal binary | — | `lipo` shows arm64 + x86_64 | — |
-| Updater signatures verify against `plugins.updater.pubkey` | `build` | `build` | `build` |
+| Updater signatures verify against `IXTABLE_UPDATER_PUBKEY` | `build` | `build` | `build` |
 | Smoke launch (app stays up 20 s with a fresh state dir) | `build` | `build` | `build` (xvfb) |
 
 ## 3. Manual sign-off (before approving `publish-update-manifest`)

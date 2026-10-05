@@ -1,6 +1,8 @@
 # Windows support
 
 Status: accepted, pending Windows CI. Windows is a release-blocking platform (PRD §6.1).
+Green Desktop CI on Windows, macOS, and Linux is the `green-ci-all-os` gate in
+[the release gates](../release-checklist.md).
 
 ## What failed
 
@@ -26,6 +28,10 @@ failures. The fix syncs through the handle that wrote the file.
 has loaded, and Windows cannot delete a loaded DLL. The test now drops the
 connection and treats cleanup as best-effort on Windows only.
 
+**Missing `icons/icon.ico` (fixed).** `tauri-build` needs `icon.ico` to generate
+the Windows resource file, so every Windows Rust build failed before any test ran.
+`src-tauri/icons/icon.ico` is now committed.
+
 **Test bridge load error 127 (medium confidence).** napi-sys 2 resolves `napi_*`
 functions at runtime through `libloading` on Windows, so N-API imports are not the
 cause. `tauri-runtime-wry` and `rfd` import `TaskDialogIndirect` from `comctl32.dll`.
@@ -45,3 +51,21 @@ DLL in the same way or remove the import. We also checked directory renames and
 open handles in the installation paths (`install_fresh`, `update_existing`,
 `checkpoint`). SQLite connections are closed before every rename, and no rename
 targets an existing directory. We made no changes there.
+
+## CI status on main (2026-10-05)
+
+Every `desktop.yml` and `cloud.yml` run since the workflows were added has failed
+within seconds, on Ubuntu as well as Windows and macOS. No job was ever assigned a
+runner: the jobs report `runner_id` 0, have no steps, and have no logs. That is
+an account or billing setting for GitHub Actions, not a test or build failure,
+and no change in this repository can fix it. Until a maintainer restores runners,
+there are no Windows or macOS results to act on. The fixes above, including the
+delay-load, are still unverified on Windows. The Windows `dumpbin /imports` step
+stays non-blocking because it is a diagnostic, not a test. Remove it once a
+Windows golden run passes.
+
+## Audit log
+
+- 2026-10-05: added the `icon.ico` fix, the CI status on main (no runner was
+  ever assigned), and the link to the release gates. The pending items are
+  unchanged.

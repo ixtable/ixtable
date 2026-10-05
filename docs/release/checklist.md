@@ -23,6 +23,12 @@ PRD gates to automated checks and human sign-offs is
       `supabase/**`. Its E2E job starts the stack with
       `node scripts/cloud/up.mjs`, like `cloud.yml`. A bare `supabase start`
       boots the Edge Functions without their npm dependencies.
+- [ ] `Deploy Web` (`.github/workflows/deploy-web.yml`) published the
+      website and its Lighthouse preview report. The Lighthouse step runs a
+      pinned `lighthouse@13.5.0` on Node 24 against the runner's Chrome and
+      retries the launch up to three times, because Chrome sometimes fails to
+      start on a cold runner. A Cloudflare API error on the deploy step is an
+      account or token problem, not a code failure.
 - [ ] If this release bumps the archive `FORMAT_VERSION`, a new
       `tests/fixtures/archives/format-<N>/` is committed
       (`node scripts/ci/write-archive-fixtures.mjs`) and no older fixture

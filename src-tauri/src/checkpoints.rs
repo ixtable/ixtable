@@ -212,6 +212,7 @@ impl DocumentManager {
                     // A copy keeps the checkpoint's unknown (newer-build) tables.
                     preserve_from: Some(Path::new(&info.path)),
                     preserve_copy: true,
+                    reuse_from: None,
                 },
             )?;
             Ok::<_, AppError>(())

@@ -82,13 +82,32 @@ jobs:
       run:
         working-directory: ${{ github.workspace }}
     steps:
+      # Lighthouse 13 needs Node 22.19 or newer; the runner default is older.
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+
+      # Pinned Lighthouse, the runner's preinstalled Chrome, and the new headless
+      # mode. Chrome sometimes fails to open its debugging port on a cold
+      # runner, so the launch is retried before the step fails.
       - name: Run Lighthouse against preview
+        env:
+          CHROME_PATH: /usr/bin/google-chrome
         run: |
-          npx --yes lighthouse "https://preview-${{ github.event.pull_request.number }}.ixtable.pages.dev" \
-            --output html \
-            --output-path /tmp/lighthouse-report.html \
-            --chrome-flags="--headless --no-sandbox --disable-dev-shm-usage" \
-            --quiet
+          for attempt in 1 2 3; do
+            if npx --yes lighthouse@13.5.0 "https://preview-${{ github.event.pull_request.number }}.ixtable.pages.dev" \
+              --output html \
+              --output-path /tmp/lighthouse-report.html \
+              --chrome-flags="--headless=new --no-sandbox --disable-dev-shm-usage --disable-gpu" \
+              --max-wait-for-load=60000 \
+              --quiet; then
+              exit 0
+            fi
+            echo "Lighthouse attempt $attempt failed"
+            sleep 10
+          done
+          exit 1
 
       - name: Upload Lighthouse report
         id: upload

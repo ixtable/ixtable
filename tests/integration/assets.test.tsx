@@ -24,7 +24,9 @@ async function openSettingsTab(user: User, tab: string) {
 
 async function importFile(user: User, path: string) {
   dialogMock.open.mockResolvedValueOnce(path);
-  await user.click(screen.getByRole("button", { name: "Import asset" }));
+  const button = screen.getByRole("button", { name: "Import asset" });
+  await user.click(button);
+  await waitFor(() => expect(button).toBeEnabled(), LONG);
 }
 
 it("imports, deduplicates, exports, and removes application assets", async () => {

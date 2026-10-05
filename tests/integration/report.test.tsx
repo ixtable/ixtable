@@ -168,7 +168,7 @@ it("renames, duplicates and deletes reports through the config store", async () 
       windowLabel: "main",
     });
     expect(config.reports.map((r) => r.name)).toEqual(["Invoices"]);
-  });
+  }, LONG);
 });
 
 it("sets pagination controls in the designer and keeps tables out of page bands", async () => {

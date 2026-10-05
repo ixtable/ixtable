@@ -26,13 +26,13 @@ Studio groups its tools into modes. Switch modes with the mode buttons in the si
 | Mode | Use it for |
 | --- | --- |
 | [Data](./concepts/data-view) | Create tables, design columns and relationships, and edit records in a grid |
-| Query | Write SQL or build a query visually, add parameters, and save it |
+| [Query](./guides/queries) | Write SQL or build a query visually, add parameters, and save it |
 | [Design](./concepts/design-view) | Build forms on a resizable grid with validation and computed fields |
-| Reports | Lay out printable reports with groups and totals, then print or save a PDF |
-| Dashboards | Arrange charts, numbers, forms, and reports on the same grid that forms use |
-| Automation | Define actions and record triggers, and watch background jobs |
-| Settings | Manage assets, the datasource, roles, migrations, releases, and logs |
-| Runtime | Run the application the way its users will see it |
+| [Reports](./guides/reports) | Lay out printable reports with groups and totals, then print or save a PDF |
+| [Dashboards](./guides/dashboards) | Arrange charts, numbers, forms, and reports on the same grid that forms use |
+| [Automation](./guides/automation) | Define actions and record triggers, and watch background jobs |
+| Settings | Manage assets, the datasource, [roles](./guides/roles), [migrations](./guides/migrations), releases, and logs |
+| [Runtime](./guides/runtime-forms) | Run the application the way its users will see it |
 
 ## Where records live
 
@@ -40,7 +40,7 @@ Records live in an embedded SQLite database inside the project file, or in a Pos
 
 ## Sharing an application
 
-You can share an application two ways. Send the `.ixt` file to give someone an editable copy. Export a runtime-only bundle from Settings to give someone an application they can run but not edit. [Deployment](./concepts/deployment) covers bundles.
+You can share an application two ways. Send the `.ixt` file to give someone an editable copy. Export a runtime-only bundle from Settings to give someone an application they can run but not edit. [Deployment](./concepts/deployment) and [Runtime bundles](./guides/runtime-bundles) cover bundles.
 
 ## Generated screenshots
 
@@ -60,3 +60,6 @@ The command tests the captured states before it copies selected images beside th
 - [Design view](./concepts/design-view)
 - [Testing](./concepts/testing)
 - [Deployment](./concepts/deployment)
+- [Queries](./guides/queries)
+- [Runtime forms](./guides/runtime-forms)
+- [Expressions](./reference/expressions)

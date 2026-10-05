@@ -220,6 +220,66 @@ test.describe("web QA", () => {
   });
 });
 
+const GUIDE_PAGES = [
+  { path: "/docs/guides/queries", title: "Queries" },
+  { path: "/docs/guides/runtime-forms", title: "Runtime forms" },
+  { path: "/docs/guides/reports", title: "Reports" },
+  { path: "/docs/guides/dashboards", title: "Dashboards" },
+  { path: "/docs/guides/automation", title: "Automation" },
+  { path: "/docs/guides/roles", title: "Roles and permissions" },
+  { path: "/docs/guides/migrations", title: "Migrations" },
+  { path: "/docs/guides/runtime-bundles", title: "Runtime bundles" },
+  { path: "/docs/reference/expressions", title: "Expressions" },
+] as const;
+
+test.describe("web QA: guides", () => {
+  test("every guide is in the sidebar and fits desktop and mobile", async ({ page }) => {
+    await page.setViewportSize({ width: 1440, height: 1000 });
+    await page.goto("/docs/");
+    const sidebar = page.getByRole("navigation", { name: "Docs sidebar" });
+    for (const category of ["Guides", "Reference"]) {
+      const toggle = sidebar.getByRole("button", { name: category, exact: true });
+      if ((await toggle.getAttribute("aria-expanded")) === "false") await toggle.click();
+    }
+    for (const guide of GUIDE_PAGES) {
+      await expect(sidebar.getByRole("link", { name: guide.title, exact: true })).toBeVisible();
+    }
+
+    await sidebar.getByRole("link", { name: "Roles and permissions", exact: true }).click();
+    await expect(
+      page.getByRole("heading", { level: 1, name: "Roles and permissions" }),
+    ).toBeVisible();
+    await expect(
+      page.getByRole("heading", { level: 2, name: "PostgreSQL limitation" }),
+    ).toBeVisible();
+    await capture(page, "guides-01-roles-desktop", [
+      "The Roles and permissions page is open with the Guides category expanded in the sidebar.",
+      "The PostgreSQL limitation section and the role tables render without clipping.",
+    ]);
+
+    await page.goto("/docs/reference/expressions");
+    await capture(page, "guides-02-expressions-desktop", [
+      "The expressions reference shows its operator, function, and format tables.",
+      "Code samples and tables are readable and none overflow the article column.",
+    ]);
+
+    await page.setViewportSize({ width: 390, height: 844 });
+    for (const guide of GUIDE_PAGES) {
+      await page.goto(guide.path);
+      await expect(page.getByRole("heading", { level: 1, name: guide.title })).toBeVisible();
+      expect(
+        await page.evaluate(() => document.documentElement.scrollWidth),
+        `${guide.path} scrolls horizontally`,
+      ).toBeLessThanOrEqual(390);
+    }
+    await page.goto("/docs/guides/automation");
+    await capture(page, "guides-03-automation-mobile", [
+      "The automation guide fits a phone width with no horizontal page scroll.",
+      "Wide tables scroll inside their own box instead of widening the page.",
+    ]);
+  });
+});
+
 test.describe("web QA: account pages", () => {
   test("pricing and log in pages fit a phone screen", async ({ page }) => {
     await page.setViewportSize({ width: 390, height: 844 });

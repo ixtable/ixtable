@@ -44,7 +44,7 @@ A password protects the bundle at rest and against casual unauthorized opening. 
 
 ## Open a bundle
 
-The recipient chooses **Open runtime bundle…** on the start screen, or double-clicks the `.ixtr` file. For a protected bundle, ixtable asks for the **Bundle password** and the recipient chooses **Unlock**.
+The recipient chooses **Open runtime bundle…** on the start screen, or double-clicks the `.ixtr` file. For a protected bundle, ixtable asks for the **Bundle password** before it opens anything.
 
 ixtable checks the file before it reads any of the project:
 

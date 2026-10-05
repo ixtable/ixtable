@@ -18,6 +18,11 @@ PRD gates to automated checks and human sign-offs is
       Each golden job uploads its journey evidence as `golden-evidence-<os>`.
 - [ ] `Cloud contracts` CI (`.github/workflows/cloud.yml`) is green for the
       last change to `supabase/**` or the cloud clients.
+- [ ] `CI` (`.github/workflows/ci.yml`: website typecheck and Playwright
+      end-to-end tests) is green for the last change to `web/**` or
+      `supabase/**`. Its E2E job starts the stack with
+      `node scripts/cloud/up.mjs`, like `cloud.yml`. A bare `supabase start`
+      boots the Edge Functions without their npm dependencies.
 - [ ] If this release bumps the archive `FORMAT_VERSION`, a new
       `tests/fixtures/archives/format-<N>/` is committed
       (`node scripts/ci/write-archive-fixtures.mjs`) and no older fixture

@@ -15,8 +15,9 @@ vi.mock("@xyflow/react", () => ({
 
 async function renderSettledDocument() {
   const user = await renderNewDocument();
-  await screen.findByRole("status", {}, { timeout: 20_000 });
-  await waitFor(() => expect(screen.queryByRole("status")).not.toBeInTheDocument());
+  await waitFor(() => expect(screen.queryByRole("status")).not.toBeInTheDocument(), {
+    timeout: 20_000,
+  });
   return user;
 }
 

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { asTauriError } from "../lib/api";
 import { useDocumentConfig } from "../lib/config-store";
 import { StepLogTable } from "./ActionsPanel";
@@ -23,12 +23,18 @@ export function JobsPanel({ refreshMs = 2000 }: { refreshMs?: number }) {
   const [open, setOpen] = useState<string | null>(null);
   const [revision, setRevision] = useState(0);
 
+  // Loads overlap (timer, change events, actions, filter changes); only the latest may
+  // render, or a slow response for an old filter would replace the current list.
+  const latest = useRef(0);
   const load = useCallback(async () => {
+    const request = ++latest.current;
     try {
-      setJobs(await listJobs({ status: status || null }));
+      const list = await listJobs({ status: status || null });
+      if (request !== latest.current) return;
+      setJobs(list);
       setError("");
     } catch (reason) {
-      setError(asTauriError(reason).message);
+      if (request === latest.current) setError(asTauriError(reason).message);
     }
   }, [status]);
   useEffect(() => {

@@ -225,6 +225,56 @@ jobs:
           include-hidden-files: true
           retention-days: 7
 
+  # Performance budgets (PRD §27.3, docs/decisions/performance-budgets.md). Report-only:
+  # results go to the job summary and an artifact, and a budget miss never fails CI.
+  perf:
+    name: Performance budgets (report-only)
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: ixtable
+          POSTGRES_PASSWORD: pg-secret-7f3a
+          POSTGRES_DB: ixtable_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U ixtable -d ixtable_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      IXTABLE_PERF: '1'
+      IXTABLE_TEST_POSTGRES_URL: postgresql://ixtable:pg-secret-7f3a@localhost:5432/ixtable_test?sslmode=disable
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/setup-desktop
+        with:
+          cache-key: desktop-perf
+      # Release build, like the shipped app; it also writes the fixture the UI harness opens.
+      - name: Rust harness
+        working-directory: src-tauri
+        run: cargo test --release --lib perf_tests -- --test-threads=1
+      - name: Build NAPI test bridge (release)
+        run: node scripts/ci/build-test-bridge.mjs --release
+      - name: UI harness
+        run: npx vitest run --config vitest.perf.config.ts
+      - name: Publish results
+        if: always()
+        run: node scripts/ci/perf-report.mjs
+      - name: Upload results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: performance-budgets
+          path: |
+            reports/perf/*.json
+            reports/perf/summary.md
+          if-no-files-found: warn
+          retention-days: 30
+
   build:
     name: Desktop binary links (ubuntu)
     runs-on: ubuntu-latest

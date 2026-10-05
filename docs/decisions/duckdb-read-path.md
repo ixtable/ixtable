@@ -32,10 +32,14 @@ undo the lock. Attached databases keep working.
 
 After every write, the manager calls `mark_data_dirty`, which runs
 `ReadRuntime::refresh`. For SQLite, refresh detaches and reattaches `data`
-in place (the file is in `allowed_paths`). DuckDB refuses a PostgreSQL
-`ATTACH` once external access is off, so a PostgreSQL refresh, a datasource
-switch, or a retry after a failed attach builds a fresh locked database
-instead. Either way the next read sees committed rows and DDL. Because writes
+in place (the file is in `allowed_paths`). For PostgreSQL the attachment
+stays: postgres_scanner reads rows live, in a new PostgreSQL transaction for
+each DuckDB transaction, so committed rows are already visible, and only its
+catalog cache (tables and columns) can be stale. Refresh runs
+`CALL pg_clear_cache()` to drop it. DuckDB refuses a PostgreSQL `ATTACH` once
+external access is off, so a datasource switch, a failed clear, or a retry
+after a failed attach builds a fresh locked database instead. Either way the
+next read sees committed rows and DDL. Because writes
 commit before the refresh returns, a workflow that writes and then reads gets
 its own write back. Config edits re-attach only when `datasource` changed, and
 build the new reader outside the sessions lock.
@@ -136,9 +140,10 @@ Linux for extensions that do.
 
 - Reads cannot write. Writes cannot skip the RecordStore and its
   capabilities, constraint mapping, and concurrency checks.
-- Reattaching after each write is simple and correct. It costs one detach and
-  attach per write, which is cheap for a local file and a network round trip
-  for PostgreSQL.
+- Reattaching after each SQLite write is simple and correct, and cheap for a
+  local file. A PostgreSQL write costs one cache clear instead of loading the
+  extension, connecting, and reading the catalog again. Measured in
+  [performance budgets](./performance-budgets.md).
 - Upgrading DuckDB means a new crate pin, new extension hashes in two places
   (script and manifest), and a CI run on all three OSes. Unpacked copies of
   old versions stay in the state directory under their old hash.
@@ -162,7 +167,8 @@ Linux for extensions that do.
   `SET` fail on the reader even when the guard is bypassed.
 - `src-tauri/src/recordstore/conformance.rs`: every scenario reads through
   DuckDB after writing through the store, on SQLite and on PostgreSQL when
-  `IXTABLE_TEST_POSTGRES_URL` is set (the `postgres` CI job).
+  `IXTABLE_TEST_POSTGRES_URL` is set (the `postgres` CI job). A PostgreSQL
+  refresh keeps the same DuckDB database and still sees new rows and tables.
 - `src-tauri/src/queries/tests.rs`: named placeholders rewritten outside
   literals, typed binding, injection attempts bound, mutating SQL rejected,
   cancellation.

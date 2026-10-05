@@ -18,6 +18,11 @@
 //! archive of the same document. Views, triggers, and virtual tables are not copied
 //! (they may reference or fire on tables whose shape changed), and nothing is copied
 //! from an archive that belongs to a different document.
+//!
+//! Incremental saves: with `reuse_from`, payloads that did not change since that
+//! archive (same document, current format) are copied as compressed rows into the new
+//! temp archive instead of being compressed again (`reuse`). The write is still a
+//! complete temp file that is verified and renamed, so crash safety is unchanged.
 use crate::archive::{ArchiveDocument, ArchiveError, ArchiveMetadata, Attachment, DocumentConfig};
 use crate::logging;
 use chrono::Utc;
@@ -31,6 +36,7 @@ use std::{
 use uuid::Uuid;
 
 mod preserve;
+mod reuse;
 mod size;
 mod stream;
 mod workspace;
@@ -41,8 +47,8 @@ pub use size::{size_entries, SizeEntry};
 use stream::{read_payload, write_payload};
 pub use stream::{HashingReader, HashingWriter};
 pub use workspace::{
-    asset_content, asset_dir, check_ids, extract_document, extract_to, write_asset_metadata,
-    write_atomic, write_config_files, write_session_metadata,
+    asset_content, asset_dir, check_ids, data_stamp, extract_document, extract_to,
+    write_asset_metadata, write_atomic, write_config_files, write_session_metadata, DataStamp,
 };
 
 pub const FORMAT_VERSION: i64 = 2;
@@ -71,12 +77,19 @@ CREATE TABLE payload_chunks(owner TEXT NOT NULL, seq INTEGER NOT NULL CHECK(seq>
 pub enum Payload<'a> {
     Bytes(&'a [u8]),
     File(&'a Path),
+    /// The data payload of `WriteRequest::reuse_from`, copied without recompressing.
+    Reuse,
 }
 impl Payload<'_> {
     fn reader(&self) -> Result<Box<dyn Read + '_>, ArchiveError> {
         Ok(match self {
             Payload::Bytes(b) => Box::new(*b),
             Payload::File(p) => Box::new(File::open(p)?),
+            Payload::Reuse => {
+                return Err(ArchiveError::Invalid(
+                    "only the data payload can be reused".into(),
+                ))
+            }
         })
     }
 }
@@ -91,12 +104,19 @@ pub struct WriteRequest<'a> {
     /// The new archive is a deliberate copy of `preserve_from` under a new document
     /// id (Restore as copy), so its unknown tables carry over despite the id change.
     pub preserve_copy: bool,
+    /// Previous archive of the same document whose unchanged payloads are copied
+    /// instead of recompressed. The caller vouches that it was not changed externally.
+    pub reuse_from: Option<&'a Path>,
 }
 
 #[derive(Debug, Default)]
 pub struct WriteReport {
     pub preserved_tables: Vec<String>,
     pub bytes: u64,
+    /// Payload owners (`data`, `attachment:<id>`) copied from `reuse_from`.
+    pub reused: Vec<String>,
+    /// State of the workspace `data.db` the data payload was taken at (set by the manager).
+    pub data_stamp: Option<DataStamp>,
 }
 
 #[derive(Debug, Clone)]
@@ -175,6 +195,15 @@ pub fn write(path: &Path, req: WriteRequest<'_>) -> Result<WriteReport, ArchiveE
             report.preserved_tables =
                 preserve_unknown_tables(&conn, prev, req.metadata, req.preserve_copy)?;
         }
+        let reusing = match req.reuse_from.filter(|p| p.exists()) {
+            Some(prev) => reuse::attach(&conn, prev, req.metadata)?,
+            None => false,
+        };
+        if matches!(req.data, Payload::Reuse) && !reusing {
+            return Err(ArchiveError::Corrupt(
+                "previous archive is not available to reuse the data payload".into(),
+            ));
+        }
         let tx = conn.transaction()?;
         tx.execute(
             "INSERT INTO archive_metadata VALUES(?1,?2,?3,?4,?5)",
@@ -186,11 +215,16 @@ pub fn write(path: &Path, req: WriteRequest<'_>) -> Result<WriteReport, ArchiveE
                 req.metadata.application_version
             ],
         )?;
-        let (first, sum, size) = write_payload(&tx, DATA_OWNER, &mut req.data.reader()?)?;
-        tx.execute(
-            "INSERT INTO data_payload VALUES(1,'zstd',?1,?2,?3)",
-            params![sum, size as i64, first],
-        )?;
+        if matches!(req.data, Payload::Reuse) {
+            reuse::copy_data(&tx)?;
+            report.reused.push(DATA_OWNER.into());
+        } else {
+            let (first, sum, size) = write_payload(&tx, DATA_OWNER, &mut req.data.reader()?)?;
+            tx.execute(
+                "INSERT INTO data_payload VALUES(1,'zstd',?1,?2,?3)",
+                params![sum, size as i64, first],
+            )?;
+        }
         let json =
             serde_json::to_string(req.config).map_err(|e| ArchiveError::Invalid(e.to_string()))?;
         tx.execute(
@@ -199,6 +233,10 @@ pub fn write(path: &Path, req: WriteRequest<'_>) -> Result<WriteReport, ArchiveE
         )?;
         for (a, payload) in &req.attachments {
             let owner = attachment_owner(&a.id);
+            if reusing && reuse::copy_attachment(&tx, a)? {
+                report.reused.push(owner);
+                continue;
+            }
             let (first, sum, size) = write_payload(&tx, &owner, &mut payload.reader()?)?;
             if !a.checksum.is_empty() && a.checksum != sum {
                 return Err(ArchiveError::Corrupt(format!(
@@ -221,6 +259,9 @@ pub fn write(path: &Path, req: WriteRequest<'_>) -> Result<WriteReport, ArchiveE
             )?;
         }
         tx.commit()?;
+        if reusing {
+            conn.execute_batch("DETACH DATABASE reuse")?;
+        }
         drop(conn);
         File::options()
             .read(true)
@@ -228,7 +269,8 @@ pub fn write(path: &Path, req: WriteRequest<'_>) -> Result<WriteReport, ArchiveE
             .open(&tmp)?
             .sync_all()?;
         // Validate the complete temporary archive before replacing a valid destination.
-        verify(&tmp)?;
+        // Reused payloads are byte copies of rows already verified in `reuse_from`.
+        verify_except(&tmp, &report.reused)?;
         report.bytes = fs::metadata(&tmp)?.len();
         fs::rename(&tmp, path)?;
         if let Ok(dir) = File::open(parent) {
@@ -370,6 +412,8 @@ fn attachment_rows(conn: &Connection) -> Result<Vec<Attachment>, ArchiveError> {
 pub(crate) struct Visitor<'a> {
     pub data: &'a mut dyn FnMut() -> Result<Box<dyn Write>, ArchiveError>,
     pub attachment: &'a mut dyn FnMut(&Attachment) -> Result<Box<dyn Write>, ArchiveError>,
+    /// Payload owners that are not decompressed (only their rows must exist).
+    pub skip: &'a [String],
 }
 
 pub(crate) fn visit(path: &Path, v: Visitor<'_>) -> Result<ArchiveDocument, ArchiveError> {
@@ -386,18 +430,19 @@ pub(crate) fn visit(path: &Path, v: Visitor<'_>) -> Result<ArchiveDocument, Arch
         [],
         |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
     )?;
-    let mut out = (v.data)()?;
-    read_payload(
-        &conn,
-        chunked,
-        DATA_OWNER,
-        first,
-        (&sum, size),
-        &mut out,
-        "data.db",
-    )?;
-    out.flush()?;
-    drop(out);
+    if !v.skip.iter().any(|o| o == DATA_OWNER) {
+        let mut out = (v.data)()?;
+        read_payload(
+            &conn,
+            chunked,
+            DATA_OWNER,
+            first,
+            (&sum, size),
+            &mut out,
+            "data.db",
+        )?;
+        out.flush()?;
+    }
     let config = read_config(&conn)?;
     for a in &attachments {
         let first: Vec<u8> = conn.query_row(
@@ -405,9 +450,12 @@ pub(crate) fn visit(path: &Path, v: Visitor<'_>) -> Result<ArchiveDocument, Arch
             [&a.id],
             |r| r.get(0),
         )?;
+        let owner = attachment_owner(&a.id);
+        if v.skip.contains(&owner) {
+            continue;
+        }
         let mut out = (v.attachment)(a)?;
         let label = format!("attachment {}", a.id);
-        let owner = attachment_owner(&a.id);
         let expected = (a.checksum.as_str(), a.size as i64);
         read_payload(&conn, chunked, &owner, first, expected, &mut out, &label)?;
         out.flush()?;
@@ -430,11 +478,17 @@ pub(crate) fn visit(path: &Path, v: Visitor<'_>) -> Result<ArchiveDocument, Arch
 
 /// Streams every payload through checksum validation without keeping it.
 pub fn verify(path: &Path) -> Result<ArchiveDocument, ArchiveError> {
+    verify_except(path, &[])
+}
+
+/// [`verify`], except the payloads of the `skip` owners, which are not decompressed.
+fn verify_except(path: &Path, skip: &[String]) -> Result<ArchiveDocument, ArchiveError> {
     visit(
         path,
         Visitor {
             data: &mut || Ok(Box::new(io::sink())),
             attachment: &mut |_| Ok(Box::new(io::sink())),
+            skip,
         },
     )
 }
@@ -467,6 +521,7 @@ pub fn read_archive(path: &Path) -> Result<ArchiveDocument, ArchiveError> {
                 blob_list.borrow_mut().push((a.id.clone(), cell.clone()));
                 Ok(Box::new(SharedBuf(cell)))
             },
+            skip: &[],
         },
     )?;
     doc.data = data.take();
@@ -493,10 +548,13 @@ pub fn write_archive(path: &Path, doc: &ArchiveDocument) -> Result<(), ArchiveEr
                 .collect(),
             preserve_from: Some(path),
             preserve_copy: false,
+            reuse_from: None,
         },
     )
     .map(|_| ())
 }
 
+#[cfg(test)]
+mod reuse_tests;
 #[cfg(test)]
 mod tests;

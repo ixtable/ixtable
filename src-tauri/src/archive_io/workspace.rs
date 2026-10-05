@@ -108,6 +108,7 @@ pub fn extract_to(path: &Path, work: &Path) -> Result<ArchiveDocument, ArchiveEr
                     work, &a.id,
                 ))?)))
             },
+            skip: &[],
         },
     )?;
     write_config_files(work, &doc.config)?;
@@ -130,4 +131,44 @@ pub fn extract_document(doc: &ArchiveDocument, work: &Path) -> Result<(), Archiv
         fs::write(asset_content(work, &a.id), &a.contents)?;
     }
     Ok(())
+}
+
+/// Identifies one committed state of a workspace `data.db` without reading its pages:
+/// SQLite's file change counter and schema cookie (bumped by every commit in rollback
+/// journal mode), the file size, and the modification time. Equal stamps mean no
+/// commit in between, so the data payload saved at that stamp can be reused.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DataStamp {
+    header: [u8; 16],
+    len: u64,
+    modified: Option<std::time::SystemTime>,
+}
+
+/// The stamp of `work/data.db`, or None when it cannot vouch for the file: WAL mode
+/// (the counter is not bumped), a journal or WAL file present, or an unreadable header.
+pub fn data_stamp(work: &Path) -> Option<DataStamp> {
+    use std::io::Read;
+    let db = work.join("data.db");
+    for side in ["data.db-journal", "data.db-wal"] {
+        if work.join(side).exists() {
+            return None;
+        }
+    }
+    let meta = fs::metadata(&db).ok()?;
+    let mut page = [0u8; 100];
+    File::open(&db).ok()?.read_exact(&mut page).ok()?;
+    // Bytes 18/19 are the write/read format versions: 2 means WAL.
+    if !page.starts_with(b"SQLite format 3\0") || page[18] != 1 || page[19] != 1 {
+        return None;
+    }
+    let mut header = [0u8; 16];
+    // Change counter (24..28), page count (28..32), and schema cookie (40..44).
+    header[..8].copy_from_slice(&page[24..32]);
+    header[8..12].copy_from_slice(&page[40..44]);
+    header[12..16].copy_from_slice(&page[92..96]);
+    Some(DataStamp {
+        header,
+        len: meta.len(),
+        modified: meta.modified().ok(),
+    })
 }

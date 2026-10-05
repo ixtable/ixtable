@@ -60,7 +60,10 @@ it("imports, deduplicates, exports, and removes application assets", async () =>
   vi.spyOn(window, "confirm").mockReturnValueOnce(true);
   await user.click(within(table).getByRole("button", { name: "Remove logo.png" }));
   expect(await screen.findByText("Removed logo.png.", {}, LONG)).toBeInTheDocument();
-  expect(screen.queryByRole("table", { name: "Assets" })).not.toBeInTheDocument();
+  await waitFor(
+    () => expect(screen.queryByRole("table", { name: "Assets" })).not.toBeInTheDocument(),
+    LONG,
+  );
 });
 
 it("stores assets in the archive with safe names and finds unused ones", async () => {

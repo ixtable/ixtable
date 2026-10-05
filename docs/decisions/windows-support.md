@@ -52,20 +52,39 @@ open handles in the installation paths (`install_fresh`, `update_existing`,
 `checkpoint`). SQLite connections are closed before every rename, and no rename
 targets an existing directory. We made no changes there.
 
-## CI status on main (2026-10-05)
+## First Windows runs (2026-10-05)
 
-Every `desktop.yml` and `cloud.yml` run since the workflows were added has failed
-within seconds, on Ubuntu as well as Windows and macOS. No job was ever assigned a
-runner: the jobs report `runner_id` 0, have no steps, and have no logs. That is
-an account or billing setting for GitHub Actions, not a test or build failure,
-and no change in this repository can fix it. Until a maintainer restores runners,
-there are no Windows or macOS results to act on. The fixes above, including the
-delay-load, are still unverified on Windows. The Windows `dumpbin /imports` step
-stays non-blocking because it is a diagnostic, not a test. Remove it once a
-Windows golden run passes.
+Runners came back on 2026-10-05. The first Windows runs of `desktop.yml` showed
+that the Rust unit tests and the test bridge DLL load now pass, so the
+`write_atomic`, extension-cleanup and `comctl32` delay-load changes above work.
+The integration and golden jobs failed for these reasons:
+
+- **`global.db` setup race (product bug, fixed).** `GlobalStorage::connection`
+  in `storage.rs` checked for the recovery `dirty` column and ran `ALTER TABLE`
+  on every connection. Two connections opening at once both ran it, and the
+  second failed with `duplicate column name: dirty`, so creating an app from a
+  template showed `IO_ERROR`. Fresh databases now create the columns, older
+  ones are upgraded inside an `IMMEDIATE` transaction that checks again, and
+  setup retries on `SQLITE_BUSY`. Windows timing exposed it, but the bug was not
+  Windows-specific.
+- **Path splitting in a test (fixed).** `persistence.test.tsx` took a file name
+  with `split("/")`. It now uses `path.basename`.
+- **State directory cleanup (fixed).** `tests/integration/setup.ts` deletes its
+  temporary state directory after each file. Windows refuses while the process
+  holds the unpacked DuckDB extension DLLs, so that cleanup is best-effort on
+  Windows only.
+- **Not yet diagnosed:** an async-trigger test in `automation.test.tsx` timing
+  out, `migrations.test.tsx` not finding the second migration editor, and
+  `sql-and-metadata.test.tsx` not finding the query status. None showed an error
+  in the UI. The next Windows run with the fixes above decides whether they
+  remain.
+
+The `dumpbin /imports` diagnostic step stays until the Windows jobs are green.
 
 ## Audit log
 
 - 2026-10-05: added the `icon.ico` fix, the CI status on main (no runner was
   ever assigned), and the link to the release gates. The pending items are
   unchanged.
+- 2026-10-05 (later): runners returned. Recorded the first Windows results and
+  the three fixes (global.db race, basename, state dir cleanup).

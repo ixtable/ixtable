@@ -43,7 +43,9 @@ A list page shows the columns chosen in the form's list settings, or its bound f
 - **Sort** by selecting a column header. Each selection cycles ascending, descending, and off.
 - **Paging** uses the form's rows-per-page setting, 25 by default. The pager shows the range and the total.
 
-A list form can also have a **Row filter**, an [expression](../reference/expressions) such as `record.status = 'open'`. ixtable reads rows through the database and keeps the ones the filter accepts. A filter scans at most 50,000 rows. When it stops there, the list says that some matches may be missing.
+A list form can also have a **Row filter**, an [expression](../reference/expressions) such as `record.status = 'open'`. On a table, ixtable hands the simple parts of the filter to the database: number comparisons on integer and real columns, equality tests on text columns, `in` lists of those, and `is null` tests, joined with `and`. A filter made only of these parts reads one page at a time with an exact total.
+
+Anything else, such as `or`, arithmetic on the row, text ordering, or comparisons of dates and decimals, runs in the app on the rows the database returns. That part scans at most 50,000 rows. When it stops there, the list says that some matches may be missing. Filters on query-sourced forms always run in the app.
 
 ## Create, edit, and delete
 

@@ -5,6 +5,40 @@ use std::{
     path::{Path, PathBuf},
 };
 
+fn is_busy(e: &rusqlite::Error) -> bool {
+    matches!(
+        e.sqlite_error_code(),
+        Some(rusqlite::ErrorCode::DatabaseBusy | rusqlite::ErrorCode::DatabaseLocked)
+    )
+}
+
+/// Creates the tables, and upgrades a database from before the `dirty` and `name`
+/// recovery columns. Concurrent callers may race, so the upgrade takes the write lock
+/// and checks again: only one of them adds the columns.
+fn init_schema(c: &mut Connection) -> Result<(), rusqlite::Error> {
+    let mode: String = c.query_row("PRAGMA journal_mode", [], |r| r.get(0))?;
+    if !mode.eq_ignore_ascii_case("wal") {
+        c.query_row("PRAGMA journal_mode=WAL", [], |_| Ok(()))?;
+    }
+    c.execute_batch("CREATE TABLE IF NOT EXISTS preferences(key TEXT PRIMARY KEY,value TEXT NOT NULL,version INTEGER NOT NULL DEFAULT 1); CREATE TABLE IF NOT EXISTS recent_files(path TEXT PRIMARY KEY,opened_at TEXT NOT NULL); CREATE TABLE IF NOT EXISTS window_state(label TEXT PRIMARY KEY,json TEXT NOT NULL); CREATE TABLE IF NOT EXISTS recovery_sessions(session_id TEXT PRIMARY KEY,document_id TEXT NOT NULL,workspace TEXT NOT NULL,document_path TEXT,updated_at TEXT NOT NULL,dirty INTEGER NOT NULL DEFAULT 1,name TEXT);")?;
+    if !has_dirty_column(c)? {
+        let tx = c.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
+        if !has_dirty_column(&tx)? {
+            tx.execute_batch("ALTER TABLE recovery_sessions ADD COLUMN dirty INTEGER NOT NULL DEFAULT 1; ALTER TABLE recovery_sessions ADD COLUMN name TEXT;")?;
+        }
+        tx.commit()?;
+    }
+    Ok(())
+}
+
+fn has_dirty_column(c: &Connection) -> Result<bool, rusqlite::Error> {
+    c.query_row(
+        "SELECT COUNT(*) FROM pragma_table_info('recovery_sessions') WHERE name='dirty'",
+        [],
+        |r| r.get::<_, i64>(0).map(|n| n > 0),
+    )
+}
+
 pub struct GlobalStorage {
     path: PathBuf,
 }
@@ -39,17 +73,19 @@ impl GlobalStorage {
         Ok(db)
     }
     fn connection(&self) -> Result<Connection, rusqlite::Error> {
-        let c = Connection::open(&self.path)?;
-        c.execute_batch("PRAGMA journal_mode=WAL; CREATE TABLE IF NOT EXISTS preferences(key TEXT PRIMARY KEY,value TEXT NOT NULL,version INTEGER NOT NULL DEFAULT 1); CREATE TABLE IF NOT EXISTS recent_files(path TEXT PRIMARY KEY,opened_at TEXT NOT NULL); CREATE TABLE IF NOT EXISTS window_state(label TEXT PRIMARY KEY,json TEXT NOT NULL); CREATE TABLE IF NOT EXISTS recovery_sessions(session_id TEXT PRIMARY KEY,document_id TEXT NOT NULL,workspace TEXT NOT NULL,document_path TEXT,updated_at TEXT NOT NULL);")?;
-        let has_dirty: bool = c.query_row(
-            "SELECT COUNT(*) FROM pragma_table_info('recovery_sessions') WHERE name='dirty'",
-            [],
-            |r| r.get::<_, i64>(0).map(|n| n > 0),
-        )?;
-        if !has_dirty {
-            c.execute_batch("ALTER TABLE recovery_sessions ADD COLUMN dirty INTEGER NOT NULL DEFAULT 1; ALTER TABLE recovery_sessions ADD COLUMN name TEXT;")?;
+        let mut c = Connection::open(&self.path)?;
+        // Several app windows open this file at once. Switching to WAL and upgrading a read to a
+        // write return SQLITE_BUSY without waiting on the busy timeout, so retry the setup.
+        let mut attempt = 0;
+        loop {
+            match init_schema(&mut c) {
+                Err(e) if is_busy(&e) && attempt < 100 => {
+                    attempt += 1;
+                    std::thread::sleep(std::time::Duration::from_millis(10));
+                }
+                result => return result.map(|()| c),
+            }
         }
-        Ok(c)
     }
     pub fn set_preference(
         &self,
@@ -153,5 +189,62 @@ impl GlobalStorage {
         self.connection()?
             .execute("DELETE FROM recovery_sessions WHERE session_id=?1", [id])?;
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::{Arc, Barrier};
+
+    fn concurrent_opens(path: &Path) {
+        let barrier = Arc::new(Barrier::new(16));
+        let handles: Vec<_> = (0..16)
+            .map(|_| {
+                let (path, barrier) = (path.to_path_buf(), barrier.clone());
+                std::thread::spawn(move || {
+                    barrier.wait();
+                    GlobalStorage::new(path).map(|_| ())
+                })
+            })
+            .collect();
+        for handle in handles {
+            handle.join().unwrap().expect("concurrent open");
+        }
+    }
+
+    #[test]
+    fn concurrent_connections_on_a_fresh_database_all_succeed() {
+        for _ in 0..5 {
+            let dir = tempfile_dir();
+            concurrent_opens(&dir.join("global.db"));
+        }
+    }
+
+    #[test]
+    fn a_pre_dirty_database_is_upgraded_once_under_concurrency() {
+        for _ in 0..5 {
+            let path = tempfile_dir().join("global.db");
+            Connection::open(&path)
+                .unwrap()
+                .execute_batch("CREATE TABLE recovery_sessions(session_id TEXT PRIMARY KEY,document_id TEXT NOT NULL,workspace TEXT NOT NULL,document_path TEXT,updated_at TEXT NOT NULL); INSERT INTO recovery_sessions VALUES('s','d','w',NULL,'t');")
+                .unwrap();
+            concurrent_opens(&path);
+            let row: (String, bool, Option<String>) = Connection::open(&path)
+                .unwrap()
+                .query_row(
+                    "SELECT session_id,dirty,name FROM recovery_sessions",
+                    [],
+                    |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+                )
+                .unwrap();
+            assert_eq!(row, ("s".to_string(), true, None));
+        }
+    }
+
+    fn tempfile_dir() -> PathBuf {
+        let dir = std::env::temp_dir().join(format!("ixtable-storage-{}", uuid::Uuid::new_v4()));
+        fs::create_dir_all(&dir).unwrap();
+        dir
     }
 }

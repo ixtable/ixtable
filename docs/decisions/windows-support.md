@@ -73,6 +73,11 @@ The integration and golden jobs failed for these reasons:
   temporary state directory after each file. Windows refuses while the process
   holds the unpacked DuckDB extension DLLs, so that cleanup is best-effort on
   Windows only.
+- **Data gate starvation (product bug, fixed).** In `data/gate.rs`, waiting
+  writers blocked new readers, so a reader queued behind back-to-back writes
+  could wait past the 30 second limit and fail with `BUSY`
+  (`data::race_tests`). When a writer finishes, the readers already waiting now
+  enter before the next writer.
 - **Not yet diagnosed:** an async-trigger test in `automation.test.tsx` timing
   out, `migrations.test.tsx` not finding the second migration editor, and
   `sql-and-metadata.test.tsx` not finding the query status. None showed an error
@@ -87,4 +92,4 @@ The `dumpbin /imports` diagnostic step stays until the Windows jobs are green.
   ever assigned), and the link to the release gates. The pending items are
   unchanged.
 - 2026-10-05 (later): runners returned. Recorded the first Windows results and
-  the three fixes (global.db race, basename, state dir cleanup).
+  the fixes (global.db race, data gate starvation, basename, state dir cleanup).

@@ -112,8 +112,10 @@ the gate exclusively for its whole life. Every `ReadRuntime` read and every
 connection from `DocumentManager::read_connection` holds it shared. The
 SQLite refresh after a write holds it exclusively too, because it detaches the
 `data` catalog that cloned query connections are using. Waiting writers block
-new readers, a thread that already holds the gate passes through, and a wait
-longer than 30 seconds fails with `BUSY`. The order stays write, commit,
+new readers, and when a writer finishes, the readers already waiting enter
+before the next writer, so neither a stream of reads nor a stream of writes
+starves the other side. A thread that already holds the gate passes through,
+and a wait longer than 30 seconds fails with `BUSY`. The order stays write, commit,
 refresh, read, so read-your-writes holds. An ad-hoc read error is `READ_ONLY`
 only when `read_only_guard` rejected the SQL.
 
@@ -243,6 +245,10 @@ Linux for extensions that do.
 - `src-tauri/src/queries/tests.rs`: named placeholders rewritten outside
   literals, typed binding, injection attempts bound, mutating SQL rejected,
   cancellation.
+- `src-tauri/src/data/gate.rs` tests: writers exclude readers and each other,
+  and a reader queued behind two writers that write back to back enters after
+  the current write (with writer-only priority it waited for the whole stream,
+  which on a Windows runner outlasted the 30 second wait).
 - `src-tauri/src/data/race_tests.rs` and `tests/integration/read-write-race.test.tsx`:
   concurrent writes and reads on one file and one session never fail, and
   each write is visible to the next read. Without the gate the integration

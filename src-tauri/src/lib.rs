@@ -493,8 +493,11 @@ pub fn run() {
 
 #[cfg(test)]
 mod durability_tests;
+// build.rs owns this module; the lib compiles it only for its unit tests.
 #[cfg(test)]
 mod perf_tests;
+#[cfg(test)]
+mod release_keys;
 
 #[cfg(test)]
 mod launch_args_tests {

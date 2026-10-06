@@ -8,6 +8,8 @@
 //   probe                 sign a probe file with TAURI_SIGNING_PRIVATE_KEY and verify it against
 //                         the release updater pubkey (catches a private/public key mismatch)
 //   embedded --binary f   check a built binary pins the release cloud key and not the dev updater key
+//   build <tauri args>    tauri-action's tauriScript: `tauri build`, then, when IXTABLE_RELEASE=1, the
+//                         embedded check on IXTABLE_RELEASE_BINARY, so a bad binary fails before upload
 import { spawnSync } from "node:child_process";
 import { createPublicKey } from "node:crypto";
 import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
@@ -18,16 +20,14 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "../..");
 
 /**
- * Ed25519 public keys that must never be pinned into a release (hex, raw 32 bytes): the
- * RFC 8032 §7.1 test vectors and the all-zero key. Add any key that was ever used for
- * development or tests and shared outside a local machine.
+ * Ed25519 public keys that must never be pinned into a release (hex, raw 32 bytes), from
+ * dev-cloud-keys.json, which src-tauri/build.rs also reads. Add any key that was ever used for
+ * development or tests and shared outside a local machine; a unit test fails when a committed
+ * Ed25519 key is missing from the list.
  */
-export const DEV_CLOUD_KEYS = [
-  "d75a980182b10ab7d54bfed3c964073a0ee172f3daa62325af021a68f707511a",
-  "3d4017c3e843895a92b70aa74d1b7ebc9c982ccf2ec4968cc0cd55f12af4660c",
-  "fc51cd8e6218a1a38da47ed00230f0580816ed13ba3303ac5deb911548908025",
-  "0".repeat(64),
-];
+export const DEV_CLOUD_KEYS = JSON.parse(
+  readFileSync(join(ROOT, "scripts/release/dev-cloud-keys.json"), "utf8"),
+).keys;
 
 const SPKI_PREFIX = Buffer.from("302a300506032b6570032100", "hex");
 const present = (value) => typeof value === "string" && value.trim() !== "";
@@ -88,7 +88,11 @@ export function rawCloudKey(text) {
   return bytes;
 }
 
-/** Cloud keys that are dev/test only: the list above plus this checkout's local stack key, if any. */
+/**
+ * Cloud keys that are dev/test only: the committed list, plus this checkout's local stack key when
+ * one exists. dev-secrets.mjs generates that key per checkout and never shares it, so CI (which has
+ * no .env.local) relies on the committed list alone.
+ */
 export function devCloudKeys(root = ROOT) {
   const keys = new Set(DEV_CLOUD_KEYS);
   const local = join(root, "supabase/functions/.env.local");
@@ -105,7 +109,10 @@ export function devCloudKeys(root = ROOT) {
   return keys;
 }
 
-/** The cloud key text the build pins (cloud/config.rs reads the RAW variable first). */
+/**
+ * The cloud key text the build pins. cloud/config.rs and build.rs read the RAW variable first and
+ * treat a blank one as unset, so an unset repository variable (`""` in release.yml) falls back.
+ */
 export function releaseCloudKey(env) {
   if (present(env.IXTABLE_CLOUD_PUBLIC_KEY_RAW)) return env.IXTABLE_CLOUD_PUBLIC_KEY_RAW.trim();
   if (present(env.IXTABLE_CLOUD_PUBLIC_KEY)) return env.IXTABLE_CLOUD_PUBLIC_KEY.trim();
@@ -205,7 +212,21 @@ async function main() {
     console.log("binary pins the release keys");
     return;
   }
-  throw new Error("usage: keys.mjs probe | embedded --binary <file>");
+  if (command === "build") {
+    // Runs inside tauri-action, which uploads to the draft release only when this exits 0.
+    const run = spawnSync(process.execPath, [tauriCli(), ...process.argv.slice(2)], {
+      cwd: ROOT,
+      stdio: "inherit",
+    });
+    if (run.status !== 0) process.exit(run.status ?? 1);
+    if (env.IXTABLE_RELEASE !== "1") return;
+    if (!present(env.IXTABLE_RELEASE_BINARY)) throw new Error("IXTABLE_RELEASE_BINARY is not set");
+    const problems = embeddedKeyProblems(readFileSync(env.IXTABLE_RELEASE_BINARY), env);
+    if (problems.length) throw new Error(problems.join("; "));
+    console.log("binary pins the release keys");
+    return;
+  }
+  throw new Error("usage: keys.mjs probe | embedded --binary <file> | build <tauri args>");
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {

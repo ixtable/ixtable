@@ -26,10 +26,32 @@ pub const DEV_SITE_URL: &str = "http://127.0.0.1:3001";
 pub const DEV_ANON_KEY: &str = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZS1kZW1vIiwicm9sZSI6ImFub24iLCJleHAiOjE5ODM4MTI5OTZ9.CRXP1A7WOeoJeXxjNni43kdQwgnWNReilDMblYTn_I0";
 
 /// Bundle-signing public key pinned into this build (base64, hex, PEM, or JWK).
-const PINNED_PUBLIC_KEY: Option<&str> = match option_env!("IXTABLE_CLOUD_PUBLIC_KEY_RAW") {
-    Some(k) => Some(k),
-    None => option_env!("IXTABLE_CLOUD_PUBLIC_KEY"),
-};
+const PINNED_PUBLIC_KEY: Option<&str> = pinned_key(
+    option_env!("IXTABLE_CLOUD_PUBLIC_KEY_RAW"),
+    option_env!("IXTABLE_CLOUD_PUBLIC_KEY"),
+);
+
+const fn is_blank(s: &str) -> bool {
+    let bytes = s.as_bytes();
+    let mut i = 0;
+    while i < bytes.len() {
+        if !bytes[i].is_ascii_whitespace() {
+            return false;
+        }
+        i += 1;
+    }
+    true
+}
+
+/// The RAW key unless blank, else the SPKI key unless blank. release.yml sets an unset
+/// repository variable to `""`, which must fall back like scripts/release/keys.mjs does.
+const fn pinned_key(raw: Option<&'static str>, spki: Option<&'static str>) -> Option<&'static str> {
+    match (raw, spki) {
+        (Some(k), _) if !is_blank(k) => Some(k),
+        (_, Some(k)) if !is_blank(k) => Some(k),
+        _ => None,
+    }
+}
 
 #[derive(Debug, Clone, Serialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
@@ -197,4 +219,19 @@ fn public_key_with(
 /// The pinned bundle-signing key (see module docs).
 pub fn public_key() -> Result<VerifyingKey, AppError> {
     public_key_with(&|k| std::env::var(k).ok(), cfg!(debug_assertions))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::pinned_key;
+
+    #[test]
+    fn blank_raw_key_falls_back_to_spki() {
+        assert_eq!(pinned_key(Some("raw"), Some("spki")), Some("raw"));
+        assert_eq!(pinned_key(Some(""), Some("spki")), Some("spki"));
+        assert_eq!(pinned_key(Some(" \n"), Some("spki")), Some("spki"));
+        assert_eq!(pinned_key(None, Some("spki")), Some("spki"));
+        assert_eq!(pinned_key(Some(""), Some("")), None);
+        assert_eq!(pinned_key(None, None), None);
+    }
 }

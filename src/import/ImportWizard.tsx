@@ -36,7 +36,8 @@ export function ImportWizard({
 }: {
   tables: TableSchema[];
   onClose: () => void;
-  onImported: (table: string) => Promise<void>;
+  // Called after every import attempt; `table` is null when it failed.
+  onImported: (table: string | null) => Promise<void>;
 }) {
   const titleId = useId();
   const [path, setPath] = useState("");
@@ -92,17 +93,20 @@ export function ImportWizard({
   const run = async () => {
     setBusy(true);
     setError(null);
+    const target =
+      mode === "new"
+        ? newTableTarget(tableName, columns, primaryKey)
+        : existingTableTarget(existing, mapping);
+    let imported: string | null = null;
     try {
-      const target =
-        mode === "new"
-          ? newTableTarget(tableName, columns, primaryKey)
-          : existingTableTarget(existing, mapping);
       const result = await importFile(path, cleanOptions(options), target);
       setReport(result);
-      await onImported(result.table);
+      imported = result.table;
     } catch (reason) {
       setError(asTauriError(reason));
     } finally {
+      // A failed import may still have created the table, so reload either way.
+      await onImported(imported).catch(() => undefined);
       setBusy(false);
     }
   };
@@ -283,6 +287,11 @@ function ReportView({ report }: { report: ImportReport }) {
         {report.table}.
         {report.failed > 0 && ` ${report.failed.toLocaleString()} rows were skipped.`}
       </p>
+      {report.aborted && (
+        <p className="error" role="alert">
+          The import stopped after {report.totalRows.toLocaleString()} rows: {report.aborted}
+        </p>
+      )}
       {report.errors.length > 0 && (
         <table className="asset-table" aria-label="Rows not imported">
           <thead>

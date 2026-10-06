@@ -232,7 +232,9 @@ export function DatabaseWorkbench() {
           <ImportWizard
             tables={schemas.filter((s) => s.objectType !== "view")}
             onClose={() => setImporting(false)}
-            onImported={(table) => afterSchemaChange(table)}
+            onImported={(table) =>
+              afterSchemaChange(table ?? (active?.kind === "table" ? active.id : null))
+            }
           />
         )}
         {relating && (

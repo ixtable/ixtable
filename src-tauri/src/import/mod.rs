@@ -18,7 +18,7 @@ use crate::recordstore::{commands::after_write, with_store};
 use parse::SourceColumn;
 use serde::Serialize;
 use std::path::PathBuf;
-use write::{ImportReport, ImportRequest, ImportTarget, MAX_REPORTED_ERRORS};
+use write::{ImportReport, ImportRequest, ImportTarget};
 
 /// Rows a preview returns.
 pub const PREVIEW_ROWS: usize = 50;
@@ -54,7 +54,7 @@ pub async fn preview_import_file(
         parse::parse(
             &PathBuf::from(path),
             &options.unwrap_or_default(),
-            Some(PREVIEW_ROWS),
+            PREVIEW_ROWS,
         )
         .map_err(failed)
     })
@@ -70,11 +70,16 @@ pub async fn import_file(
     blocking(move || import_now(&window_label, request)).await
 }
 
+/// Imports a file. Errors before anything is written (an unreadable file, a
+/// bad mapping) fail the command; once a new table exists or rows are being
+/// written, a stop is reported in `aborted` with the counts so far, and the
+/// session state is refreshed either way.
 pub fn import_now(window: &str, request: ImportRequest) -> Result<ImportReport, AppError> {
     guard(window)?;
-    let parsed =
-        parse::parse(&PathBuf::from(&request.path), &request.options, None).map_err(failed)?;
-    let (table, mapping) = match request.target {
+    let path = PathBuf::from(&request.path);
+    let layout = parse::layout(&path, &request.options).map_err(failed)?;
+    let has_column = |source: &str| layout.names.iter().any(|n| n == source);
+    let (table, mapping, created) = match request.target {
         ImportTarget::NewTable {
             table,
             columns,
@@ -90,45 +95,60 @@ pub fn import_now(window: &str, request: ImportRequest) -> Result<ImportReport, 
                 })
                 .collect::<Vec<_>>();
             // Check the mapping before creating anything.
-            for m in &mapping {
-                if !parsed.columns.iter().any(|c| c.name == m.source) {
-                    return Err(failed(format!("The file has no column {:?}", m.source)));
-                }
+            if let Some(m) = mapping.iter().find(|m| !has_column(&m.source)) {
+                return Err(failed(format!("The file has no column {:?}", m.source)));
             }
             crate::recordstore::commands::create_table(window, &spec)?;
-            (table, mapping)
+            (table, mapping, true)
         }
-        ImportTarget::ExistingTable { table, mapping } => (table, mapping),
+        ImportTarget::ExistingTable { table, mapping } => (table, mapping, false),
     };
-    let columns = {
+    let planned = {
         let table = table.clone();
-        with_store(window, move |s| write::table_fields(s, &table))?
+        with_store(window, move |s| write::table_fields(s, &table)).and_then(|columns| {
+            write::plan_fields(&layout.names, &mapping, &columns).map_err(failed)
+        })
     };
-    let fields = write::plan_fields(&parsed, &mapping, &columns).map_err(failed)?;
-    let (rows, mut errors) = write::convert_rows(&parsed, &fields);
-    let written = {
-        let table = table.clone();
-        with_store(window, move |s| write::insert_rows(s, &table, &rows))
+    let outcome = match planned {
+        Ok(fields) => {
+            let (table, options) = (table.clone(), request.options.clone());
+            with_store(window, move |s| {
+                Ok(write::write_file(
+                    s, &table, &fields, &path, &options, &layout,
+                ))
+            })
+            .unwrap_or_else(|e| write::Outcome {
+                aborted: Some(e.message),
+                ..Default::default()
+            })
+        }
+        Err(e) if !created => return Err(e),
+        Err(e) => write::Outcome {
+            aborted: Some(e.message),
+            ..Default::default()
+        },
     };
     let state = after_write(window).ok();
-    let (imported, refused) = written?;
-    errors.extend(refused);
-    errors.sort_by_key(|e| e.row);
-    let failed = errors.len() as u64;
-    errors.truncate(MAX_REPORTED_ERRORS);
     crate::logging::info(
         "import",
         &format!(
-            "imported {imported} of {} rows into {table}",
-            parsed.total_rows
+            "imported {} of {} rows into {table}{}",
+            outcome.imported,
+            outcome.rows,
+            outcome
+                .aborted
+                .as_deref()
+                .map(|e| format!("; stopped: {e}"))
+                .unwrap_or_default()
         ),
     );
     Ok(ImportReport {
         table,
-        total_rows: parsed.total_rows,
-        imported,
-        failed,
-        errors,
+        total_rows: outcome.rows,
+        imported: outcome.imported,
+        failed: outcome.failed,
+        errors: outcome.errors,
+        aborted: outcome.aborted,
         state,
     })
 }

@@ -575,6 +575,28 @@ impl RecordStore for PostgresRecordStore {
                 .map_err(pe)
         }
     }
+    fn sync_identity(&mut self, table: &str) -> Result<(), StoreError> {
+        let def = self.table_def(table)?;
+        let qualified = format!("{}.{}", q(&self.schema), q(table));
+        let keyed = def.columns.iter().filter(|c| {
+            c.identity
+                || c.default_expression
+                    .as_deref()
+                    .is_some_and(|d| d.contains("nextval("))
+        });
+        for c in keyed {
+            // Only ever moves a sequence forward, and only past keys it did not hand out.
+            let sql = format!(
+                "SELECT setval(s::regclass, m) FROM (SELECT pg_get_serial_sequence($1, $2) AS s, (SELECT max({}) FROM {qualified}) AS m) x \
+                 WHERE s IS NOT NULL AND m > COALESCE(pg_sequence_last_value(s::regclass), 0)",
+                q(&c.name)
+            );
+            self.client
+                .query(&sql, &[&qualified, &c.name])
+                .map_err(pe)?;
+        }
+        Ok(())
+    }
     fn query_internal(&mut self, sql: &str) -> Result<Vec<Vec<Option<String>>>, StoreError> {
         let rows = self.client.query(sql, &[]).map_err(pe)?;
         Ok(rows

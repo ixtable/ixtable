@@ -68,8 +68,20 @@ pub fn literal(path: &Path) -> String {
     path.to_string_lossy().replace('\'', "''")
 }
 
-/// The DuckDB table function that reads `path` as `format`.
+/// The DuckDB table function that reads `path` as `format`. Column types are
+/// sniffed from the whole file (`sample_size=-1`), so a late value that does
+/// not fit a type sniffed from the first rows cannot fail a query.
 pub fn scan_sql(path: &Path, format: FileFormat, csv: &CsvOptions) -> Result<String, String> {
+    scan(path, format, csv, false)
+}
+
+/// Like `scan_sql`, but CSV columns are all read as text (`all_varchar`), so
+/// an import converts and reports each value itself instead of failing.
+pub fn scan_text_sql(path: &Path, format: FileFormat, csv: &CsvOptions) -> Result<String, String> {
+    scan(path, format, csv, true)
+}
+
+fn scan(path: &Path, format: FileFormat, csv: &CsvOptions, text: bool) -> Result<String, String> {
     let p = literal(path);
     Ok(match format {
         FileFormat::Csv => {
@@ -84,9 +96,13 @@ pub fn scan_sql(path: &Path, format: FileFormat, csv: &CsvOptions) -> Result<Str
                 }
                 args.push_str(&format!(", delim='{c}'"));
             }
+            args.push_str(match text {
+                true => ", all_varchar=true",
+                false => ", sample_size=-1",
+            });
             format!("read_csv({args})")
         }
-        FileFormat::Json => format!("read_json('{p}')"),
+        FileFormat::Json => format!("read_json('{p}', sample_size=-1)"),
         FileFormat::Parquet => format!("read_parquet('{p}')"),
         FileFormat::Xlsx => return Err("XLSX files are read without DuckDB".into()),
     })

@@ -67,7 +67,11 @@ fn csv_scans_take_one_safe_delimiter() {
     };
     assert_eq!(
         scan_sql(p, FileFormat::Csv, &csv(";")).unwrap(),
-        "read_csv('/tmp/it''s.csv', header=false, delim=';')"
+        "read_csv('/tmp/it''s.csv', header=false, delim=';', sample_size=-1)"
+    );
+    assert_eq!(
+        scan_text_sql(p, FileFormat::Csv, &csv(";")).unwrap(),
+        "read_csv('/tmp/it''s.csv', header=false, delim=';', all_varchar=true)"
     );
     assert!(scan_sql(p, FileFormat::Csv, &csv("\t")).is_ok());
     assert!(scan_sql(p, FileFormat::Csv, &csv(",,")).is_err());
@@ -199,4 +203,49 @@ fn reader_exposes_bundled_files_as_read_only_views() {
     // Removing the sources drops the views.
     reader.configure(ReadTarget::Sqlite, vec![]).unwrap();
     assert!(reader.query("SELECT * FROM files.sales").is_err());
+}
+
+#[test]
+fn file_source_views_sniff_types_from_the_whole_file() {
+    let dir = temp_dir("latevalue");
+    rusqlite::Connection::open(dir.join("data.db")).unwrap();
+    let csv = dir.join("late.csv");
+    let mut contents = String::from("id,qty\n");
+    for i in 1..=30_005 {
+        let qty = if i == 30_002 {
+            "n/a".to_string()
+        } else {
+            i.to_string()
+        };
+        contents.push_str(&format!("{i},{qty}\n"));
+    }
+    std::fs::write(&csv, contents).unwrap();
+    let mut reader = ReadRuntime::for_test(&dir).unwrap();
+    reader
+        .configure(
+            ReadTarget::Sqlite,
+            vec![FileView {
+                name: "late".into(),
+                path: csv,
+                format: FileFormat::Csv,
+                csv: CsvOptions::default(),
+            }],
+        )
+        .unwrap();
+    assert!(
+        reader.file_errors().is_empty(),
+        "{:?}",
+        reader.file_errors()
+    );
+    let out = reader
+        .query("SELECT count(*), typeof(any_value(qty)), max(id) FROM files.late WHERE qty = 'n/a' OR id > 0")
+        .unwrap();
+    assert_eq!(
+        out.rows,
+        vec![vec![
+            DataValue::Integer(30_005),
+            DataValue::Text("VARCHAR".into()),
+            DataValue::Integer(30_005)
+        ]]
+    );
 }

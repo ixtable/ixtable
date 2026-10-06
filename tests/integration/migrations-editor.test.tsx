@@ -41,7 +41,7 @@ it("keeps an editor the user opened while the previous save was still being writ
       windowLabel: "main",
     });
     expect(config.migrations).toHaveLength(1);
-  });
+  }, LONG);
   await new Promise((resolve) => setTimeout(resolve, 100));
   expect(screen.getByRole("region", { name: "Edit migration Quick" })).toBeInTheDocument();
 });

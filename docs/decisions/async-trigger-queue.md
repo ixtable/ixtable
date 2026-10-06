@@ -112,13 +112,18 @@ expression instead.
 ### The worker
 
 `src/automation/worker.ts` polls `claim_next_job` for the open document and
-runs the action through the same `runAction` the UI uses. It polls while an
-async trigger is enabled or the queue has queued jobs, so jobs of a trigger
+runs the action through the same `runAction` the UI uses. It polls every second
+while an async trigger is enabled or the queue has queued or running jobs
+(`AutomationHost` rechecks this on queue changes and every 30 s), and it also
+wakes on each queue change event, so jobs of a trigger
 that was later disabled or deleted still run (their action id is stored on the
 job). A job whose action no longer exists fails with "Action … does not exist"
 and follows the normal retry and failure path. It runs with a
 headless context, where navigation, confirmation, and form state fail with a
-clear message. It reports `complete_job` or `fail_job` with the step log.
+clear message. An app-mode job presents its lease. A user-mode job is
+authorized against both the active role and the role it was enqueued under
+(`roleId` in the job payload), so it never exceeds either. A worker that gets
+`STALE_LEASE` drops the result without recording a failure. It reports `complete_job` or `fail_job` with the step log.
 
 ## Consequences
 
@@ -141,7 +146,8 @@ clear message. It reports `complete_job` or `fail_job` with the step log.
 
 - `src-tauri/src/jobs.rs` tests: idempotent enqueue per store, atomic and
   exclusive claims, exponential backoff until failed, completion with log,
-  cancel and retry, expired leases recovered after restart, unexpired leases of
+  cancel and retry, expired leases recovered after restart, `active_lease`
+  accepting only the current unexpired lease, unexpired leases of
   a previous process reclaimed on open, guarded cancel and result transitions
   (including a cancel racing a completion), stale lease tokens refused,
   separate Studio and runtime queues, v1 queue migration, concurrent first
@@ -164,3 +170,9 @@ clear message. It reports `complete_job` or `fail_job` with the step log.
 - `tests/integration/automation.test.tsx`: sync triggers, async triggers with
   retry after failure and cancel, deduplication by idempotency key, and
   rollback-mode actions as one RecordStore transaction.
+
+## Audit log
+
+- 2026-10-05: Stated the worker's polling and wake conditions, the role check
+  for user-mode jobs, and silent `STALE_LEASE` handling; added the
+  `active_lease` test to Evidence.

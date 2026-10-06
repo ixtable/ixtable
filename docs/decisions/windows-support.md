@@ -1,6 +1,8 @@
 # Windows support
 
 Status: accepted, pending Windows CI. Windows is a release-blocking platform (PRD §6.1).
+Green Desktop CI on Windows, macOS, and Linux is the `green-ci-all-os` gate in
+[the release gates](../release-checklist.md).
 
 ## What failed
 
@@ -26,6 +28,10 @@ failures. The fix syncs through the handle that wrote the file.
 has loaded, and Windows cannot delete a loaded DLL. The test now drops the
 connection and treats cleanup as best-effort on Windows only.
 
+**Missing `icons/icon.ico` (fixed).** `tauri-build` needs `icon.ico` to generate
+the Windows resource file, so every Windows Rust build failed before any test ran.
+`src-tauri/icons/icon.ico` is now committed.
+
 **Test bridge load error 127 (medium confidence).** napi-sys 2 resolves `napi_*`
 functions at runtime through `libloading` on Windows, so N-API imports are not the
 cause. `tauri-runtime-wry` and `rfd` import `TaskDialogIndirect` from `comctl32.dll`.
@@ -45,3 +51,45 @@ DLL in the same way or remove the import. We also checked directory renames and
 open handles in the installation paths (`install_fresh`, `update_existing`,
 `checkpoint`). SQLite connections are closed before every rename, and no rename
 targets an existing directory. We made no changes there.
+
+## First Windows runs (2026-10-05)
+
+Runners came back on 2026-10-05. The first Windows runs of `desktop.yml` showed
+that the Rust unit tests and the test bridge DLL load now pass, so the
+`write_atomic`, extension-cleanup and `comctl32` delay-load changes above work.
+The integration and golden jobs failed for these reasons:
+
+- **`global.db` setup race (product bug, fixed).** `GlobalStorage::connection`
+  in `storage.rs` checked for the recovery `dirty` column and ran `ALTER TABLE`
+  on every connection. Two connections opening at once both ran it, and the
+  second failed with `duplicate column name: dirty`, so creating an app from a
+  template showed `IO_ERROR`. Fresh databases now create the columns, older
+  ones are upgraded inside an `IMMEDIATE` transaction that checks again, and
+  setup retries on `SQLITE_BUSY`. Windows timing exposed it, but the bug was not
+  Windows-specific.
+- **Path splitting in a test (fixed).** `persistence.test.tsx` took a file name
+  with `split("/")`. It now uses `path.basename`.
+- **State directory cleanup (fixed).** `tests/integration/setup.ts` deletes its
+  temporary state directory after each file. Windows refuses while the process
+  holds the unpacked DuckDB extension DLLs, so that cleanup is best-effort on
+  Windows only.
+- **Data gate starvation (product bug, fixed).** In `data/gate.rs`, waiting
+  writers blocked new readers, so a reader queued behind back-to-back writes
+  could wait past the 30 second limit and fail with `BUSY`
+  (`data::race_tests`). When a writer finishes, the readers already waiting now
+  enter before the next writer.
+- **Not yet diagnosed:** an async-trigger test in `automation.test.tsx` timing
+  out, `migrations.test.tsx` not finding the second migration editor, and
+  `sql-and-metadata.test.tsx` not finding the query status. None showed an error
+  in the UI. The next Windows run with the fixes above decides whether they
+  remain.
+
+The `dumpbin /imports` diagnostic step stays until the Windows jobs are green.
+
+## Audit log
+
+- 2026-10-05: added the `icon.ico` fix, the CI status on main (no runner was
+  ever assigned), and the link to the release gates. The pending items are
+  unchanged.
+- 2026-10-05 (later): runners returned. Recorded the first Windows results and
+  the fixes (global.db race, data gate starvation, basename, state dir cleanup).

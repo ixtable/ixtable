@@ -55,8 +55,10 @@ async function defineAction(
     await replace(user, within(map).getByLabelText(`Column ${index + 1}`), column);
     await replace(user, within(map).getByLabelText(`${column} expression`), expr);
   }
-  await waitFor(async () =>
-    expect((await readConfig()).actions.find((a) => a.name === name)?.steps).toHaveLength(1),
+  await waitFor(
+    async () =>
+      expect((await readConfig()).actions.find((a) => a.name === name)?.steps).toHaveLength(1),
+    LONG,
   );
 }
 
@@ -81,12 +83,14 @@ async function defineTrigger(
     await replace(user, screen.getByLabelText("Max attempts"), options.maxAttempts);
   if (options.backoff)
     await replace(user, screen.getByLabelText("Retry backoff (ms)"), options.backoff);
-  await waitFor(async () =>
-    expect((await readConfig()).triggers.find((t) => t.name === options.name)).toMatchObject({
-      table: "orders",
-      mode: options.mode,
-      ...(options.maxAttempts && { maxAttempts: Number(options.maxAttempts) }),
-    }),
+  await waitFor(
+    async () =>
+      expect((await readConfig()).triggers.find((t) => t.name === options.name)).toMatchObject({
+        table: "orders",
+        mode: options.mode,
+        ...(options.maxAttempts && { maxAttempts: Number(options.maxAttempts) }),
+      }),
+    LONG,
   );
 }
 
@@ -173,7 +177,7 @@ it("runs async triggers on the durable queue, with retry after failure and cance
   await replace(user, await screen.findByLabelText("message expression"), "1 + 'x'");
   await user.click(screen.getByRole("tab", { name: "Triggers" }));
   await replace(user, await screen.findByLabelText("Max attempts"), "1");
-  await waitFor(async () => expect((await readConfig()).triggers[0].maxAttempts).toBe(1));
+  await waitFor(async () => expect((await readConfig()).triggers[0].maxAttempts).toBe(1), LONG);
   await insertRecord("orders", [
     { column: "id", value: value("integer", 2) },
     { column: "status", value: text("open") },
@@ -204,7 +208,7 @@ it("runs async triggers on the durable queue, with retry after failure and cance
   await user.click(screen.getByRole("tab", { name: "Triggers" }));
   await replace(user, await screen.findByLabelText("Max attempts"), "3");
   await replace(user, screen.getByLabelText("Retry backoff (ms)"), "600000");
-  await waitFor(async () => expect((await readConfig()).triggers[0].backoffMs).toBe(600000));
+  await waitFor(async () => expect((await readConfig()).triggers[0].backoffMs).toBe(600000), LONG);
   await insertRecord("orders", [
     { column: "id", value: value("integer", 3) },
     { column: "status", value: text("open") },

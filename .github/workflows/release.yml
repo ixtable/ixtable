@@ -123,6 +123,10 @@ jobs:
       IXTABLE_CLOUD_PUBLIC_KEY_RAW: ${{ vars.IXTABLE_CLOUD_PUBLIC_KEY_RAW }}
       IXTABLE_CLOUD_PUBLIC_KEY: ${{ vars.IXTABLE_CLOUD_PUBLIC_KEY }}
       IXTABLE_UPDATER_PUBKEY: ${{ vars.IXTABLE_UPDATER_PUBKEY }}
+      # beta/stable: build.rs refuses a missing or dev key, and keys.mjs build checks the binary
+      # before tauri-action uploads it. Draft runs (and local `tauri build`) are dev builds.
+      IXTABLE_RELEASE: ${{ needs.plan.outputs.channel != 'draft' && '1' || '' }}
+      IXTABLE_RELEASE_BINARY: ${{ matrix.binary }}
     steps:
       - name: Disable CRLF conversion
         if: runner.os == 'Windows'
@@ -198,11 +202,11 @@ jobs:
           prerelease: ${{ needs.plan.outputs.prerelease == 'true' }}
           includeUpdaterJson: ${{ needs.plan.outputs.channel != 'draft' }}
           updaterJsonPreferNsis: true
+          # `tauri build`, then the embedded-key check, so a binary that does not pin the
+          # release keys fails here, before tauri-action uploads anything.
+          tauriScript: node scripts/release/keys.mjs
           args: ${{ matrix.args }} --config ${{ runner.temp }}/tauri.release.json
 
-      - name: Check the binary pins the release keys
-        if: env.CHANNEL != 'draft'
-        run: node scripts/release/keys.mjs embedded --binary "${{ matrix.binary }}"
       - name: Verify updater signatures against the release pubkey
         if: steps.signing.outputs.updater == 'true'
         env:

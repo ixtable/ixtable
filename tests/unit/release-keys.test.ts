@@ -1,5 +1,5 @@
 import { spawnSync } from "node:child_process";
-import { generateKeyPairSync, randomBytes } from "node:crypto";
+import { createPrivateKey, createPublicKey, generateKeyPairSync, randomBytes } from "node:crypto";
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -52,6 +52,12 @@ describe("release key gate", () => {
       IXTABLE_CLOUD_PUBLIC_KEY: cloudKey().spki,
     };
     expect(releaseKeyProblems(spkiOnly, root)).toEqual([]);
+    const blankRaw = { ...spkiOnly, IXTABLE_CLOUD_PUBLIC_KEY_RAW: "" };
+    expect(releaseCloudKey(blankRaw)).toBe(spkiOnly.IXTABLE_CLOUD_PUBLIC_KEY);
+    expect(releaseKeyProblems(blankRaw, root)).toEqual([]);
+    expect(releaseCloudKey({ ...blankRaw, IXTABLE_CLOUD_PUBLIC_KEY_RAW: " \n" })).toBe(
+      spkiOnly.IXTABLE_CLOUD_PUBLIC_KEY,
+    );
   });
 
   it("refuses missing keys", () => {
@@ -89,6 +95,35 @@ describe("release key gate", () => {
     );
     expect(devCloudKeys(scratch).has(rawCloudKey(local.raw).toString("hex"))).toBe(true);
     expect(devCloudKeys(root).has("0".repeat(64))).toBe(true);
+  });
+
+  it("lists every Ed25519 key committed to the repository as a dev key, without .env.local", () => {
+    const git = (args: string[]) => spawnSync("git", args, { cwd: root, encoding: "utf8" }).stdout;
+    const prefixes = [
+      ["302e0201003005", "06032b657004220420"].join(""),
+      "302a300506032b6570032100",
+    ].map((h) => Buffer.from(h, "hex").toString("base64").slice(0, 16));
+    const files = git(["grep", "-l", "-I", ...prefixes.flatMap((p) => ["-e", p])])
+      .split("\n")
+      .filter(Boolean);
+    const found = new Set<string>();
+    for (const file of files) {
+      const text = readFileSync(join(root, file), "utf8");
+      for (const [b64] of text.matchAll(/MC[4o][A-Za-z0-9+/]{40,}={0,2}/g)) {
+        const der = Buffer.from(b64, "base64");
+        const pub =
+          der.length === 48
+            ? createPublicKey(createPrivateKey({ key: der, format: "der", type: "pkcs8" }))
+            : createPublicKey({ key: der, format: "der", type: "spki" });
+        found.add(pub.export({ format: "der", type: "spki" }).subarray(12).toString("hex"));
+      }
+    }
+    expect(found.size).toBeGreaterThan(0);
+    const ciKeys = devCloudKeys(scratch);
+    for (const key of found) expect(ciKeys.has(key), key).toBe(true);
+    expect(DEV_CLOUD_KEYS).toContain(
+      "57b73bbef374efb52c4197e46cc61c783cf1cd01266dbb8abc0a0b1e8bd1728d",
+    );
   });
 
   it("refuses malformed keys", () => {
@@ -130,6 +165,29 @@ describe("release key gate", () => {
     expect(embeddedKeyProblems(dev, env, root)).toEqual([
       "the binary embeds the committed development updater key",
     ]);
+  });
+});
+
+describe("tauri-action build wrapper", () => {
+  const wrapper = (env: Record<string, string>) =>
+    spawnSync(process.execPath, [join(root, "scripts/release/keys.mjs"), "build", "--help"], {
+      cwd: root,
+      encoding: "utf8",
+      env: { ...process.env, ...env },
+    });
+
+  it("fails a release build whose binary does not pin the release keys", {
+    timeout: 60_000,
+  }, () => {
+    const binary = join(scratch, "ixtable-bin");
+    writeFileSync(binary, randomBytes(64));
+    const env = { ...production(), IXTABLE_RELEASE_BINARY: binary };
+    expect(wrapper({ ...env, IXTABLE_RELEASE: "" }).status).toBe(0);
+    const release = wrapper({ ...env, IXTABLE_RELEASE: "1" });
+    expect(release.status).toBe(1);
+    expect(release.stderr).toMatch(/does not pin the release ixtable Cloud key/);
+    writeFileSync(binary, Buffer.from(env.IXTABLE_CLOUD_PUBLIC_KEY_RAW));
+    expect(wrapper({ ...env, IXTABLE_RELEASE: "1" }).status).toBe(0);
   });
 });
 

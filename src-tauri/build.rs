@@ -1,4 +1,46 @@
+#[path = "src/release_keys.rs"]
+mod release_keys;
+
+/// Beta/stable builds (`IXTABLE_RELEASE=1`, set by release.yml) fail closed on missing or dev
+/// keys. Without the opt-in, `tauri build` is a development build.
+fn check_release_keys() {
+    for var in [
+        "IXTABLE_RELEASE",
+        "IXTABLE_CLOUD_PUBLIC_KEY_RAW",
+        "IXTABLE_CLOUD_PUBLIC_KEY",
+        "TAURI_CONFIG",
+    ] {
+        println!("cargo:rerun-if-env-changed={var}");
+    }
+    if std::env::var("IXTABLE_RELEASE").as_deref() != Ok("1") {
+        return;
+    }
+    println!("cargo:rerun-if-changed=../scripts/release/dev-cloud-keys.json");
+    let read = |path: &str| {
+        std::fs::read_to_string(path).unwrap_or_else(|e| panic!("release build: {path}: {e}"))
+    };
+    let conf: serde_json::Value = serde_json::from_str(&read("tauri.conf.json"))
+        .expect("release build: tauri.conf.json is not valid JSON");
+    let raw = std::env::var("IXTABLE_CLOUD_PUBLIC_KEY_RAW").ok();
+    let spki = std::env::var("IXTABLE_CLOUD_PUBLIC_KEY").ok();
+    let tauri_config = std::env::var("TAURI_CONFIG").ok();
+    let problems = release_keys::release_key_problems(&release_keys::ReleaseKeys {
+        cloud_raw: raw.as_deref(),
+        cloud_spki: spki.as_deref(),
+        dev_cloud_keys_json: &read("../scripts/release/dev-cloud-keys.json"),
+        committed_updater_pubkey: conf["plugins"]["updater"]["pubkey"].as_str().unwrap_or(""),
+        tauri_config: tauri_config.as_deref(),
+    });
+    if !problems.is_empty() {
+        panic!(
+            "IXTABLE_RELEASE=1 build refused: {} (docs/decisions/desktop-updates.md)",
+            problems.join("; ")
+        );
+    }
+}
+
 fn main() {
+    check_release_keys();
     if std::env::var_os("CARGO_FEATURE_TEST_BRIDGE").is_some() {
         napi_build::setup();
         // The test bridge DLL is loaded by node.exe, which has no Common Controls v6

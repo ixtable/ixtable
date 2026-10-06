@@ -44,8 +44,6 @@ calamine = { version = "0.36", default-features = false }
 tauri-plugin-dialog = "2"
 # One app process per user: a second launch forwards its file arguments (lib.rs run()).
 tauri-plugin-single-instance = "2"
-# Signed in-app updates (updater.rs): minisign-verified before install, fail-closed.
-tauri-plugin-updater = "2"
 # RecordStore: PostgreSQL write path (TLS via the platform stack) and the local
 # datasource-credential store (uses chacha20poly1305 below; no custom primitives).
 postgres = "0.19"
@@ -74,8 +72,6 @@ libc = "0.2"
 
 [dev-dependencies]
 proptest = "1.7"
-# updater tests verify fixture signatures exactly as tauri-plugin-updater does.
-minisign-verify = "0.2"
 
 # Desktop-only (PRD §6.2): no staticlib, and lean debug info keeps test-bridge builds small.
 [profile.dev]

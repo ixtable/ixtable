@@ -154,23 +154,6 @@ export const GATES = [
       ).map((name) => `${name} is not on ALLOWED_CRYPTO_CRATES; review it before adding`),
   },
   {
-    id: "updates-fail-closed",
-    prd: "§27.2",
-    title: "Signed updates fail closed (signature, key pair, and dev-key gates)",
-    check: (root) => {
-      const problems = evidence(root, {
-        ".github/workflows/release.yml":
-          /scripts\/release\/signing\.mjs[\s\S]*keys\.mjs probe[\s\S]*tauriScript: node scripts\/release\/keys\.mjs[\s\S]*update-manifest\.mjs verify/,
-        "scripts/release/keys.mjs": /export function releaseKeyProblems/,
-        "src-tauri/src/updater/tests.rs": /foreign|other_key|other-key/,
-      });
-      const conf = JSON.parse(file(root, "src-tauri/tauri.conf.json"));
-      for (const url of conf.plugins?.updater?.endpoints ?? [])
-        if (!url.startsWith("https://")) problems.push(`updater endpoint ${url} is not https`);
-      return problems;
-    },
-  },
-  {
     id: "bundles-fail-closed",
     prd: "§27.2",
     title: "Signed cloud bundles fail closed (no pinned key refuses every install)",
@@ -265,13 +248,12 @@ export const GATES = [
   {
     id: "signed-installers",
     prd: "Phase 5",
-    title: "Signed installers and update channels for all platforms",
+    title: "Signed installers for all platforms",
     check: (root) =>
       evidence(root, {
         ".github/workflows/release.yml":
           /codesign --verify[\s\S]*stapler validate[\s\S]*Get-AuthenticodeSignature/,
         "scripts/release/signing.mjs": /APPLE_CERTIFICATE[\s\S]*AZURE_CERTIFICATE_PROFILE/,
-        "scripts/release/update-manifest.mjs": /REQUIRED_PLATFORMS/,
       }),
   },
   {
@@ -311,7 +293,7 @@ export const GATES = [
     prd: "§27.2, Phase 5",
     title: "Production keys generated offline and loaded into CI",
     signoff:
-      "Two maintainers generate the updater and cloud signing keys, set the secrets and variables in docs/decisions/desktop-updates.md, and record the ceremony",
+      "Two maintainers generate the cloud signing key, set the secrets and variables in docs/decisions/desktop-updates.md, and record the ceremony",
   },
   {
     id: "green-ci-all-os",

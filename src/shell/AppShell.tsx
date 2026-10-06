@@ -29,7 +29,6 @@ import { useIsCloudSession } from "../cloud/session";
 import { RuntimeBar, RuntimeDiagnostics } from "../release";
 import type { OpenRequest } from "../lib/launch";
 import { useOpenRequestInShell } from "./openRequests";
-import { UpdateNotice } from "../updates";
 import { useRolePreviewResync } from "../runtime/navigation";
 
 const fromSession = (state: SessionState): Doc => ({
@@ -422,7 +421,6 @@ function ShellFrame({
             </div>
           )}
           <mode.Component />
-          <UpdateNotice />
         </main>
       </div>
     </ShellContext.Provider>

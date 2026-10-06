@@ -4,16 +4,14 @@
 // - exports only the secrets that are set to $GITHUB_ENV (the Tauri CLI treats an empty
 //   APPLE_CERTIFICATE as "import this"), and
 // - fails closed when a beta/stable run would embed a missing or dev/test public key (keys.mjs),
-// - writes the `tauri build --config` override (Windows signCommand, updater artifacts, the
-//   production updater pubkey).
+// - writes the `tauri build --config` override (release CSP, Windows signCommand).
 import { appendFileSync, writeFileSync } from "node:fs";
 import { randomBytes } from "node:crypto";
 import { pathToFileURL } from "node:url";
 import { releaseKeyProblems } from "./keys.mjs";
 
 export const REQUIRED = {
-  // minisign key for updater signatures (password may legitimately be empty).
-  all: ["TAURI_SIGNING_PRIVATE_KEY"],
+  all: [],
   macos: [
     "APPLE_CERTIFICATE",
     "APPLE_CERTIFICATE_PASSWORD",
@@ -33,8 +31,6 @@ export const REQUIRED = {
   ],
   linux: [],
 };
-const OPTIONAL = ["TAURI_SIGNING_PRIVATE_KEY_PASSWORD"];
-
 export function requiredSecrets(platform) {
   if (!(platform in REQUIRED) || platform === "all")
     throw new Error(`Unknown platform ${platform}`);
@@ -64,8 +60,6 @@ export function tauriConfigOverride(platform, env) {
     security: { csp: { "connect-src": releaseConnectSrc(env.IXTABLE_CLOUD_BUILD_URL) } },
   };
   const bundle = {};
-  // Without the minisign key there is nothing to sign updater artifacts with (draft only).
-  if (!present(env, "TAURI_SIGNING_PRIVATE_KEY")) bundle.createUpdaterArtifacts = false;
   if (platform === "windows" && REQUIRED.windows.every((name) => present(env, name)))
     bundle.windows = {
       signCommand: {
@@ -83,22 +77,12 @@ export function tauriConfigOverride(platform, env) {
         ],
       },
     };
-  const override = { app, bundle };
-  // The committed pubkey is a development key; releases pin the production one from vars.
-  if (present(env, "IXTABLE_UPDATER_PUBKEY"))
-    override.plugins = { updater: { pubkey: env.IXTABLE_UPDATER_PUBKEY.trim() } };
-  return override;
+  return { app, bundle };
 }
 
-/** Names to export: required and optional secrets that are set (the key's password always travels with the key). */
+/** Names to export: the required secrets that are set. */
 export function exportedNames(platform, env) {
-  const names = [...requiredSecrets(platform), ...OPTIONAL].filter((name) => present(env, name));
-  if (
-    present(env, "TAURI_SIGNING_PRIVATE_KEY") &&
-    !names.includes("TAURI_SIGNING_PRIVATE_KEY_PASSWORD")
-  )
-    names.push("TAURI_SIGNING_PRIVATE_KEY_PASSWORD");
-  return names;
+  return requiredSecrets(platform).filter((name) => present(env, name));
 }
 
 function arg(name) {
@@ -136,10 +120,7 @@ function main() {
     }
   if (out) writeFileSync(out, `${JSON.stringify(tauriConfigOverride(platform, env), null, 2)}\n`);
   if (env.GITHUB_OUTPUT)
-    appendFileSync(
-      env.GITHUB_OUTPUT,
-      `signed=${missing.length === 0}\nupdater=${present(env, "TAURI_SIGNING_PRIVATE_KEY")}\n`,
-    );
+    appendFileSync(env.GITHUB_OUTPUT, `signed=${missing.length === 0}\n`);
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) main();

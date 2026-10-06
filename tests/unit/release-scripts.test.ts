@@ -9,19 +9,8 @@ import {
   requiredSecrets,
   tauriConfigOverride,
 } from "../../scripts/release/signing.mjs";
-import {
-  channelsFor,
-  configuredPubkey,
-  prepareManifest,
-  REQUIRED_PLATFORMS,
-  verifySignature,
-} from "../../scripts/release/update-manifest.mjs";
 
 const root = join(__dirname, "../..");
-const fixtures = join(root, "src-tauri/src/updater/fixtures");
-const payload = readFileSync(join(fixtures, "payload.bin"));
-const signature = readFileSync(join(fixtures, "payload.bin.sig"), "utf8");
-const otherKeySignature = readFileSync(join(fixtures, "payload.other-key.sig"), "utf8");
 const conf = JSON.parse(readFileSync(join(root, "src-tauri/tauri.conf.json"), "utf8"));
 const versions = { tauri: "1.2.0", npm: "1.2.0", cargo: "1.2.0" };
 
@@ -130,7 +119,7 @@ describe("signing secrets", () => {
     Object.fromEntries(requiredSecrets(platform).map((name: string) => [name, "x"]));
 
   it("names every missing secret per platform and treats blanks as missing", () => {
-    expect(missingSecrets("linux", {})).toEqual(["TAURI_SIGNING_PRIVATE_KEY"]);
+    expect(missingSecrets("linux", {})).toEqual([]);
     expect(missingSecrets("macos", { ...all("macos"), APPLE_ID: "  " })).toEqual(["APPLE_ID"]);
     expect(missingSecrets("windows", all("windows"))).toEqual([]);
     expect(requiredSecrets("macos")).toEqual(
@@ -144,21 +133,17 @@ describe("signing secrets", () => {
     expect(() => requiredSecrets("beos")).toThrow(/Unknown platform/);
   });
 
-  it("exports only secrets that are set, and the key password with the key", () => {
+  it("exports only secrets that are set", () => {
     expect(exportedNames("macos", { APPLE_CERTIFICATE: "" })).toEqual([]);
-    expect(exportedNames("linux", { TAURI_SIGNING_PRIVATE_KEY: "k" })).toEqual([
-      "TAURI_SIGNING_PRIVATE_KEY",
-      "TAURI_SIGNING_PRIVATE_KEY_PASSWORD",
-    ]);
+    expect(exportedNames("macos", { APPLE_ID: "a" })).toEqual(["APPLE_ID"]);
   });
 
   it("signs Windows through Azure Trusted Signing only with all credentials", () => {
     const signed = tauriConfigOverride("windows", all("windows"));
     expect(signed.bundle.windows.signCommand.cmd).toBe("trusted-signing-cli");
     expect(signed.bundle.windows.signCommand.args.at(-1)).toBe("%1");
-    expect(signed.bundle.createUpdaterArtifacts).toBeUndefined();
     const draft = tauriConfigOverride("windows", { AZURE_CLIENT_ID: "x" });
-    expect(draft.bundle).toEqual({ createUpdaterArtifacts: false });
+    expect(draft.bundle).toEqual({});
   });
 
   it("drops the local cloud origin from release CSPs and adds only an https cloud origin", () => {
@@ -189,75 +174,3 @@ describe("content security policy", () => {
   });
 });
 
-describe("updater manifest", () => {
-  const pubkey = configuredPubkey(root);
-  const manifest = {
-    version: "v1.2.0",
-    notes: "Notes",
-    pub_date: "2026-10-01T00:00:00Z",
-    platforms: Object.fromEntries(
-      REQUIRED_PLATFORMS.map((p) => [
-        p,
-        { url: `https://github.com/o/r/releases/download/v1.2.0/ixtable%20${p}.tar.gz`, signature },
-      ]),
-    ),
-  };
-  const options = (channel: string) => ({
-    channel,
-    baseUrl: "https://releases.ixtable.app/",
-    pubkey,
-    readPayload: () => payload,
-  });
-
-  it("verifies a Tauri-CLI signature against the committed pubkey", () => {
-    expect(verifySignature(payload, signature, pubkey)).toMatch(
-      /^timestamp:\d+\tfile:payload\.bin$/,
-    );
-  });
-
-  it("rejects tampered files, foreign keys, and edited trusted comments", () => {
-    expect(() =>
-      verifySignature(Buffer.concat([payload, Buffer.from("x")]), signature, pubkey),
-    ).toThrow(/does not match/);
-    expect(() => verifySignature(payload, otherKeySignature, pubkey)).toThrow(/different key/);
-    const text = Buffer.from(signature, "base64").toString().replace("payload.bin", "payload.exe");
-    expect(() => verifySignature(payload, Buffer.from(text).toString("base64"), pubkey)).toThrow(
-      /Trusted comment/,
-    );
-    expect(() => verifySignature(payload, "", pubkey)).toThrow(/Malformed/);
-  });
-
-  it("rewrites URLs onto the release host after every platform verifies", () => {
-    const { manifest: out, files } = prepareManifest(manifest, options("beta"));
-    expect(out.version).toBe("1.2.0");
-    expect(out.platforms["linux-x86_64"].url).toBe(
-      "https://releases.ixtable.app/beta/1.2.0/ixtable%20linux-x86_64.tar.gz",
-    );
-    expect(files.get("ixtable linux-x86_64.tar.gz")).toBe("beta/1.2.0/ixtable linux-x86_64.tar.gz");
-  });
-
-  it("fails closed on a missing platform, a bad signature, or insecure URLs", () => {
-    const partial = Object.fromEntries(
-      Object.entries(manifest.platforms).filter(([p]) => p !== "windows-x86_64"),
-    );
-    expect(() => prepareManifest({ ...manifest, platforms: partial }, options("stable"))).toThrow(
-      /missing platforms: windows-x86_64/,
-    );
-    expect(() =>
-      prepareManifest(manifest, { ...options("stable"), readPayload: () => Buffer.from("evil") }),
-    ).toThrow(/darwin-aarch64 .*does not match/);
-    const http = structuredClone(manifest);
-    http.platforms["darwin-x86_64"].url = "http://example.com/a.tar.gz";
-    expect(() => prepareManifest(http, options("stable"))).toThrow(/https/);
-    expect(() => prepareManifest(manifest, { ...options("stable"), baseUrl: "http://x" })).toThrow(
-      /https/,
-    );
-  });
-
-  it("promotes stable releases to beta unless beta is ahead", () => {
-    expect(channelsFor("stable", "1.2.0", undefined)).toEqual(["stable", "beta"]);
-    expect(channelsFor("stable", "1.2.0", "1.1.0")).toEqual(["stable", "beta"]);
-    expect(channelsFor("stable", "1.2.0", "1.3.0-beta.1")).toEqual(["stable"]);
-    expect(channelsFor("beta", "1.3.0-beta.2", "1.3.0-beta.1")).toEqual(["beta"]);
-  });
-});

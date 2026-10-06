@@ -1,8 +1,7 @@
 name: Nightly
 
 # Unsigned desktop builds of main, published to the rolling `nightly` GitHub
-# prerelease on every push to main. A newer push cancels a build in progress. No update
-# manifest: installed apps never auto-update to a nightly (docs/release/updates.md).
+# prerelease on every push to main. A newer push cancels a build in progress.
 
 on:
   push:

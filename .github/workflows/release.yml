@@ -1,6 +1,6 @@
 name: Release
 
-# Signed desktop installers and update channels (PRD §6.1, §27.2, Phase 5).
+# Signed desktop installers on GitHub Releases (PRD §6.1, §27.2, Phase 5).
 # Tag vX.Y.Z → stable, vX.Y.Z-pre → beta; manual runs choose draft/beta/stable.
 # beta/stable fail closed when any signing secret is missing or a public key is
 # missing or a dev/test key (scripts/release/keys.mjs). Runbook and gates:
@@ -118,11 +118,10 @@ jobs:
       IXTABLE_CLOUD_BUILD_URL: ${{ vars.IXTABLE_CLOUD_BUILD_URL }}
       IXTABLE_CLOUD_BUILD_ANON_KEY: ${{ vars.IXTABLE_CLOUD_BUILD_ANON_KEY }}
       IXTABLE_CLOUD_BUILD_SITE_URL: ${{ vars.IXTABLE_CLOUD_BUILD_SITE_URL }}
-      # Production public keys (docs/decisions/desktop-updates.md). The cloud key is pinned
-      # at compile time (cloud/config.rs); the updater key goes into the --config override.
+      # Production cloud public key (docs/decisions/desktop-updates.md), pinned at compile
+      # time (cloud/config.rs).
       IXTABLE_CLOUD_PUBLIC_KEY_RAW: ${{ vars.IXTABLE_CLOUD_PUBLIC_KEY_RAW }}
       IXTABLE_CLOUD_PUBLIC_KEY: ${{ vars.IXTABLE_CLOUD_PUBLIC_KEY }}
-      IXTABLE_UPDATER_PUBKEY: ${{ vars.IXTABLE_UPDATER_PUBKEY }}
       # beta/stable: build.rs refuses a missing or dev key, and keys.mjs build checks the binary
       # before tauri-action uploads it. Draft runs (and local `tauri build`) are dev builds.
       IXTABLE_RELEASE: ${{ needs.plan.outputs.channel != 'draft' && '1' || '' }}
@@ -163,8 +162,6 @@ jobs:
       - name: Signing setup
         id: signing
         env:
-          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
-          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
           APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
           APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
           APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
@@ -180,10 +177,6 @@ jobs:
         run: >-
           node scripts/release/signing.mjs --platform "${{ matrix.platform }}" --channel "$CHANNEL"
           --out "$RUNNER_TEMP/tauri.release.json"
-      # The private key must sign what IXTABLE_UPDATER_PUBKEY verifies, or installed apps reject updates.
-      - name: Check the updater key pair
-        if: steps.signing.outputs.updater == 'true' && env.CHANNEL != 'draft'
-        run: node scripts/release/keys.mjs probe
       - name: Install Azure Trusted Signing client
         if: matrix.platform == 'windows' && steps.signing.outputs.signed == 'true'
         run: cargo install trusted-signing-cli --locked
@@ -200,18 +193,11 @@ jobs:
           releaseBody: 'Draft. Publish only after docs/release/checklist.md passes.'
           releaseDraft: true
           prerelease: ${{ needs.plan.outputs.prerelease == 'true' }}
-          includeUpdaterJson: ${{ needs.plan.outputs.channel != 'draft' }}
-          updaterJsonPreferNsis: true
           # `tauri build`, then the embedded-key check, so a binary that does not pin the
           # release keys fails here, before tauri-action uploads anything.
           tauriScript: node scripts/release/keys.mjs
           args: ${{ matrix.args }} --config ${{ runner.temp }}/tauri.release.json
 
-      - name: Verify updater signatures against the release pubkey
-        if: steps.signing.outputs.updater == 'true'
-        env:
-          ARTIFACTS: ${{ steps.tauri.outputs.artifactPaths }}
-        run: node scripts/release/update-manifest.mjs verify --json "$ARTIFACTS"
       - name: Check the macOS app holds only compressed DuckDB extensions
         if: matrix.platform == 'macos'
         run: |
@@ -259,69 +245,3 @@ jobs:
             src-tauri/target/universal-apple-darwin/release/bundle/
           if-no-files-found: error
           retention-days: 14
-
-  publish-update-manifest:
-    name: Publish ${{ needs.plan.outputs.channel }} update manifest
-    needs: [plan, build]
-    if: needs.plan.outputs.channel != 'draft'
-    runs-on: ubuntu-latest
-    # Configure required reviewers on these environments: approval is the checklist sign-off.
-    environment: release-${{ needs.plan.outputs.channel }}
-    permissions:
-      contents: write
-    env:
-      CHANNEL: ${{ needs.plan.outputs.channel }}
-      TAG: ${{ needs.plan.outputs.tag }}
-      RELEASE_BASE_URL: ${{ vars.RELEASE_BASE_URL || 'https://releases.ixtable.app' }}
-      RELEASE_S3_BUCKET: ${{ secrets.RELEASE_S3_BUCKET }}
-      RELEASE_S3_ENDPOINT: ${{ secrets.RELEASE_S3_ENDPOINT }}
-      AWS_ACCESS_KEY_ID: ${{ secrets.RELEASE_S3_ACCESS_KEY_ID }}
-      AWS_SECRET_ACCESS_KEY: ${{ secrets.RELEASE_S3_SECRET_ACCESS_KEY }}
-      AWS_DEFAULT_REGION: ${{ vars.RELEASE_S3_REGION || 'auto' }}
-      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-      IXTABLE_UPDATER_PUBKEY: ${{ vars.IXTABLE_UPDATER_PUBKEY }}
-    steps:
-      - name: Check release host configuration
-        id: host
-        run: |
-          missing=""
-          for name in RELEASE_S3_BUCKET RELEASE_S3_ENDPOINT AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY; do
-            [ -n "${!name}" ] || missing="$missing $name"
-          done
-          if [ -n "$missing" ]; then
-            echo "::notice::Release host not configured (missing:$missing); skipping the $CHANNEL manifest upload. Installers are on the draft release."
-            echo "configured=false" >> "$GITHUB_OUTPUT"
-          else
-            echo "configured=true" >> "$GITHUB_OUTPUT"
-          fi
-      - uses: actions/checkout@v4
-        if: steps.host.outputs.configured == 'true'
-      - uses: actions/setup-node@v4
-        if: steps.host.outputs.configured == 'true'
-        with:
-          node-version: lts/*
-      - name: Download release assets
-        if: steps.host.outputs.configured == 'true'
-        run: gh release download "$TAG" --repo "$GITHUB_REPOSITORY" --dir assets
-      # Verifies every platform's signature against IXTABLE_UPDATER_PUBKEY (never the dev key) before anything is uploaded.
-      - name: Prepare channel manifests
-        if: steps.host.outputs.configured == 'true'
-        run: |
-          beta_current=""
-          if [ "$CHANNEL" = stable ]; then
-            beta_current="$(curl -fsSL "$RELEASE_BASE_URL/beta/latest.json" | node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>console.log(JSON.parse(s).version))' || true)"
-          fi
-          gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json body --jq .body > notes.md
-          node scripts/release/update-manifest.mjs prepare --manifest assets/latest.json --assets assets \
-            --channel "$CHANNEL" --base "$RELEASE_BASE_URL" --out out --notes notes.md \
-            ${beta_current:+--beta-current "$beta_current"}
-      - name: Upload payloads, then manifests
-        if: steps.host.outputs.configured == 'true'
-        run: |
-          aws s3 cp out/ "s3://$RELEASE_S3_BUCKET/" --recursive --exclude "*/latest.json" \
-            --endpoint-url "$RELEASE_S3_ENDPOINT"
-          for manifest in out/*/latest.json; do
-            aws s3 cp "$manifest" "s3://$RELEASE_S3_BUCKET/${manifest#out/}" \
-              --endpoint-url "$RELEASE_S3_ENDPOINT" \
-              --content-type application/json --cache-control "no-cache, max-age=0"
-          done

@@ -5,12 +5,17 @@ use super::{ddl::TableDef, logical::LogicalType, Column, TableSchema};
 /// Logical type of a DuckDB column type (used for views and ad-hoc results).
 pub fn logical_from_duckdb(data_type: &str) -> LogicalType {
     let upper = data_type.to_ascii_uppercase();
+    // Lists (`INTEGER[]`) and fixed arrays (`INTEGER[3]`) hold JSON values.
+    if upper.trim_end().ends_with(']') {
+        return LogicalType::Json;
+    }
     match upper.split('(').next().unwrap_or("").trim() {
         "BOOLEAN" => LogicalType::Boolean,
         "DATE" => LogicalType::Date,
         "TIME" => LogicalType::Time,
         "UUID" => LogicalType::Uuid,
-        "JSON" => LogicalType::Json,
+        "JSON" | "LIST" | "STRUCT" | "MAP" | "UNION" => LogicalType::Json,
+        "INTERVAL" => LogicalType::Text,
         "BLOB" => LogicalType::Blob,
         "DOUBLE" | "FLOAT" | "REAL" => LogicalType::Real,
         "DECIMAL" => LogicalType::from_sqlite_declared(&upper),
@@ -112,5 +117,22 @@ mod tests {
         );
         assert_eq!(logical_from_duckdb("BIGINT"), LogicalType::Integer);
         assert_eq!(logical_from_duckdb("VARCHAR"), LogicalType::Text);
+    }
+    #[test]
+    fn nested_and_interval_types_are_not_integers() {
+        for nested in [
+            "INTEGER[]",
+            "BIGINT[3]",
+            "DECIMAL(10,2)[]",
+            "STRUCT(a INTEGER, b VARCHAR)",
+            "STRUCT(\"id\" BIGINT)[]",
+            "MAP(VARCHAR, INTEGER)",
+            "UNION(num INTEGER, str VARCHAR)",
+            "LIST",
+        ] {
+            assert_eq!(logical_from_duckdb(nested), LogicalType::Json, "{nested}");
+        }
+        assert_eq!(logical_from_duckdb("INTERVAL"), LogicalType::Text);
+        assert_eq!(logical_from_duckdb("HUGEINT"), LogicalType::Integer);
     }
 }

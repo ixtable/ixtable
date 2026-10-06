@@ -52,6 +52,8 @@ export interface ImportReport {
   imported: number;
   failed: number;
   errors: RowError[];
+  // Why the import stopped early; rows written before it stay.
+  aborted: string | null;
   state: SessionState | null;
 }
 

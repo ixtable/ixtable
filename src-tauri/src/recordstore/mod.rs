@@ -8,12 +8,12 @@ pub mod commands;
 pub(crate) mod conformance;
 #[cfg(test)]
 mod conformance_more;
-pub mod model;
 pub mod login;
+pub mod model;
 pub mod plan;
-pub mod runtime_login;
 #[cfg(test)]
 mod plan_tests;
+pub mod runtime_login;
 pub mod secrets;
 pub mod sqlite;
 pub mod sqlite_ddl;
@@ -103,6 +103,10 @@ pub trait RecordStore {
     fn execute_internal(&mut self, sql: &str, binds: &[String]) -> Result<(), StoreError>;
     /// Reads internal bookkeeping rows as text.
     fn query_internal(&mut self, sql: &str) -> Result<Vec<Vec<Option<String>>>, StoreError>;
+    /// After explicit-key inserts, moves `table`'s key sequences past its largest key (a no-op for SQLite).
+    fn sync_identity(&mut self, _table: &str) -> Result<(), StoreError> {
+        Ok(())
+    }
 }
 
 /// Opens the store configured for a document.

@@ -139,8 +139,9 @@ fn a_report_grants_its_dataset_and_table_queries_for_reading_only() {
     ));
 }
 
-/// `config()` plus a dashboard whose components, filter and embedded forms
-/// read queries, and which also embeds a report and runs an action.
+/// `config()` plus a dashboard whose components and filter read queries, which
+/// also embeds query-reading forms and a report, runs an action, and carries a
+/// stray `queryId` on a text component.
 fn dashboard_config() -> DocumentConfig {
     let mut c = config();
     c.dashboards = serde_json::from_value(json!([
@@ -155,7 +156,8 @@ fn dashboard_config() -> DocumentConfig {
                 {"id": "e1", "kind": "form", "formId": "f-summary"},
                 {"id": "e2", "kind": "form", "formId": "f-orders"},
                 {"id": "r1", "kind": "report", "reportId": "r-invoices"},
-                {"id": "b1", "kind": "button", "actionId": "act-1"}
+                {"id": "b1", "kind": "button", "actionId": "act-1"},
+                {"id": "x1", "kind": "text", "queryId": "q-stray"}
             ]
         },
         {"id": "d-other", "name": "Other",
@@ -166,26 +168,31 @@ fn dashboard_config() -> DocumentConfig {
 }
 
 #[test]
-fn a_dashboard_grants_read_on_its_queries_and_embedded_form_queries_only() {
+fn a_dashboard_grants_read_on_its_component_and_filter_queries_only() {
     let c = dashboard_config();
     let r = role(vec![grant("dashboard", "d-sales", &[Op::Read])], &[]);
-    let queries = [
-        "q-kpi",
-        "q-chart",
-        "q-table",
-        "q-regions",
-        "q-summary",
-        "q-status",
-    ];
+    let queries = ["q-kpi", "q-chart", "q-table", "q-regions"];
     for q in queries {
         assert!(allows(&c, &r, "query", q, Op::Read, &no_fk), "{q}");
         for op in [Op::Create, Op::Update, Op::Delete, Op::Execute] {
             assert!(!allows(&c, &r, "query", q, op, &no_fk), "{q} {op:?}");
         }
     }
-    // Another dashboard's query, and an embedded report's queries, stay closed.
-    assert!(!allows(&c, &r, "query", "q-other", Op::Read, &no_fk));
-    assert!(!allows(&c, &r, "query", "q-lines", Op::Read, &no_fk));
+    // Another dashboard's query, embedded forms' and reports' queries, and a
+    // `queryId` on a component kind that runs no query stay closed.
+    for q in ["q-other", "q-summary", "q-status", "q-lines", "q-stray"] {
+        assert!(!allows(&c, &r, "query", q, Op::Read, &no_fk), "{q}");
+    }
+    // Granting the embedded form opens its queries through the form.
+    let both = role(
+        vec![
+            grant("dashboard", "d-sales", &[Op::Read]),
+            grant("form", "f-summary", &[Op::Read]),
+        ],
+        &[],
+    );
+    assert!(allows(&c, &both, "query", "q-summary", Op::Read, &no_fk));
+    assert!(!allows(&c, &both, "query", "q-status", Op::Read, &no_fk));
     // Embedded forms, reports, their tables and actions are not granted.
     for (kind, id) in [
         ("form", "f-orders"),
@@ -218,7 +225,10 @@ fn a_previewed_role_granted_only_a_dashboard_runs_its_queries() {
     let check =
         |kind: &str, id: &str, op: Op| m.with_session("w", |s| check_session(s, kind, id, op));
     assert!(check("query", "q-chart", Op::Read).is_ok());
-    assert!(check("query", "q-summary", Op::Read).is_ok());
+    assert_eq!(
+        check("query", "q-summary", Op::Read).unwrap_err().code,
+        "FORBIDDEN"
+    );
     assert_eq!(
         check("query", "q-other", Op::Read).unwrap_err().code,
         "FORBIDDEN"

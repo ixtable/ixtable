@@ -11,8 +11,10 @@
 //! runtime UI needs to show what a role may open: a form grants its source
 //! table, lookup and related-list tables, and option queries; a report
 //! grants its dataset table and queries; a dashboard grants read on the
-//! queries of its components and filters and of the forms it embeds (never
-//! the forms themselves, their tables, or any write or action). Ad hoc SQL
+//! queries of its KPI, table and chart components and filter options (never
+//! embedded forms or reports, their queries or tables, or any write or
+//! action). Dashboard filters and columns are not row or column security:
+//! the caller supplies parameters, filters and limits (PRD §20.1). Ad hoc SQL
 //! is refused for a role. This is not a defense against a user holding direct database credentials.
 use crate::archive::DocumentConfig;
 use crate::dashboards::{ComponentKind, Dashboard};
@@ -211,28 +213,26 @@ fn form_queries(form: &Form) -> impl Iterator<Item = &str> {
     source.into_iter().chain(options)
 }
 
-/// Saved queries a dashboard reads: component queries, filter choices, and
-/// the queries of the forms it embeds.
-fn dashboard_queries<'a>(
-    config: &'a DocumentConfig,
-    dashboard: &'a Dashboard,
-) -> impl Iterator<Item = &'a str> {
+/// Saved queries a dashboard reads: KPI, table and chart queries, and filter
+/// choices. Embedded forms are excluded: their queries need the form grant
+/// (`readable_query`'s `by_form`), since the dashboard refuses forms the role
+/// cannot open.
+fn dashboard_queries(dashboard: &Dashboard) -> impl Iterator<Item = &str> {
     let components = dashboard
         .components
         .iter()
+        .filter(|c| {
+            matches!(
+                c.kind,
+                ComponentKind::Kpi | ComponentKind::Table | ComponentKind::Chart
+            )
+        })
         .filter_map(|c| c.query_id.as_deref());
     let filters = dashboard
         .filters
         .iter()
         .filter_map(|f| f.options_query_id.as_deref());
-    let forms = dashboard
-        .components
-        .iter()
-        .filter(|c| c.kind == ComponentKind::Form)
-        .filter_map(|c| c.form_id.as_deref())
-        .filter_map(|id| config.design.forms.iter().find(|f| f.id == id))
-        .flat_map(form_queries);
-    components.chain(filters).chain(forms)
+    components.chain(filters)
 }
 
 fn readable_query(config: &DocumentConfig, role: &Role, id: &str) -> bool {
@@ -261,7 +261,7 @@ fn readable_query(config: &DocumentConfig, role: &Role, id: &str) -> bool {
             .dashboards
             .iter()
             .filter(|d| explicit(role, "dashboard", &d.id, Op::Read))
-            .any(|d| dashboard_queries(config, d).any(|q| q == id))
+            .any(|d| dashboard_queries(d).any(|q| q == id))
     };
     by_form || by_report() || by_dashboard()
 }

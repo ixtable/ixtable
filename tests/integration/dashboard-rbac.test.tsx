@@ -29,6 +29,7 @@ it("lets a role granted only a dashboard read the dashboard's queries", async ()
       { column: "amount", value: value("real", amount) },
     ]);
   const [total, regions, secret, home, nav] = [id(), id(), id(), id(), id()];
+  const [summary, summaryForm, stray] = [id(), id(), id()];
   const config = await invoke<Record<string, unknown> & { design: Record<string, unknown> }>(
     "read_document_config",
     { windowLabel: "main" },
@@ -43,6 +44,18 @@ it("lets a role granted only a dashboard read the dashboard's queries", async ()
     },
     { id: regions, name: "Regions", sql: "SELECT DISTINCT region FROM sales ORDER BY region" },
     { id: secret, name: "Secret", sql: "SELECT * FROM sales" },
+    { id: summary, name: "Summary", sql: "SELECT id, region, amount FROM sales" },
+    { id: stray, name: "Stray", sql: "SELECT id FROM sales" },
+  ];
+  config.design.forms = [
+    {
+      id: summaryForm,
+      name: "Summary",
+      source: { kind: "query", queryId: summary },
+      modes: ["list"],
+      listColumns: ["id", "region", "amount"],
+      pageSize: 25,
+    },
   ];
   config.dashboards = [
     {
@@ -52,8 +65,24 @@ it("lets a role granted only a dashboard read the dashboard's queries", async ()
         { id: id(), name: "Region", param: "region", control: "select", optionsQueryId: regions },
       ],
       components: [
-        { id: id(), kind: "kpi", title: "Revenue", queryId: total, valueField: "total", placement: at(1) },
+        {
+          id: id(),
+          kind: "kpi",
+          title: "Revenue",
+          queryId: total,
+          valueField: "total",
+          placement: at(1),
+        },
         { id: id(), kind: "table", title: "Totals", queryId: total, placement: at(7) },
+        {
+          id: id(),
+          kind: "form",
+          title: "Summary form",
+          formId: summaryForm,
+          mode: "list",
+          placement: { column: 1, row: 3, columnSpan: 12, rowSpan: 2 },
+        },
+        { id: id(), kind: "text", title: "Note", text: "Hi", queryId: stray, placement: at(1) },
       ],
     },
   ];
@@ -85,6 +114,9 @@ it("lets a role granted only a dashboard read the dashboard's queries", async ()
   const table = await screen.findByRole("region", { name: "Totals" }, LONG);
   expect(await within(table).findByText("500", {}, LONG)).toBeInTheDocument();
   expect(screen.queryByText("You do not have access to this data.")).toBeNull();
+  expect(
+    await screen.findByText("You do not have access to Summary.", {}, LONG),
+  ).toBeInTheDocument();
   const filter = screen.getByRole("combobox", { name: "Region" });
   await within(filter).findByRole("option", { name: "West" }, LONG);
   await user.selectOptions(filter, "East");
@@ -96,11 +128,14 @@ it("lets a role granted only a dashboard read the dashboard's queries", async ()
       (error: unknown) => asTauriError(error).code,
     );
   await waitFor(
-    async () => expect(await code("run_saved_query", { id: secret, limit: null })).toBe("FORBIDDEN"),
+    async () =>
+      expect(await code("run_saved_query", { id: secret, limit: null })).toBe("FORBIDDEN"),
     LONG,
   );
   expect(await code("run_saved_query", { id: total, limit: null })).toBe("OK");
   expect(await code("run_saved_query", { id: regions, limit: null })).toBe("OK");
+  expect(await code("run_saved_query", { id: summary, limit: null })).toBe("FORBIDDEN");
+  expect(await code("run_saved_query", { id: stray, limit: null })).toBe("FORBIDDEN");
   const page = { table: "sales", offset: 0, limit: 10, sorts: [], filters: [] };
   expect(await code("read_table_page", page)).toBe("FORBIDDEN");
   const row = [{ column: "id", value: value("integer", 9) }];

@@ -9,7 +9,9 @@ pub(crate) mod conformance;
 #[cfg(test)]
 mod conformance_more;
 pub mod model;
+pub mod login;
 pub mod plan;
+pub mod runtime_login;
 #[cfg(test)]
 mod plan_tests;
 pub mod secrets;
@@ -110,9 +112,9 @@ pub fn for_config(
 ) -> Result<Box<dyn RecordStore>, StoreError> {
     if datasource.is_postgres() {
         secrets::ensure_transport(datasource)?;
-        let password = secrets::datasource_credential(datasource)?;
+        let (ds, password) = secrets::connection(datasource)?;
         Ok(Box::new(crate::postgres::PostgresRecordStore::connect(
-            datasource,
+            &ds,
             password.as_deref(),
         )?))
     } else {
@@ -155,9 +157,9 @@ pub fn read_target(datasource: &DatasourceConfig) -> Result<ReadTarget, String> 
         return Ok(ReadTarget::Sqlite);
     }
     secrets::ensure_transport(datasource).map_err(|e| e.message)?;
-    let password = secrets::datasource_password(datasource)?;
+    let (ds, password) = secrets::connection(datasource).map_err(|e| e.message)?;
     Ok(ReadTarget::Postgres {
-        conninfo: crate::postgres::conninfo(datasource, password.as_deref()),
+        conninfo: crate::postgres::conninfo(&ds, password.as_deref()),
         schema: datasource.schema.clone(),
     })
 }

@@ -351,6 +351,18 @@ it("delivers a PostgreSQL credential by envelope and key grant, memory only", as
   const envelope = cloud.envelope!;
   expect(envelope).toMatchObject({ appId: APP_ID, datasourceId: "pg-main", scope: "shared" });
   expect(JSON.stringify(envelope)).not.toContain("pg-secret-123");
+  const upload = (args: Json) =>
+    call("cloud_upload_credential", { accessToken: "dev-jwt", appId: APP_ID, ...args });
+  expect(
+    await failure(upload({ scope: "shared", userId: null, password: "x", username: "alice" })),
+  ).toMatch(/VALIDATION.*per-user/);
+  expect(
+    await failure(upload({ scope: "user", userId: "u-2", password: null, username: "alice" })),
+  ).toMatch(/VALIDATION.*password/);
+  await upload({ scope: "user", userId: "u-2", password: "alice-pw-77", username: "alice_db" });
+  expect(cloud.envelope).toMatchObject({ scope: "user", userId: "u-2" });
+  expect(JSON.stringify(cloud.envelope)).not.toMatch(/alice-pw-77|alice_db/);
+  cloud.envelope = envelope;
   await call("close_document", { force: true });
 
   cloud.archive = bytes;

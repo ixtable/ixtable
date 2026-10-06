@@ -90,6 +90,9 @@ pub fn open(ciphertext: &str, nonce: &str, aad: &str, dek: &str) -> Result<Vec<u
 pub struct Credential {
     pub v: u32,
     pub kind: String,
+    /// Per-user database username (v2); `None` connects as the datasource's user.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub user: Option<String>,
     pub password: String,
     /// `secrets::datasource_target` of the datasource it was sealed for.
     pub target: String,

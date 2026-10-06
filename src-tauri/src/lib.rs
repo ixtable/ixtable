@@ -415,6 +415,9 @@ pub fn run() {
             recordstore::commands::set_datasource_password,
             recordstore::commands::clear_datasource_password,
             recordstore::commands::connect_datasource,
+            recordstore::runtime_login::runtime_datasource_login_status,
+            recordstore::runtime_login::set_runtime_datasource_login,
+            recordstore::runtime_login::clear_runtime_datasource_login,
             // roles commands
             authz::set_runtime_role_preview,
             // design commands

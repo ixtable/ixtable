@@ -275,6 +275,7 @@ pub async fn cloud_upload_credential(
     scope: String,
     user_id: Option<String>,
     password: Option<String>,
+    username: Option<String>,
 ) -> Result<Value, AppError> {
     http::offload(move || {
         crate::installation::ensure_studio(&window_label)?;
@@ -296,6 +297,25 @@ pub async fn cloud_upload_credential(
                 ))
             }
         }
+        // A per-user credential may name its own database user (PRD §9.3).
+        let username = username
+            .map(|u| u.trim().to_string())
+            .filter(|u| !u.is_empty());
+        if let Some(u) = &username {
+            if scope != "user" {
+                return Err(err(
+                    "VALIDATION",
+                    "Only a per-user credential can name its own database user",
+                ));
+            }
+            secrets::validate_login_user(u)?;
+            if password.as_deref().is_none_or(str::is_empty) {
+                return Err(err(
+                    "VALIDATION",
+                    "Enter the password of that database user",
+                ));
+            }
+        }
         let password = match password.filter(|p| !p.is_empty()) {
             Some(p) => p,
             None => secrets::datasource_credential(&ds)?.ok_or_else(|| {
@@ -306,8 +326,9 @@ pub async fn cloud_upload_credential(
             })?,
         };
         let plain = serde_json::to_vec(&envelope::Credential {
-            v: 1,
+            v: if username.is_some() { 2 } else { 1 },
             kind: "postgres".into(),
+            user: username,
             password,
             target: secrets::datasource_target(&ds),
         })

@@ -42,6 +42,7 @@ export const uploadCredential = (
   scope: "shared" | "user",
   userId: string | null,
   password: string | null,
+  username: string | null = null,
 ) =>
   call<{ envelopeId?: string }>("cloud_upload_credential", {
     accessToken,
@@ -49,6 +50,7 @@ export const uploadCredential = (
     scope,
     userId,
     password,
+    username,
   });
 export const restoreCopy = (
   signedUrl: string,

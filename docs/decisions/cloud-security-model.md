@@ -127,6 +127,15 @@ users cannot obtain new bundles or keys.
   nonce, aad and wrapped DEK in the same transaction; a check constraint
   keeps retired rows empty. The metadata stays so key grants remain
   attributable to the credential they delivered.
+- The envelope plaintext is `{v, kind, password, target}`. A per-user
+  credential may also carry `user`, its own database username (`v: 2`). The
+  username sits inside the ciphertext, so the cloud never sees it. Studio
+  accepts a username only with `scope = user` and an explicit password.
+  Runtime checks it like any login username and connects as it. `target`
+  still names the datasource's configured user, so the binding to host,
+  port, and database is unchanged. A runtime older than v2 ignores `user`
+  and tries that password with the configured user, which the server
+  refuses unless both roles share a password.
 - Per-user envelopes (`scope = 'user'`) need the target to be an active
   member (or the owner). `key-grant` prefers the caller's per-user envelope
   over the shared one.

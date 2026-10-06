@@ -137,6 +137,31 @@ runtime; leaving Run mode ends it. Runtime sessions keep the ids the
 bundle was published with; only Studio rewrites the legacy `main` form id
 (`design/upgrade.rs`, `rekey_legacy_ids`).
 
+### Database login
+
+A manual bundle on PostgreSQL carries no password, so the recipient enters a
+database login. When the bundle opens, `DatabaseLogin` asks
+`runtime_datasource_login_status`. It opens the "Database login" dialog when
+no login is stored (`missing`) or the server refused the stored one
+(`rejected`, from the reader's attach error). The username starts as the
+datasource's user and may be changed. `set_runtime_datasource_login` checks
+the username, requires a confirmed transport, and connects (`postgres::probe`)
+before storing anything; a refusal comes back as `AUTH_FAILED` (SQLSTATE class
+28) with a redacted message. A verified login goes to the local secret store
+under `installation:<bundleId>:datasource:<datasourceId>`, sealed and bound to
+the datasource target. The reader then re-attaches. "Database login…" in the
+runtime sidebar re-enters the login or forgets it
+(`clear_runtime_datasource_login`).
+
+The installation id reaches the credential lookup through
+`DatasourceConfig.installation`, a `serde(skip)` field set only by
+`open_runtime_session`, so Studio and other installations never see the
+login. `secrets::datasource_login` picks a login in this order: a cloud key
+grant, the installation's login, then the developer's `passwordRef`. An update
+that moves the datasource to another host, port, database, or user changes the
+target, so the stored login no longer matches and Runtime asks again. Cloud
+installations get their login from key grants and never show the dialog.
+
 The runtime sidebar has a "Diagnostics…" button for the background job queue
 (status, attempts, retry, cancel; the Studio `JobsPanel`) and the local log
 (`LogsTab`). Neither changes the definition.
@@ -163,7 +188,9 @@ words of PRD §4.1.
   as the developer can sign bundles.
 - Bundles carry no PostgreSQL password. `DatasourceConfig` stores only
   `passwordRef`, and the secret stays in the developer's local secret store.
-  Recipients enter their own credentials.
+  Recipients enter their own login in Runtime. It is sealed in their local
+  secret store under the machine key, which the OS account's file
+  permissions protect. Anyone who can read that account's files can open it.
 - A fork of the Apache-2.0 desktop code can remove any of these checks for
   its own users. The checks protect honest Runtimes from tampered files.
 
@@ -192,6 +219,14 @@ check in TypeScript before calling `export_runtime_bundle`; see
   health check reverts, restore of the previous version, reset, unsafe
   bundle ids, a corrupt `bundle.json` failing closed, and a folder without one
   moved aside.
+- `src-tauri/src/recordstore/runtime_login_tests.rs`: logins sealed per
+  installation and target, precedence (grant, installation, Studio), a moved
+  datasource asks again, username validation, auth failures told apart from
+  unreachable servers, and `AUTH_FAILED` from a real PostgreSQL server.
+- `tests/integration/runtime-database-login.test.tsx`: the prompt opens for a
+  PostgreSQL bundle with no login; an unverifiable login is not stored; with
+  `IXTABLE_TEST_POSTGRES_URL` a wrong password is refused, the right one
+  connects and reads, and "Forget saved login" asks again.
 - `src-tauri/src/installation_commands.rs` (unit test): oversized bundles fail
   with `BUNDLE_TOO_LARGE` before reading.
 - `tests/integration/bundle.test.tsx`: export from Studio, open runtime-only

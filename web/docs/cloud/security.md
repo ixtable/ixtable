@@ -36,7 +36,7 @@ Datasource credentials use envelope encryption with standard primitives. Studio 
 
 The Runtime asks for a **key grant** after it verifies the bundle. ixtable Cloud checks that the membership is active, the role is valid, the plan is entitled, the device is not revoked, and the app is not deleted. It then returns the data key and the envelope with an expiry of 24 hours. The Runtime decrypts the credential in memory and renews the grant with a refreshed session. Every grant is recorded.
 
-Credentials can be shared by every runtime user of an app, or separate per user. Use per-user credentials with the least privilege each user needs. A shared credential reaches every runtime user, and Studio asks you to acknowledge that before you publish.
+Credentials can be shared by every runtime user of an app, or separate per user. A per-user credential can carry its own database username as well as its password, so each runtime user connects as their own database role. The username is encrypted with the password. Use per-user credentials with the least privilege each user needs. A shared credential reaches every runtime user, and Studio asks you to acknowledge that before you publish.
 
 ## Revocation limits
 

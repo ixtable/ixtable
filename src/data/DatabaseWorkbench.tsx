@@ -25,7 +25,7 @@ const PAGE_SIZE = 100;
 
 export function DatabaseWorkbench() {
   const { objects, selection: active, select: onSelect, reloadMetadata, markDirty } = useShell();
-  const { config, update, reload: reloadConfig } = useDocumentConfig();
+  const { config, update, reload: reloadConfig, settled } = useDocumentConfig();
   const [capabilities, setCapabilities] = useState<StoreCapabilities | null>(null);
   // The relationship editor, opened by drawing on the diagram or by the New relationship button.
   const [relating, setRelating] = useState<{ drawn: DrawnRelationship | null } | null>(null);
@@ -123,6 +123,7 @@ export function DatabaseWorkbench() {
     refresh();
   };
   const createTable = async (spec: CreateTableSpec) => {
+    await settled();
     await createDatabaseTable(spec);
     await afterSchemaChange(spec.name);
     setCreated(spec.name);

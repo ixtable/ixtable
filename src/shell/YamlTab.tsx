@@ -35,6 +35,8 @@ export function YamlTab() {
     setError(null);
     setStatus("");
     try {
+      // Queued edits must land first, or one written after the YAML would replace it.
+      await settled();
       applySession(await applyDocumentConfigYaml(yaml));
       await reload("Apply YAML");
       setEdited(false);

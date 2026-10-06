@@ -10,9 +10,12 @@
 //! The checks mirror `can()` in src/runtime/rbac.ts, plus the access the
 //! runtime UI needs to show what a role may open: a form grants its source
 //! table, lookup and related-list tables, and option queries; a report
-//! grants its dataset table and queries. Ad hoc SQL is refused for a role.
-//! This is not a defense against a user holding direct database credentials.
+//! grants its dataset table and queries; a dashboard grants read on the
+//! queries of its components and filters and of the forms it embeds (never
+//! the forms themselves, their tables, or any write or action). Ad hoc SQL
+//! is refused for a role. This is not a defense against a user holding direct database credentials.
 use crate::archive::DocumentConfig;
+use crate::dashboards::{ComponentKind, Dashboard};
 use crate::design::{Form, SourceKind};
 use crate::manager::{AppError, Session};
 use crate::reports::{Band, Report};
@@ -198,20 +201,49 @@ fn readable_tables(
     base
 }
 
+/// Saved queries a form reads: a query source and option queries.
+fn form_queries(form: &Form) -> impl Iterator<Item = &str> {
+    let source = form.source.as_ref().and_then(|s| s.query_id.as_deref());
+    let options = form
+        .controls
+        .iter()
+        .filter_map(|c| c.options_query_id.as_deref());
+    source.into_iter().chain(options)
+}
+
+/// Saved queries a dashboard reads: component queries, filter choices, and
+/// the queries of the forms it embeds.
+fn dashboard_queries<'a>(
+    config: &'a DocumentConfig,
+    dashboard: &'a Dashboard,
+) -> impl Iterator<Item = &'a str> {
+    let components = dashboard
+        .components
+        .iter()
+        .filter_map(|c| c.query_id.as_deref());
+    let filters = dashboard
+        .filters
+        .iter()
+        .filter_map(|f| f.options_query_id.as_deref());
+    let forms = dashboard
+        .components
+        .iter()
+        .filter(|c| c.kind == ComponentKind::Form)
+        .filter_map(|c| c.form_id.as_deref())
+        .filter_map(|id| config.design.forms.iter().find(|f| f.id == id))
+        .flat_map(form_queries);
+    components.chain(filters).chain(forms)
+}
+
 fn readable_query(config: &DocumentConfig, role: &Role, id: &str) -> bool {
-    let forms = config
+    let by_form = config
         .design
         .forms
         .iter()
-        .filter(|f| granted(role, "form", &f.id));
-    let by_form = forms.into_iter().any(|f| {
-        f.source.as_ref().and_then(|s| s.query_id.as_deref()) == Some(id)
-            || f.controls
-                .iter()
-                .any(|c| c.options_query_id.as_deref() == Some(id))
-    });
-    by_form
-        || config
+        .filter(|f| granted(role, "form", &f.id))
+        .any(|f| form_queries(f).any(|q| q == id));
+    let by_report = || {
+        config
             .reports
             .iter()
             .filter(|r| explicit(role, "report", &r.id, Op::Read))
@@ -223,6 +255,15 @@ fn readable_query(config: &DocumentConfig, role: &Role, id: &str) -> bool {
                             .any(|c| c.extra.get("queryId").and_then(|v| v.as_str()) == Some(id))
                     })
             })
+    };
+    let by_dashboard = || {
+        config
+            .dashboards
+            .iter()
+            .filter(|d| explicit(role, "dashboard", &d.id, Op::Read))
+            .any(|d| dashboard_queries(config, d).any(|q| q == id))
+    };
+    by_form || by_report() || by_dashboard()
 }
 
 /// Whether `role` may perform `op` on the object (see module docs).

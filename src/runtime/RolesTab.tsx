@@ -140,7 +140,8 @@ export function RolesTab() {
             <h3>Objects</h3>
             <p className="rt-muted">
               Form permissions govern records changed through that form. Table permissions govern
-              table pages and actions that write to the table.
+              table pages and actions that write to the table. Reading a form, report, or dashboard
+              also lets the role read the saved queries it shows.
             </p>
             <table className="rt-table rt-matrix">
               <thead>

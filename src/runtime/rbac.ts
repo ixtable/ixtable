@@ -75,6 +75,19 @@ export function can(
   return entry[flag] === true;
 }
 
+/**
+ * Read access to a query a dashboard component runs: a dashboard grant implies
+ * read on its own queries (authz.rs `dashboard_queries`), never writes or actions.
+ */
+export const canReadDashboardQuery = (
+  config: Pick<DocumentConfig, "roles">,
+  roleId: string | null,
+  dashboardId: string,
+  queryId: string,
+) =>
+  can(config, roleId, "query", queryId, "read") ||
+  can(config, roleId, "dashboard", dashboardId, "read");
+
 /** Error thrown when a runtime write or action is attempted without permission. */
 export class PermissionError extends Error {
   readonly code = "FORBIDDEN";

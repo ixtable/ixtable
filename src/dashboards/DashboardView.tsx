@@ -10,7 +10,7 @@ import { ReportPreview } from "../reports";
 import { useConfirm } from "../runtime/Confirm";
 import { type PageKind, useRuntimeNavigation } from "../runtime/navigation";
 import { conditionResult } from "../runtime/formState";
-import { can } from "../runtime/rbac";
+import { can, canReadDashboardQuery } from "../runtime/rbac";
 import { EmbeddedForm } from "./EmbeddedForm";
 import { useDebounced } from "../runtime/useDebounced";
 import { dashboardParams, defaultFilterValues, type FilterValue, resultRows } from "./data";
@@ -67,12 +67,16 @@ function LiveDashboard({
     () => ({ ...initial, ...dashboardParams(dashboard.filters, settled) }),
     [initial, dashboard.filters, settled],
   );
+  const readable = (id: string) =>
+    canReadDashboardQuery(config, runtime.roleId, dashboard.id, id);
   const queryIds = useMemo(() => {
     const ids = dashboard.components
       .filter((c) => ["kpi", "table", "chart"].includes(c.kind) && c.queryId)
       .map((c) => c.queryId as string);
-    return [...new Set(ids)].filter((id) => can(config, runtime.roleId, "query", id, "read"));
-  }, [dashboard.components, config, runtime.roleId]);
+    return [...new Set(ids)].filter((id) =>
+      canReadDashboardQuery(config, runtime.roleId, dashboard.id, id),
+    );
+  }, [dashboard.components, dashboard.id, config, runtime.roleId]);
   const data = useDashboardData(queryIds, params);
   const { refresh } = data;
 
@@ -123,7 +127,7 @@ function LiveDashboard({
   };
 
   const stateOf = (c: DashboardComponent): QueryState | undefined =>
-    c.queryId && !can(config, runtime.roleId, "query", c.queryId, "read")
+    c.queryId && !readable(c.queryId)
       ? { status: "denied" }
       : c.queryId
         ? data.states[c.queryId]

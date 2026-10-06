@@ -139,6 +139,98 @@ fn a_report_grants_its_dataset_and_table_queries_for_reading_only() {
     ));
 }
 
+/// `config()` plus a dashboard whose components, filter and embedded forms
+/// read queries, and which also embeds a report and runs an action.
+fn dashboard_config() -> DocumentConfig {
+    let mut c = config();
+    c.dashboards = serde_json::from_value(json!([
+        {
+            "id": "d-sales", "name": "Sales",
+            "filters": [{"id": "fl1", "name": "Region", "param": "region",
+                         "control": "select", "optionsQueryId": "q-regions"}],
+            "components": [
+                {"id": "k1", "kind": "kpi", "queryId": "q-kpi"},
+                {"id": "c1", "kind": "chart", "queryId": "q-chart"},
+                {"id": "t1", "kind": "table", "queryId": "q-table"},
+                {"id": "e1", "kind": "form", "formId": "f-summary"},
+                {"id": "e2", "kind": "form", "formId": "f-orders"},
+                {"id": "r1", "kind": "report", "reportId": "r-invoices"},
+                {"id": "b1", "kind": "button", "actionId": "act-1"}
+            ]
+        },
+        {"id": "d-other", "name": "Other",
+         "components": [{"id": "k1", "kind": "kpi", "queryId": "q-other"}]}
+    ]))
+    .unwrap();
+    c
+}
+
+#[test]
+fn a_dashboard_grants_read_on_its_queries_and_embedded_form_queries_only() {
+    let c = dashboard_config();
+    let r = role(vec![grant("dashboard", "d-sales", &[Op::Read])], &[]);
+    let queries = [
+        "q-kpi",
+        "q-chart",
+        "q-table",
+        "q-regions",
+        "q-summary",
+        "q-status",
+    ];
+    for q in queries {
+        assert!(allows(&c, &r, "query", q, Op::Read, &no_fk), "{q}");
+        for op in [Op::Create, Op::Update, Op::Delete, Op::Execute] {
+            assert!(!allows(&c, &r, "query", q, op, &no_fk), "{q} {op:?}");
+        }
+    }
+    // Another dashboard's query, and an embedded report's queries, stay closed.
+    assert!(!allows(&c, &r, "query", "q-other", Op::Read, &no_fk));
+    assert!(!allows(&c, &r, "query", "q-lines", Op::Read, &no_fk));
+    // Embedded forms, reports, their tables and actions are not granted.
+    for (kind, id) in [
+        ("form", "f-orders"),
+        ("form", "f-summary"),
+        ("report", "r-invoices"),
+        ("table", "orders"),
+        ("table", "customers"),
+        ("table", "invoices"),
+    ] {
+        assert!(!allows(&c, &r, kind, id, Op::Read, &no_fk), "{kind} {id}");
+    }
+    assert!(!allows(&c, &r, "table", "orders", Op::Create, &no_fk));
+    assert!(!allows(&c, &r, "action", "act-1", Op::Execute, &no_fk));
+    // Without the dashboard grant nothing is implied.
+    assert!(!allows(&c, &deny_all(), "query", "q-kpi", Op::Read, &no_fk));
+    let none = role(vec![grant("dashboard", "d-other", &[Op::Read])], &[]);
+    assert!(!allows(&c, &none, "query", "q-kpi", Op::Read, &no_fk));
+    assert!(allows(&c, &none, "query", "q-other", Op::Read, &no_fk));
+}
+
+#[test]
+fn a_previewed_role_granted_only_a_dashboard_runs_its_queries() {
+    let (m, base) = session();
+    m.with_session("w", |s| {
+        s.doc.config.dashboards = dashboard_config().dashboards;
+        s.doc.config.roles = vec![role(vec![grant("dashboard", "d-sales", &[Op::Read])], &[])];
+        preview_role(s, Some("clerk".into()))
+    })
+    .unwrap();
+    let check =
+        |kind: &str, id: &str, op: Op| m.with_session("w", |s| check_session(s, kind, id, op));
+    assert!(check("query", "q-chart", Op::Read).is_ok());
+    assert!(check("query", "q-summary", Op::Read).is_ok());
+    assert_eq!(
+        check("query", "q-other", Op::Read).unwrap_err().code,
+        "FORBIDDEN"
+    );
+    assert_eq!(
+        check("table", "orders", Op::Read).unwrap_err().code,
+        "FORBIDDEN"
+    );
+    let _ = m.close("w", true);
+    let _ = std::fs::remove_dir_all(base);
+}
+
 fn session() -> (DocumentManager, std::path::PathBuf) {
     let base = std::env::temp_dir().join(format!("ixtable-authz-{}", uuid::Uuid::new_v4()));
     let m = DocumentManager::new(base.join("data"), base.join("cache")).unwrap();

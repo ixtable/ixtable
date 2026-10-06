@@ -29,14 +29,18 @@ users cannot obtain new bundles or keys.
 
 ### Trusted-user limits (PRD §20.2, §21.2, §21.3)
 
-- Runtime RBAC protects navigation, queries, forms, reports and actions in
-  the official Runtime. Rust enforces it at every command entry point that
+- Runtime RBAC protects navigation, queries, forms, reports, dashboards
+  and actions in the official Runtime. Rust enforces it at every command
+  entry point that
   reads or writes records (`src-tauri/src/authz.rs`): row and batch writes,
   table pages, saved queries, report PDF export and attachment export. A
-  role gets `FORBIDDEN` for anything its permissions (or the forms and
-  reports it may open) do not grant. No role may run ad hoc SQL or export
-  attachments. Table
-  listing and schema inspection show only tables the role may read.
+  role gets `FORBIDDEN` for anything its permissions (or the forms,
+  reports and dashboards it may open) do not grant. No role may run ad hoc
+  SQL or export attachments. A dashboard grant implies read on the saved
+  queries of its components and filters and of the forms it embeds; it
+  grants no form, table, write or action, so an embedded form or report
+  still needs its own grant. Table listing and schema inspection show only
+  tables the role may read.
   Checkpoints, restoring a checkpoint as a copy and resetting installation
   data copy or replace every table, so they need unrestricted access. The
   readable-table set is cached per session and role and recomputed after a

@@ -22,6 +22,9 @@ in `src-tauri/src/updater/`. The UI is Settings → Updates (`src/updates/`).
 - The plugin only offers versions newer than the running one. Switching from
   beta back to stable does not downgrade. The user stays on the beta build
   until stable passes it.
+- Nightly builds (`.github/workflows/nightly.yml`) are unsigned and go to the
+  rolling `nightly` GitHub prerelease only. They publish no manifest, so no
+  channel offers them.
 
 ## Flow
 

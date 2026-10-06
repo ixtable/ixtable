@@ -15,7 +15,9 @@
 //! this gate does: RecordStore connections and the reader's re-attach after a
 //! write (which detaches the catalog that cloned query connections use) are
 //! exclusive; DuckDB reads are shared. Waiting writers block new readers, so a
-//! stream of reads cannot starve a write.
+//! stream of reads cannot starve a write. When a writer finishes, the readers
+//! already waiting go first (`readers_turn`), so a stream of writes cannot
+//! starve a read either: the two sides alternate.
 //!
 //! Gates are per file and re-entrant per thread: a thread that already holds the
 //! gate of a file passes straight through, so nested reads never wait on a writer
@@ -40,6 +42,17 @@ struct State {
     readers: usize,
     writer: bool,
     waiting_writers: usize,
+    waiting_readers: usize,
+    /// Set when a writer leaves with readers waiting; those readers enter before the next writer.
+    readers_turn: bool,
+}
+impl State {
+    fn reader_left_queue(&mut self) {
+        self.waiting_readers -= 1;
+        if self.waiting_readers == 0 {
+            self.readers_turn = false;
+        }
+    }
 }
 
 #[derive(Default)]
@@ -83,6 +96,7 @@ impl Drop for GateGuard {
             let mut s = gate.state.lock().unwrap_or_else(|e| e.into_inner());
             if exclusive {
                 s.writer = false;
+                s.readers_turn = s.waiting_readers > 0;
             } else {
                 s.readers -= 1;
             }
@@ -143,11 +157,13 @@ fn acquire(db: &Path, exclusive: bool, wait: Duration) -> Result<GateGuard, Stri
     let mut s = gate.state.lock().unwrap_or_else(|e| e.into_inner());
     if exclusive {
         s.waiting_writers += 1;
+    } else {
+        s.waiting_readers += 1;
     }
     loop {
         let free = match exclusive {
-            true => !s.writer && s.readers == 0,
-            false => !s.writer && s.waiting_writers == 0,
+            true => !s.writer && s.readers == 0 && !s.readers_turn,
+            false => !s.writer && (s.waiting_writers == 0 || s.readers_turn),
         };
         if free {
             break;
@@ -156,9 +172,11 @@ fn acquire(db: &Path, exclusive: bool, wait: Duration) -> Result<GateGuard, Stri
         if left.is_zero() {
             if exclusive {
                 s.waiting_writers -= 1;
-                drop(s);
-                gate.changed.notify_all();
+            } else {
+                s.reader_left_queue();
             }
+            drop(s);
+            gate.changed.notify_all();
             return Err(BUSY_MESSAGE.into());
         }
         s = gate
@@ -171,9 +189,12 @@ fn acquire(db: &Path, exclusive: bool, wait: Duration) -> Result<GateGuard, Stri
         s.waiting_writers -= 1;
         s.writer = true;
     } else {
+        s.reader_left_queue();
         s.readers += 1;
     }
     drop(s);
+    // The last queued reader may have ended the readers' turn.
+    gate.changed.notify_all();
     HELD.with(|h| h.borrow_mut().push(db.to_owned()));
     Ok(GateGuard {
         held: Some((gate.clone(), exclusive, db.to_owned())),
@@ -215,6 +236,36 @@ mod tests {
             .collect();
         for t in threads {
             t.join().unwrap();
+        }
+    }
+
+    #[test]
+    fn a_reader_is_not_starved_by_a_stream_of_writes() {
+        let db = temp_db();
+        let stop = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let writes = Arc::new(AtomicUsize::new(0));
+        let writers: Vec<_> = (0..2)
+            .map(|_| {
+                let (db, stop, writes) = (db.clone(), stop.clone(), writes.clone());
+                std::thread::spawn(move || {
+                    while !stop.load(Ordering::SeqCst) {
+                        let _g = exclusive(&db).unwrap();
+                        writes.fetch_add(1, Ordering::SeqCst);
+                        std::thread::sleep(Duration::from_millis(2));
+                    }
+                })
+            })
+            .collect();
+        while writes.load(Ordering::SeqCst) < 5 {
+            std::thread::yield_now();
+        }
+        // Writers queue back to back; the reader still enters after the current write.
+        let started = Instant::now();
+        drop(acquire(&db, false, Duration::from_secs(2)).expect("reader starved"));
+        assert!(started.elapsed() < Duration::from_secs(1));
+        stop.store(true, Ordering::SeqCst);
+        for w in writers {
+            w.join().unwrap();
         }
     }
 

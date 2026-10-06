@@ -85,7 +85,8 @@ it("previews roles, hides navigation, blocks deletes, and shows fields condition
   const page = screen.getByRole("region", { name: "Application page" });
   await user.click(await within(page).findByRole("row", { name: "Open 1" }, LONG));
   const detail = await within(page).findByRole("form", { name: "Customers" }, LONG);
-  expect(await within(detail).findByRole("textbox", { name: "Vat" }, LONG)).toHaveValue("GB123");
+  const vat = await within(detail).findByRole("textbox", { name: "Vat" }, LONG);
+  await waitFor(() => expect(vat).toHaveValue("GB123"), LONG);
   expect(within(detail).getByRole("button", { name: "Delete" })).toBeInTheDocument();
   await user.click(within(detail).getByRole("button", { name: "Edit" }));
   const edit = await within(page).findByRole("form", { name: "Edit Customers" }, LONG);

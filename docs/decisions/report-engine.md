@@ -76,8 +76,10 @@ past its box.
   restarts `groupPage` and `groupPages` there. They count the pages since the
   last such group start (or since the first page). Without any such group they
   equal `page` and `pages`, and `page` and `pages` always count the whole report.
-- All of these default to off and are left out of the stored definition, so
-  older reports lay out exactly as before.
+- `pageBreakBefore`, `pageBreakAfter`, `newPage`, `repeatHeader`, and
+  `resetPageNumber` default to off and are left out of the stored definition
+  when off, so older reports lay out exactly as before. `keepTogether` is
+  always stored.
 - Page header and footer bands can't hold a table. The designer lists it as a
   problem and marks Add table `aria-disabled` with a visible reason on those
   bands. `reports::validate` returns a warning, not an error, so older
@@ -155,7 +157,7 @@ arbitrary HTML or CSS. This engine also leaves these for later:
   bytes.
 - `tests/unit/report-pagination.test.ts`: page assignments and positions for
   page breaks, new page per group, repeated group headers (also above a split
-  table), and group page numbers.
+  table), group page numbers, and the diagnostic for a table in a page band.
 - `tests/integration/golden/report-snapshots.test.tsx`: lays out every report
   of the CRM, Inventory, and Work orders golden apps from their template and
   seed rows, with a fixed clock and `TZ=UTC`, and compares the layout JSON and
@@ -165,4 +167,10 @@ arbitrary HTML or CSS. This engine also leaves these for later:
   JSON. `.gitattributes` keeps the fixtures out of line-ending conversion.
 - `tests/integration/report.test.tsx`: builds a grouped report in the UI,
   previews it, prints it, and exports two identical PDFs through the Rust
-  command.
+  command. It also sets the pagination options in the designer and checks that
+  Add table is blocked on page header and footer bands.
+
+## Audit log
+
+- 2026-10-05: Said which options are omitted when off (`keepTogether` is
+  always stored) and added the page-band table checks to the proof.

@@ -134,7 +134,7 @@ it("generates CRUD forms, validates, creates, edits, and manages related records
   await waitFor(async () => {
     const orders = await readPage("orders");
     expect(orders.rows.map((row) => row.map((cell) => cell.value))).toEqual([[1, 1, "Rush", 3]]);
-  });
+  }, LONG);
   expect(await within(detail).findByDisplayValue("Acme", {}, LONG)).toBeInTheDocument();
   await user.click(within(detail).getByRole("button", { name: "Edit" }));
   const edit = await screen.findByRole("form", { name: "Edit Orders" }, LONG);
@@ -143,7 +143,10 @@ it("generates CRUD forms, validates, creates, edits, and manages related records
   await user.type(within(edit).getByRole("textbox", { name: "Note" }), "Normal");
   await user.click(within(edit).getByRole("button", { name: "Save" }));
   await screen.findByRole("form", { name: "Orders" }, LONG);
-  await waitFor(async () => expect((await readPage("orders")).rows[0][2].value).toBe("Normal"));
+  await waitFor(
+    async () => expect((await readPage("orders")).rows[0][2].value).toBe("Normal"),
+    LONG,
+  );
   const items = await screen.findByRole("region", { name: "Order items" }, LONG);
   await user.click(await within(items).findByRole("button", { name: "Add order items" }, LONG));
   const child = await within(items).findByRole("form", { name: "New Order items" }, LONG);

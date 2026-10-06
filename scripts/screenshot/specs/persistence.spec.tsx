@@ -1,5 +1,5 @@
 import { mkdtempSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { basename, join } from "node:path";
 import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { invoke } from "@tauri-apps/api/core";
@@ -112,7 +112,7 @@ it("imports assets and reports archive size, checkpoints, and logs", async () =>
   for (const file of [logo, manual]) {
     dialogMock.open.mockResolvedValueOnce(file);
     await user.click(screen.getByRole("button", { name: "Import asset" }));
-    await screen.findByText(`Imported ${file.split("/").pop()}.`, {}, LONG);
+    await screen.findByText(`Imported ${basename(file)}.`, {}, LONG);
   }
   const table = await screen.findByRole("table", { name: "Assets" }, LONG);
   expect(within(table).getAllByRole("row")).toHaveLength(3);

@@ -3,6 +3,7 @@
 // when it, or the Edge Functions they need, are not up.
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
+import { clearTimeout, setTimeout } from "node:timers";
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 
 export const CLOUD_URL = (process.env.IXTABLE_CLOUD_URL ?? "http://127.0.0.1:54321").replace(
@@ -44,18 +45,39 @@ function localKey(): string | undefined {
  * Why the cloud tests cannot run here, or "" when they can. On success the
  * process environment points the Rust bridge at the local stack.
  */
+/** Rejects with a `TimeoutError` after `ms`. jsdom replaces `AbortSignal`, and Node 24's fetch rejects a jsdom signal outright, so the timeout races instead. */
+async function withTimeout<T>(work: Promise<T>, ms: number): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const expired = new Promise<never>((_, reject) => {
+    timer = setTimeout(
+      () => reject(Object.assign(new Error("timed out"), { name: "TimeoutError" })),
+      ms,
+    );
+  });
+  try {
+    return await Promise.race([work, expired]);
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 export async function cloudUnavailable(required = REQUIRED): Promise<string> {
   const { hostname } = new URL(CLOUD_URL);
   if (!["127.0.0.1", "localhost"].includes(hostname))
     return `refusing non-local IXTABLE_CLOUD_URL ${CLOUD_URL}`;
-  try {
-    const health = await fetch(`${CLOUD_URL}/functions/v1/health`, {
-      signal: AbortSignal.timeout(3000),
-    });
-    if (!health.ok) return `health answered ${health.status}`;
-  } catch {
-    return `the local stack at ${CLOUD_URL} is not reachable (npm run service-qa:up)`;
+  // A cold Edge Function can take several seconds to boot (e.g. after a long CI
+  // build), so a timeout is retried; a refused connection fails at once.
+  let health: Response | null = null;
+  for (let attempt = 0; attempt < 4 && !health; attempt++) {
+    try {
+      health = await withTimeout(fetch(`${CLOUD_URL}/functions/v1/health`), 15_000);
+    } catch (error) {
+      if ((error as Error).name !== "TimeoutError")
+        return `the local stack at ${CLOUD_URL} is not reachable (npm run service-qa:up)`;
+    }
   }
+  if (!health) return `the local stack at ${CLOUD_URL} did not answer /functions/v1/health in 60s`;
+  if (!health.ok) return `health answered ${health.status}`;
   const missing: string[] = [];
   for (const name of required) {
     const reply = await fetch(`${CLOUD_URL}/functions/v1/${name}`, {

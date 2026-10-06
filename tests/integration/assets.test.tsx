@@ -24,7 +24,9 @@ async function openSettingsTab(user: User, tab: string) {
 
 async function importFile(user: User, path: string) {
   dialogMock.open.mockResolvedValueOnce(path);
-  await user.click(screen.getByRole("button", { name: "Import asset" }));
+  const button = screen.getByRole("button", { name: "Import asset" });
+  await user.click(button);
+  await waitFor(() => expect(button).toBeEnabled(), LONG);
 }
 
 it("imports, deduplicates, exports, and removes application assets", async () => {
@@ -60,7 +62,10 @@ it("imports, deduplicates, exports, and removes application assets", async () =>
   vi.spyOn(window, "confirm").mockReturnValueOnce(true);
   await user.click(within(table).getByRole("button", { name: "Remove logo.png" }));
   expect(await screen.findByText("Removed logo.png.", {}, LONG)).toBeInTheDocument();
-  expect(screen.queryByRole("table", { name: "Assets" })).not.toBeInTheDocument();
+  await waitFor(
+    () => expect(screen.queryByRole("table", { name: "Assets" })).not.toBeInTheDocument(),
+    LONG,
+  );
 });
 
 it("stores assets in the archive with safe names and finds unused ones", async () => {

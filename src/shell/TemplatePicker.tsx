@@ -17,9 +17,15 @@ export function TemplatePicker({
 }) {
   const [templates, setTemplates] = useState<TemplateInfo[]>([]);
   useEffect(() => {
+    // The list can arrive after the start screen unmounts (a document opened, or a test
+    // environment torn down); updating state then would throw outside React.
+    let active = true;
     listTemplates()
-      .then(setTemplates)
-      .catch(() => setTemplates([]));
+      .then((list) => active && setTemplates(list))
+      .catch(() => active && setTemplates([]));
+    return () => {
+      active = false;
+    };
   }, []);
 
   if (!templates.length) return null;

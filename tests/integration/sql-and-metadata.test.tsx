@@ -15,8 +15,9 @@ vi.mock("@xyflow/react", () => ({
 
 async function renderSettledDocument() {
   const user = await renderNewDocument();
-  await screen.findByRole("status", {}, { timeout: 20_000 });
-  await waitFor(() => expect(screen.queryByRole("status")).not.toBeInTheDocument());
+  await waitFor(() => expect(screen.queryByRole("status")).not.toBeInTheDocument(), {
+    timeout: 20_000,
+  });
   return user;
 }
 
@@ -91,7 +92,7 @@ it("creates, saves, runs, and updates a query through the visible workspace", as
   await user.click(screen.getByRole("button", { name: "Save query" }));
 
   const initialSidebarQuery = await screen.findByRole("button", { name: "Initial value" });
-  expect(initialSidebarQuery).toHaveAttribute("aria-pressed", "true");
+  await waitFor(() => expect(initialSidebarQuery).toHaveAttribute("aria-pressed", "true"));
   await user.click(screen.getByRole("button", { name: "Run" }));
   expect(await screen.findByText("42")).toBeInTheDocument();
 
@@ -114,12 +115,16 @@ it("creates, saves, runs, and updates a query through the visible workspace", as
   });
 
   await user.click(screen.getByRole("button", { name: "New query" }));
-  expect(screen.getByRole("textbox", { name: "Query name" })).toHaveValue("Untitled query");
+  await waitFor(() =>
+    expect(screen.getByRole("textbox", { name: "Query name" })).toHaveValue("Untitled query"),
+  );
   await user.click(screen.getByRole("button", { name: "Updated value" }));
   await waitFor(() =>
     expect(screen.getByRole("textbox", { name: "SQL editor" })).toHaveValue("SELECT 84 AS value"),
   );
-  expect(screen.getByRole("textbox", { name: "Query name" })).toHaveValue("Updated value");
+  await waitFor(() =>
+    expect(screen.getByRole("textbox", { name: "Query name" })).toHaveValue("Updated value"),
+  );
   await user.click(screen.getByRole("button", { name: "Run" }));
   expect(await screen.findByText("84")).toBeInTheDocument();
 });

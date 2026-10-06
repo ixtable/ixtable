@@ -1,14 +1,18 @@
 #!/usr/bin/env node
 // Updater manifest tooling for release.yml (fail-closed):
-//   verify <file>...      check each file's `.sig` against the pubkey in tauri.conf.json
+//   verify <file>...      check each file's `.sig` against the release pubkey
+//                         (IXTABLE_UPDATER_PUBKEY, else the committed dev key in tauri.conf.json)
 //   prepare ...           verify every platform in tauri-action's latest.json, then lay out
 //                         <out>/<channel>/<version>/<payloads> and <out>/<channel>/latest.json
 //                         with URLs on the release host.
-import { createHash, createPublicKey, verify as edVerify } from "node:crypto";
+import { createHash, verify as edVerify } from "node:crypto";
 import { copyFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { basename, dirname, join } from "node:path";
-import { fileURLToPath, pathToFileURL } from "node:url";
+import { pathToFileURL } from "node:url";
+import { decodeMinisignPubkey, isDevUpdaterKey, releaseUpdaterPubkey } from "./keys.mjs";
 import { compareVersions } from "./plan.mjs";
+
+export { configuredPubkey } from "./keys.mjs";
 
 /** Platforms every channel manifest must cover (PRD Phase 5: all three OSes). */
 export const REQUIRED_PLATFORMS = [
@@ -17,27 +21,7 @@ export const REQUIRED_PLATFORMS = [
   "linux-x86_64",
   "windows-x86_64",
 ];
-const ROOT = join(dirname(fileURLToPath(import.meta.url)), "../..");
-
-export function configuredPubkey(root = ROOT) {
-  const conf = JSON.parse(readFileSync(join(root, "src-tauri/tauri.conf.json"), "utf8"));
-  const key = conf.plugins?.updater?.pubkey;
-  if (!key) throw new Error("tauri.conf.json has no plugins.updater.pubkey");
-  return key;
-}
-
 const lines = (b64) => Buffer.from(b64.trim(), "base64").toString("utf8").split(/\r?\n/);
-
-function decodeKey(pubkeyB64) {
-  const raw = Buffer.from(lines(pubkeyB64)[1] ?? "", "base64");
-  if (raw.length !== 42 || raw.subarray(0, 2).toString() !== "Ed")
-    throw new Error("Malformed minisign public key");
-  const spki = Buffer.concat([Buffer.from("302a300506032b6570032100", "hex"), raw.subarray(10)]);
-  return {
-    id: raw.subarray(2, 10),
-    key: createPublicKey({ key: spki, format: "der", type: "spki" }),
-  };
-}
 
 /**
  * Verifies a Tauri updater signature (base64 of a minisign signature file) the
@@ -45,7 +29,7 @@ function decodeKey(pubkeyB64) {
  * ("ED"), and the global signature over the trusted comment. Throws on failure.
  */
 export function verifySignature(data, signatureB64, pubkeyB64) {
-  const { id, key } = decodeKey(pubkeyB64);
+  const { id, key } = decodeMinisignPubkey(pubkeyB64);
   const text = lines(signatureB64 ?? "");
   const sig = Buffer.from(text[1] ?? "", "base64");
   const trusted = text[2]?.startsWith("trusted comment: ") ? text[2].slice(17) : null;
@@ -111,7 +95,7 @@ function arg(name) {
 
 function main() {
   const [command, ...rest] = process.argv.slice(2);
-  const pubkey = configuredPubkey();
+  const pubkey = releaseUpdaterPubkey(process.env);
   if (command === "verify") {
     // `verify --json '[paths]'` takes tauri-action's artifactPaths output.
     const paths = rest[0] === "--json" ? JSON.parse(rest[1]) : rest;
@@ -127,6 +111,9 @@ function main() {
     throw new Error(
       "usage: update-manifest.mjs verify <files…> | prepare --manifest f --assets d --channel c --base url --out d [--beta-current v] [--notes file]",
     );
+  // Channel manifests reach installed apps: never publish against the development key.
+  if (isDevUpdaterKey(pubkey))
+    throw new Error("IXTABLE_UPDATER_PUBKEY is unset or the development key; refusing to publish");
   const assets = arg("assets");
   const out = arg("out");
   const channel = arg("channel");

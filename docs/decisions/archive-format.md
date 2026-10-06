@@ -107,9 +107,16 @@ it): a crash in the middle of a transaction leaves a hot rollback journal, and
 only a writable connection can roll it back. A read-only open fails with
 `SQLITE_READONLY_ROLLBACK` and would reject work that is recoverable. Rolling
 back drops only the uncommitted transaction, which is the correct crash
-outcome. Valid work is checkpointed and saved back
-into the `.ixt`. Invalid work never touches the archive, and the error is
-shown instead.
+outcome. Valid work is reopened, a local checkpoint of the current `.ixt` is
+taken (`before-recovery`), and the work is saved back into the `.ixt`.
+Invalid work never touches the archive, and `RECOVERY_FAILED` is shown
+instead. When the `.ixt` is unreadable or the checkpoint fails, the work opens
+with `RECOVERY_NEEDS_SAVE_AS` and the file is left untouched. When the file
+now holds a different document or a newer format, the work opens with
+`EXTERNAL_CONFLICT`. Untitled work opens dirty and needs Save As. Clean
+leftover sessions hold nothing new and are removed. A live session holds an OS
+lock on `<workspace>.lock`, so another ixtable process never lists, cleans
+up, or discards its workspace.
 
 The frontend autosaves 1.5 s after the last change, and at most 10 s after the
 first unsaved one. It shows dirty, saving, saved, and error states. Local
@@ -148,11 +155,14 @@ checkpoints are validated archive copies under
 - `src-tauri/src/archive_io/tests.rs`: format 1 upgrade with unknown-table
   preservation, newer and ancient format rejection, large chunked payloads with
   checksum checks, interrupted writes that keep the last valid archive, no
-  copying from another document.
+  copying from another document, path-like document and attachment ids
+  rejected, and schema SQL of unknown tables never executed.
 - `src-tauri/src/recovery.rs` tests: valid WIP loads with its assets,
   invalid WIP is reported, not loaded, a truncated or missing `document.json`
-  falls back to `config.yaml`, config files leave no temp files, and a hot
-  journal left by a crash is rolled back instead of rejected.
+  falls back to `config.yaml`, config files leave no temp files, a hot
+  journal left by a crash is rolled back instead of rejected, recovery never
+  overwrites a file it could not checkpoint, and another process never lists,
+  cleans, or discards a live workspace.
 - `src-tauri/src/archive_io/reuse_tests.rs`: unchanged payloads are copied
   and read back identical, changed ones are compressed again, nothing is
   reused from another document or a missing archive (and a failed write keeps
@@ -189,3 +199,10 @@ checkpoints are validated archive copies under
   publish preflight blocks it. Run with
   `IXTABLE_HEAVY_TESTS=1 cargo test --lib durability_tests::heavy` (about a
   minute and 1.5 GB of temporary disk). Default CI does not run it.
+
+## Audit log
+
+- 2026-10-05: Described the recovery outcomes the code has (`before-recovery`
+  checkpoint, `RECOVERY_NEEDS_SAVE_AS`, `EXTERNAL_CONFLICT`, workspace lock)
+  and added the matching `archive_io` and `recovery.rs` tests to Evidence.
+- 2026-10-05 (after merging #36): re-checked the incremental-save text and evidence #36 added (`archive_io/reuse.rs`, `reuse_tests.rs`, `durability_tests/incremental.rs`, `Snapshot::reuse_from`, `DataStamp`); they match the code. No changes.

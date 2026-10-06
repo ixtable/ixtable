@@ -169,9 +169,13 @@ export function ListView({ form, onOpen, onCreate, params = NO_PARAMS }: Props) 
     // Rows are not native controls, so a disabled (inert) container must be checked here.
     if (!page || row.closest("[inert], [aria-disabled='true']")) return;
     const record = page.rows[index];
-    if (table && schema && page.identities)
-      onOpen(recordIdFor(schema, record, page.identities[index]));
-    else onOpen(record);
+    if (!table || !page.identities) return onOpen(record);
+    const identity = page.identities[index];
+    if (schema) return onOpen(recordIdFor(schema, record, identity));
+    // The schema can still be loading after a database change cleared the cache; never open by row.
+    tableSchema(table)
+      .then((def) => onOpen(recordIdFor(def, record, identity)))
+      .catch(() => undefined);
   };
   const total = page?.total ?? 0;
   const tone = (record: Record<string, unknown>, column: string) =>

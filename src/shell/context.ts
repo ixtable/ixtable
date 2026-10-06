@@ -20,6 +20,13 @@ export type Selection = {
   id: string;
 };
 
+/** An object (and optionally one of its elements) to open in a Studio mode. */
+export type RevealTarget =
+  | { mode: "design"; objectId: string; elementId?: string }
+  | { mode: "reports"; objectId: string; elementId?: string }
+  | { mode: "dashboards"; objectId: string; elementId?: string }
+  | { mode: "automation"; tab: "actions" | "triggers"; objectId: string };
+
 /** Document-level shell state shared with every mode component via `useShell()`. */
 export interface ShellApi {
   doc: Doc;
@@ -37,6 +44,11 @@ export interface ShellApi {
   setError: (error: TauriError | null) => void;
   save: (forceDestination?: boolean) => Promise<void>;
   changeMode: (mode: ModeId) => Promise<void>;
+  /** Pending request to open an object; the target mode consumes it with `useReveal`. */
+  reveal: RevealTarget | null;
+  /** Switches to the target's mode and asks it to open the object. */
+  requestReveal: (target: RevealTarget) => void;
+  clearReveal: () => void;
 }
 
 export const ShellContext = createContext<ShellApi | null>(null);

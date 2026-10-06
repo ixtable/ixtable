@@ -2,6 +2,7 @@
 import { Copy, LayoutDashboard, Plus, Trash2 } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
 import { useDocumentConfig } from "../lib/config-store";
+import { useReveal } from "../shell/reveal";
 import { DashboardEditor } from "./DashboardEditor";
 import { DashboardView } from "./DashboardView";
 import { duplicateDashboard, newDashboard } from "./model";
@@ -19,6 +20,12 @@ export function DashboardsMode() {
   const { config, update, reload } = useDocumentConfig();
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [tab, setTab] = useState<"design" | "view">("design");
+  const [focus, setFocus] = useState({ id: undefined as string | undefined, seq: 0 });
+  useReveal("dashboards", (target) => {
+    setSelectedId(target.objectId);
+    setTab("design");
+    setFocus((f) => ({ id: target.elementId, seq: f.seq + 1 }));
+  });
   const [synced, setSynced] = useState(false);
   const dashboards = config.dashboards ?? [];
   const dashboard = dashboards.find((d) => d.id === selectedId) ?? dashboards[0];
@@ -149,7 +156,12 @@ export function DashboardsMode() {
               </div>
             </div>
             {tab === "design" ? (
-              <DashboardEditor key={dashboard.id} dashboard={dashboard} edit={edit} />
+              <DashboardEditor
+                key={`${dashboard.id}:${focus.seq}`}
+                focusId={focus.id}
+                dashboard={dashboard}
+                edit={edit}
+              />
             ) : (
               <DashboardView dashboardId={dashboard.id} />
             )}

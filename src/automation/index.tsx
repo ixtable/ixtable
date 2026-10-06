@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { useDocumentConfig } from "../lib/config-store";
+import { useReveal } from "../shell/reveal";
 import type { Issue } from "../lib/types";
 import { ActionsPanel } from "./ActionsPanel";
 import { validateAutomation } from "./api";
@@ -18,6 +19,11 @@ const TABS = [
 /** Automation mode (PRD §17): actions, record triggers, and the background job queue. */
 export function AutomationMode() {
   const [tab, setTab] = useState<(typeof TABS)[number]["id"]>("actions");
+  const [focus, setFocus] = useState({ id: undefined as string | undefined, seq: 0 });
+  useReveal("automation", (target) => {
+    setTab(target.tab);
+    setFocus((f) => ({ id: target.objectId, seq: f.seq + 1 }));
+  });
   const active = TABS.find((t) => t.id === tab) ?? TABS[0];
   return (
     <div className="ax-mode">
@@ -44,7 +50,7 @@ export function AutomationMode() {
         aria-labelledby={`ax-tab-${active.id}`}
         className="ax-split-host"
       >
-        <active.Component />
+        <active.Component key={focus.seq} focusId={focus.id} />
       </div>
     </div>
   );

@@ -6,11 +6,11 @@ import { ActionPicker } from "./ActionPicker";
 import { ExprInput, NumberField, SelectField, TextField } from "./fields";
 import type { Trigger } from "./types";
 
-export function TriggersPanel() {
+export function TriggersPanel({ focusId }: { focusId?: string }) {
   const { config, update } = useDocumentConfig();
   const { objects } = useShell();
   const triggers = config.triggers ?? [];
-  const [selected, setSelected] = useState<string | null>(triggers[0]?.id ?? null);
+  const [selected, setSelected] = useState<string | null>(focusId ?? triggers[0]?.id ?? null);
   const trigger = triggers.find((t) => t.id === selected) ?? null;
   const enabledId = useId();
   const tables = objects
@@ -165,9 +165,9 @@ export function TriggersPanel() {
           <p>
             Sync triggers run after the record is saved, as part of the same operation; a failing
             action reports an error to whoever saved the record, but the save stays. Async triggers
-            run in the background while the app is open, with retries. Run as app lets the
-            trigger make its own writes even when the user's role cannot; run as the signed-in
-            user refuses the save up front when the user's role cannot run the trigger.
+            run in the background while the app is open, with retries. Run as app lets the trigger
+            make its own writes even when the user's role cannot; run as the signed-in user refuses
+            the save up front when the user's role cannot run the trigger.
           </p>
         </div>
       ) : (

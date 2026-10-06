@@ -15,10 +15,10 @@ const ON_ERROR: { value: OnError; label: string }[] = [
   { value: "rollback", label: "Roll back all record changes" },
 ];
 
-export function ActionsPanel() {
+export function ActionsPanel({ focusId }: { focusId?: string }) {
   const { config, update } = useDocumentConfig();
   const actions = config.actions ?? [];
-  const [selected, setSelected] = useState<string | null>(actions[0]?.id ?? null);
+  const [selected, setSelected] = useState<string | null>(focusId ?? actions[0]?.id ?? null);
   const action = actions.find((a) => a.id === selected) ?? null;
 
   const edit = (mutate: (a: ActionDef) => ActionDef, label = "Edit action") =>

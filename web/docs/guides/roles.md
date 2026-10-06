@@ -1,0 +1,70 @@
+---
+sidebar_position: 6
+---
+
+# Roles and permissions
+
+_Roles decide which navigation items, forms, reports, dashboards, tables, queries, and actions each Runtime user can use. They are not a database security boundary._
+
+A **role** is a named set of grants. Each grant names one object and what the role can do with it. A role starts with no grants, and anything not granted is denied. You define roles in Studio, preview them in the Runtime, and ixtable Cloud assigns one to each user of a cloud application.
+
+Open Settings, then the **Roles** tab. Choose **New role**, give it a name, and grant access in three lists.
+
+## Objects
+
+The **Objects** table lists every form, report, dashboard, table, and saved query, with **Read**, **Create**, **Update**, and **Delete** columns.
+
+- Turning on create, update, or delete also turns on read. Turning off read clears the others.
+- Form permissions govern records changed through that form.
+- Table permissions govern table pages, generated forms, and actions that write to the table.
+- Reports and dashboards use read only.
+
+A grant on a form or report also lets the role read the tables and queries it needs to load, such as the source of a lookup.
+
+A dashboard needs more than its own read grant. Each number, chart, and table on it needs read on its query, and each report on it needs read on that report.
+
+## Navigation
+
+The **Navigation** list has one entry per navigation item, such as "Show Orders in navigation". A role sees an item only when it is listed here and the role can read the object it opens. A page that a role cannot read says "You do not have access to this page." even when an action opens it.
+
+## Actions
+
+The **Actions** list grants the right to run each action. A button whose action is not granted stays disabled. While an action runs, each step also needs the role's permission on its table, query, or nested action.
+
+Triggers have their own setting, **Run as**. A trigger that runs as the app can write tables the role cannot. A trigger that runs as the signed-in user needs the role to hold every permission the trigger's action uses. When the role lacks one, ixtable refuses the save that would fire it, and the Roles tab shows a warning for that role. [Automation](./automation#run-as) describes both modes.
+
+## Preview a role
+
+In Studio's Runtime mode, pick a role in **Preview as role**. The navigation, forms, buttons, and dashboards then behave as they will for that role, and the record commands refuse anything the role cannot do. **Developer (full access)** ends the preview. Leaving Runtime mode ends it too, so the design modes always have full access.
+
+## Who gets which role
+
+| Where the application runs | Role |
+| --- | --- |
+| Studio design modes | Developer, full access |
+| Studio Runtime mode | Developer, or the role picked in **Preview as role** |
+| Manually distributed runtime bundle | Developer, full access. Roles do not apply |
+| ixtable Cloud installation | The role assigned to the user, shown as `Role: <name>` |
+
+A cloud user without an assigned role gets no access. A role id that no longer exists denies everything.
+
+Roles do not restrict a manually distributed bundle. Use a separate bundle, or ixtable Cloud, when users need different access. Field-level and row-level permissions do not exist.
+
+## Where ixtable enforces roles
+
+The Runtime checks roles in the interface and again in the desktop app's core. The interface hides menu items, buttons, and pages the role cannot use. The core checks each record read, record write, saved query run, and report export against the current role, so a request that bypasses the interface is refused too. Ad hoc SQL, checkpoints, and resetting installation data are never available to a role.
+
+## PostgreSQL limitation
+
+Roles control what the ixtable Runtime shows and allows: navigation, forms, reports, dashboards, queries, and actions. They are not a database security boundary.
+
+When an application connects straight to PostgreSQL, each Runtime user's computer holds credentials that can reach the database. A user who extracts those credentials can connect with another client and read or change anything the database account allows, whatever their ixtable role says. ixtable roles do not defend against a malicious authorized user.
+
+For strong isolation, give each group of users a separate least-privileged PostgreSQL account, and grant that account only the tables and operations its users need. Set up those accounts and permissions in PostgreSQL yourself. The Roles tab shows this limitation at the top, and [Cloud security](../cloud/security) describes the trust model for cloud applications.
+
+## Next steps
+
+- [Runtime forms](./runtime-forms)
+- [Automation](./automation)
+- [Runtime bundles](./runtime-bundles)
+- [Cloud security](../cloud/security)

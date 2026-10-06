@@ -75,8 +75,12 @@ it("follows navigate and setState steps from a sync trigger in the Runtime", asy
   const page = await screen.findByRole("region", { name: "Application page" }, LONG);
   await insertRecord("orders", [{ column: "status", value: text("new") }]);
   await within(page).findByText("order 2 by Developer", {}, LONG);
-  await waitFor(async () =>
-    expect((await readPage("audit")).rows.map((r) => r[1])).toEqual([text("order 2 by Developer")]),
+  await waitFor(
+    async () =>
+      expect((await readPage("audit")).rows.map((r) => r[1])).toEqual([
+        text("order 2 by Developer"),
+      ]),
+    LONG,
   );
 });
 

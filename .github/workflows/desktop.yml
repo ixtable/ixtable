@@ -78,6 +78,9 @@ jobs:
         run: npx tsc --noEmit
       - name: Lint (oxlint, eslint, ast-grep)
         run: npm run lint
+      # Automated release gates (docs/release-checklist.md); human sign-offs print as pending.
+      - name: Release gates (automated)
+        run: node scripts/ci/release-gates.mjs
       # Non-blocking until the Wave 3 formatting pass lands: the tree still has
       # files from in-flight feature work that biome would reformat. Flip
       # continue-on-error to false once `npm run format:check` is clean.

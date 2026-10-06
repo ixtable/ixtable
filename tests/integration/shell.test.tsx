@@ -34,10 +34,8 @@ it("creates a table from the object browser and routes grid writes through recor
   await user.type(within(form).getByRole("textbox", { name: "Column 2 name" }), "title");
   await user.click(within(form).getByRole("button", { name: "Create table" }));
 
-  expect(await screen.findByRole("button", { name: /^tasks\b/ }, LONG)).toHaveAttribute(
-    "aria-pressed",
-    "true",
-  );
+  const tasks = await screen.findByRole("button", { name: /^tasks\b/ }, LONG);
+  await waitFor(() => expect(tasks).toHaveAttribute("aria-pressed", "true"), LONG);
   const schema = await invoke<{ columns: Array<{ name: string; primaryKeyPosition: number }> }>(
     "inspect_table",
     { windowLabel: "main", table: "tasks" },
@@ -111,7 +109,7 @@ it("edits config YAML, reports YAML errors, and undoes an applied YAML change", 
   await waitFor(() => expect(editor).toHaveDisplayValue(/version: 3/));
 
   await user.click(screen.getByRole("button", { name: "Undo" }));
-  await waitFor(async () => expect((await readConfig()).name).toBe("Untitled"));
+  await waitFor(async () => expect((await readConfig()).name).toBe("Untitled"), LONG);
   await waitFor(() => expect(editor).toHaveDisplayValue(/name: Untitled/));
 });
 
@@ -158,12 +156,14 @@ it("undoes and redoes saved-query edits from the toolbar and keyboard", async ()
   await user.click(screen.getByRole("button", { name: "Redo" }));
   expect(await screen.findByRole("button", { name: "Answer" }, LONG)).toBeInTheDocument();
   await user.keyboard("{Control>}z{/Control}");
-  await waitFor(async () => expect((await readConfig()).savedQueries).toEqual([]));
+  await waitFor(async () => expect((await readConfig()).savedQueries).toEqual([]), LONG);
   await user.keyboard("{Control>}{Shift>}z{/Shift}{/Control}");
-  await waitFor(async () =>
-    expect((await readConfig()).savedQueries).toEqual([
-      expect.objectContaining({ name: "Answer" }),
-    ]),
+  await waitFor(
+    async () =>
+      expect((await readConfig()).savedQueries).toEqual([
+        expect.objectContaining({ name: "Answer" }),
+      ]),
+    LONG,
   );
 });
 

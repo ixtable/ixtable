@@ -46,10 +46,10 @@ sends it to the schema designer, which labels each staged change by its mode.
 
 | Area | SQLite | PostgreSQL |
 |---|---|---|
-| DDL | `create_table`, renames, and indexes in place. Type, key, constraint, and most column changes rebuild the table | every operation in place. Type changes use `USING` casts |
-| Transactions | atomic batches, transactional DDL, savepoints | the same, at read committed |
+| DDL | creating and dropping tables, renames, indexes, and most column adds and drops in place. Column alterations and key and constraint changes rebuild the table | every operation in place. Type changes use `USING` casts |
+| Transactions | atomic batches, transactional DDL, savepoints, serializable with a single writer | the same, at read committed |
 | Parameters | `?` | `$1` |
-| Generated values | rowid alias, default expressions | identity columns, default expressions, stored generated columns |
+| Generated values | rowid alias, default expressions, virtual generated columns | identity columns, default expressions, stored generated columns |
 | Script dry run | run on a copy, then discard | `BEGIN … ROLLBACK` on the live database |
 | Script health check | `foreign_key_check` and `integrity_check` | constraint validation |
 | Concurrency | `optimistic`, `lastWriteWins`, or `customAction` per entity, no row locks, single user | the same policies with row locking, multi user |
@@ -196,13 +196,14 @@ needs an explicit, recorded confirmation (PRD §21.4).
 
 ## Evidence
 
-- `src-tauri/src/recordstore/conformance.rs`, run on SQLite and PostgreSQL:
-  CRUD visible to DuckDB after each commit, constraint codes and cascades,
-  atomic batches with bound values, logical types round-tripping through
-  DuckDB, optimistic updates rejecting stale values, write-time policies
-  (`EXPECTED_REQUIRED` and `CONFLICT` for optimistic, overwrite for
-  `lastWriteWins`), store-specific schema change modes that keep data, and
-  transactional scripts with rollback.
+- `src-tauri/src/recordstore/conformance.rs` and `conformance_more.rs`, run
+  on SQLite and PostgreSQL: CRUD visible to DuckDB after each commit,
+  constraint codes and cascades, atomic batches with bound values, logical
+  types round-tripping through DuckDB, optimistic updates rejecting stale
+  values, write-time policies (`EXPECTED_REQUIRED` and `CONFLICT` for
+  optimistic, overwrite for `lastWriteWins`), store-specific schema change
+  modes that keep data, transactional scripts with rollback, and column
+  checks kept, replaced, or removed by `alter_column`.
 - `tests/unit/automation-write-path.test.ts`: automation sends `expected`,
   custom concurrency actions from `records.ts` and from action steps.
 - `tests/integration/automation-runtime.test.tsx`: a custom concurrency action
@@ -231,3 +232,8 @@ needs an explicit, recorded confirmation (PRD §21.4).
   policy per table, and, with a PostgreSQL URL, switching reads and writes to
   PostgreSQL without storing the password in the document, with migrations
   disabled for it.
+
+## Audit log
+
+- 2026-10-05: Corrected the SQLite DDL, transaction, and generated-value rows
+  to match `capabilities.rs`, and added `conformance_more.rs` to the evidence.

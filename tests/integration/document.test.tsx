@@ -71,10 +71,13 @@ it("offers Save As for an existing document", async () => {
   await screen.findByText("Saved archive", {}, { timeout: 20_000 });
 
   await user.click(screen.getByRole("button", { name: "Save project as" }));
-  await waitFor(async () => {
-    const state = await invoke<{ path: string }>("document_state", { windowLabel: "main" });
-    expect(state.path).toBe(second);
-  });
+  await waitFor(
+    async () => {
+      const state = await invoke<{ path: string }>("document_state", { windowLabel: "main" });
+      expect(state.path).toBe(second);
+    },
+    { timeout: 20_000 },
+  );
 });
 
 it("surfaces picker cancellation without presenting an error", async () => {

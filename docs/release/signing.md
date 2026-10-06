@@ -13,22 +13,29 @@ updater artifacts.
 | `TAURI_SIGNING_PRIVATE_KEY` | minisign private key (contents of the `.key` file) |
 | `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` | its password |
 
-The public half is `plugins.updater.pubkey` in `src-tauri/tauri.conf.json`.
-The committed key is a **development key**, generated with
-`npx tauri signer generate -w <path> --ci -p ""`. Before the first public
-release:
+| Variable | Use |
+|---|---|
+| `IXTABLE_UPDATER_PUBKEY` | the matching public key (`.pub` contents, one base64 line) |
+
+The committed `plugins.updater.pubkey` in `src-tauri/tauri.conf.json` is a
+**development key**, generated with `npx tauri signer generate -w <path> --ci -p ""`.
+It stays committed for tests. Release builds replace it with
+`IXTABLE_UPDATER_PUBKEY` through the `--config` override, and beta and stable
+runs fail when that variable is missing or equals the development key
+(`scripts/release/keys.mjs`). Before the first public release:
 
 1. Generate the production pair offline with a password:
    `npx tauri signer generate -w ixtable-updater.key`.
-2. Put the private key and password in the secrets above. Keep an offline
-   backup. A lost key cannot sign updates that installed apps accept.
-3. Replace `plugins.updater.pubkey` with the new `.pub` contents (one base64
-   line). Regenerate the fixtures in `src-tauri/src/updater/fixtures/` with
-   `npx tauri signer sign` and the new key.
+2. Put the private key and password in the secrets above, and the `.pub`
+   contents in the `IXTABLE_UPDATER_PUBKEY` variable. Keep an offline backup.
+   A lost key cannot sign updates that installed apps accept.
+3. Do not edit `tauri.conf.json` or the fixtures in
+   `src-tauri/src/updater/fixtures/`.
 
-Rotating keys: ship one release, signed with the old key, whose
-`tauri.conf.json` already has the new pubkey. Sign every release after that
-with the new key.
+The `Check the updater key pair` step signs a probe file with the secret and
+verifies it against the variable, so a mismatched pair fails before the
+build. Rotation: see
+[the desktop updates record](../decisions/desktop-updates.md#rotation).
 
 ## macOS (Developer ID + notarization)
 
@@ -103,8 +110,11 @@ upload with a notice. The installers are still on the draft GitHub release.
 ## ixtable Cloud build values
 
 The repository variables `IXTABLE_CLOUD_BUILD_URL`,
-`IXTABLE_CLOUD_BUILD_ANON_KEY` and `IXTABLE_CLOUD_BUILD_SITE_URL` are compiled
-into release builds (`cloud/config.rs`). The URL's origin is also added to the
+`IXTABLE_CLOUD_BUILD_ANON_KEY`, `IXTABLE_CLOUD_BUILD_SITE_URL` and
+`IXTABLE_CLOUD_PUBLIC_KEY_RAW` (the bundle-signing public key) are compiled
+into release builds (`cloud/config.rs`). Beta and stable runs fail when the
+public key is missing or a development or test key, and `keys.mjs embedded`
+checks that the built binary pins it. The URL's origin is also added to the
 release CSP (see [security.md](./security.md)).
 
 ## Local builds

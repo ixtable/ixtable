@@ -70,11 +70,12 @@ not emulated:
 
 ## Proof
 
-`src-tauri/src/recordstore/conformance.rs` runs the same scenarios against both
-stores and reads every result through DuckDB. The scenarios cover CRUD and
-read-after-write, constraint error codes and cascades, atomic batches and
-parameter binding, the type round-trip above (including nulls), optimistic
-conflicts, schema changes, and migrations.
+`src-tauri/src/recordstore/conformance.rs` and `conformance_more.rs` run the
+same scenarios against both stores and read every result through DuckDB.
+`conformance.rs` covers CRUD and read-after-write, constraint error codes and
+cascades, atomic batches and parameter binding, and the type round-trip above
+(including nulls). `conformance_more.rs` covers optimistic conflicts, schema
+changes, and migrations.
 
 ```bash
 cd src-tauri
@@ -86,3 +87,8 @@ IXTABLE_TEST_POSTGRES_URL=postgres://postgres@127.0.0.1:54329/ixtable_test \
 Without `IXTABLE_TEST_POSTGRES_URL`, PostgreSQL scenarios are skipped with a
 message. On Linux the binaries export DuckDB symbols (`build.rs`,
 `--export-dynamic`) so the signed scanner extensions can load.
+
+## Audit log
+
+- 2026-10-05: Proof now names `conformance_more.rs`, which holds the
+  optimistic, schema change, and migration scenarios.

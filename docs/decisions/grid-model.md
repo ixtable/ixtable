@@ -1,7 +1,7 @@
 # Shared grid model for forms and dashboards
 
-Status: accepted for the model, the engine, and forms. Dashboard use is in
-progress. Covers PRD §6.3, §13, and the Phase 0 grid spike.
+Status: accepted for the model, the engine, forms, and dashboards. Covers
+PRD §6.3, §13, and the Phase 0 grid spike.
 
 ## Context
 
@@ -13,8 +13,9 @@ read. Storing CSS strings would tie every saved application to the browser.
 ## Decision
 
 The persisted model describes the grid, and CSS is derived from it at render
-time. Rust owns the serialized types in `src-tauri/src/design/mod.rs`, and
-`src/grid/types.ts` mirrors them field for field.
+time. Rust owns the serialized types in `src-tauri/src/design/grid.rs`
+(re-exported from `design/mod.rs`), and `src/grid/types.ts` mirrors them field
+for field.
 
 - `GridLayout`: column and row tracks, column and row gaps, padding, item
   alignment, named regions, and breakpoints. The default is 12 `fr` columns
@@ -70,8 +71,10 @@ still collapses, as CSS Grid does. A dashboard component whose `enabledWhen`
 is false stays in place, wrapped in a disabled fieldset that disables every
 control inside it.
 
-Rust validates layouts in `design::validate_layout` and `validate_span`. The
-dashboard module calls the same functions, so a placement that overflows the
+Rust validates layouts in `validate_layout` and `validate_span`
+(`src-tauri/src/design/checks.rs`, exported as `design::validate_grid_layout`
+and `design::validate_grid_span`). The dashboard module calls the same
+functions, so a placement that overflows the
 grid fails the same way in both. `validateLayout` in TypeScript returns the
 same `Issue` shape, plus rendering warnings such as overlapping regions.
 
@@ -114,5 +117,16 @@ same `Issue` shape, plus rendering warnings such as overlapping regions.
   container children use the container grid.
 - `tests/unit/dashboard-conditions.test.tsx`: a hidden dashboard component
   leaves the other components' placements unchanged.
-- Dashboards: `src-tauri/src/dashboards.rs` reuses the design grid validators.
-  Dashboard UI tests are in progress.
+- `src-tauri/src/dashboards/tests.rs`: dashboards round-trip the forms' grid
+  types, and placements follow the shared grid rules.
+- `tests/unit/dashboard-model.test.ts`: new components take the first free
+  slot with kind sizes, placements clamp when the grid narrows, and dashboard
+  layouts serialize exactly like a form's.
+- `tests/integration/dashboard.test.tsx`: builds components on the shared grid
+  and persists a keyboard resize.
+
+## Audit log
+
+- 2026-10-05: Status now covers dashboards. Fixed the Rust type and validator
+  paths (`design/grid.rs`, `design/checks.rs`, `dashboards/mod.rs`) and
+  replaced the "in progress" dashboard evidence with the existing tests.

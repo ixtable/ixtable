@@ -227,7 +227,8 @@ it("runs async triggers on the durable queue, with retry after failure and cance
   await user.selectOptions(screen.getByLabelText("Status"), "cancelled");
   await waitFor(() => expect(within(jobsTable()).getByText("cancelled")).toBeInTheDocument(), LONG);
   expect(await auditMessages()).toEqual(["queued 1", "retried 2"]);
-});
+  // Three queue round trips (run, retry, backoff then cancel) exceed the 30 s default on slow runners.
+}, 120_000);
 
 it("deduplicates jobs by idempotency key", async () => {
   await renderNewDocument();

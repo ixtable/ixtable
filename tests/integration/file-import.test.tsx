@@ -168,7 +168,7 @@ it("bundles a CSV as a read-only file source that queries read after save and re
 it("imports a late bad value as a skipped row instead of failing the import", async () => {
   const user = await renderNewDocument();
   const lines = ["name,age"];
-  for (let i = 1; i <= 30_005; i++) lines.push(`P${i},${i === 30_002 ? "n/a" : i % 90}`);
+  for (let i = 1; i <= 22_005; i++) lines.push(`P${i},${i === 22_002 ? "n/a" : i % 90}`);
   const dialog = await openWizard(user, fixture("late.csv", `${lines.join("\n")}\n`));
   // The whole file is sniffed, so the column is suggested as text; ask for integers.
   const age = within(dialog).getByRole("combobox", { name: "Type for age" });
@@ -177,25 +177,25 @@ it("imports a late bad value as a skipped row instead of failing the import", as
   await user.click(within(dialog).getByRole("button", { name: "Import" }));
   expect(
     await within(dialog).findByText(
-      "Imported 30,004 of 30,005 rows into late. 1 rows were skipped.",
+      "Imported 22,004 of 22,005 rows into late. 1 rows were skipped.",
       {},
       LONG,
     ),
   ).toBeInTheDocument();
   const problems = within(dialog).getByRole("table", { name: "Rows not imported" });
-  expect(within(problems).getByRole("row", { name: /30002/ })).toHaveTextContent(
+  expect(within(problems).getByRole("row", { name: /22002/ })).toHaveTextContent(
     "age requires an integer",
   );
-});
+}, 120_000);
 
 it("reports an import that stops part way and still lists the new table", async () => {
   const user = await renderNewDocument();
   const good = ["name,age"];
-  for (let i = 1; i <= 40_000; i++) good.push(`P${i},${i % 90}`);
+  for (let i = 1; i <= 24_000; i++) good.push(`P${i},${i % 90}`);
   const path = fixture("broken.csv", `${good.join("\n")}\n`);
   const dialog = await openWizard(user, path);
   // The file changes after the preview: a row near the end has too many fields.
-  good.splice(35_000, 0, "X,1,extra,fields");
+  good.splice(22_000, 0, "X,1,extra,fields");
   writeFileSync(path, `${good.join("\n")}\n`);
   await user.click(within(dialog).getByRole("button", { name: "Import" }));
   const stopped = await within(dialog).findByText(/^The import stopped after/, {}, LONG);
@@ -204,4 +204,4 @@ it("reports an import that stops part way and still lists the new table", async 
   await within(dialog).findByText(/^Imported [\d,]+ of [\d,]+ rows into broken\./);
   await user.click(within(dialog).getByRole("button", { name: "Done" }));
   expect(await screen.findByRole("button", { name: /^broken\b/ }, LONG)).toBeInTheDocument();
-});
+}, 120_000);

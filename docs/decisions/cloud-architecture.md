@@ -1,8 +1,9 @@
 # ixtable Cloud architecture
 
-Status: accepted for the control-plane foundation (schema, RLS, shared
-function code, local stack, service-qa harness). Distribution, credential,
-auth hand-off and billing functions build on it. Covers PRD §4.2, §20–§25,
+Status: accepted and implemented: the control-plane foundation (schema,
+RLS, shared function code, local stack, service-qa harness), the
+distribution, credential, desktop sign-in, billing and account functions,
+and the desktop client. Covers PRD §4.2, §20–§25,
 §27.2, §27.5, Phase 4 and Phase 5. Security model:
 [cloud-security-model.md](./cloud-security-model.md).
 
@@ -35,7 +36,12 @@ Edge Functions.
 
 Migrations: `supabase/migrations/20261003000000_cloud_core.sql` (tables),
 `…000100_cloud_policies.sql` (helpers, RLS, grants),
-`…000200_cloud_storage_plans.sql` (bucket, storage lockdown, plans).
+`…000200_cloud_storage_plans.sql` (bucket, storage lockdown, plans),
+`20261003100000_distribution_functions.sql` and
+`20261003100100_distribution_withdraw.sql` (see Distribution functions),
+`20261003200000_credentials_desktop_auth.sql` (envelope supersede and erase,
+`credential_envelope_put`) and `20261003300000_commercial_billing.sql`
+(checkout sessions, webhook ordering and outcome columns).
 
 | Table | Purpose |
 |---|---|
@@ -52,6 +58,7 @@ Migrations: `supabase/migrations/20261003000000_cloud_core.sql` (tables),
 | `credential_envelopes` | datasource ciphertext + KEK-wrapped DEK, scope shared or per user |
 | `key_grants` | one row per issued key grant (no key material) |
 | `plans`, `subscriptions`, `billing_events` | catalog (starter 5, team 25, business 100 runtime users), one subscription per app, webhook idempotency on `event_id` |
+| `billing_checkout_sessions` | function-only; checkout sessions handed out by `billing-checkout`, consumed once by `billing-fake-complete` |
 | `audit_events` | append-only (trigger blocks UPDATE and DELETE for every role) |
 | `rate_limits`, `service_metrics`, `desktop_auth_requests` | function-only operational tables |
 
@@ -75,9 +82,12 @@ Runtime User), `can_view_profile(user)`, `app_entitlement(app) → jsonb
 - `authenticated` has `SELECT` on the tables the website reads, filtered by
   RLS, and column-level `UPDATE` only for settings the website edits (app
   name, backups, retention; org name; member role; profile display name;
-  invitation revocation). Inserts, deletes, owner transfer, publishing,
-  membership changes and every write that needs auditing go through Edge
-  Functions.
+  invitation revocation). The only client inserts and deletes are on
+  organizations (any user creates one and becomes its owner; an owner
+  deletes it, blocked while apps exist) and `org_members` (leave, or an
+  owner/admin removes a member). App creation and deletion, owner transfer,
+  publishing, Runtime User membership changes and every other write that
+  needs auditing go through Edge Functions.
 - Column grants hide secrets: `invitations.token_hash` and the envelope
   ciphertext, nonce, AAD and wrapped DEK are never selectable by clients.
 - Storage: a restrictive policy on `storage.objects` denies `anon` and
@@ -87,9 +97,9 @@ Runtime User), `can_view_profile(user)`, `app_entitlement(app) → jsonb
 ### Edge Functions
 
 Every function is JSON over `POST` (health also `GET`) with
-`Authorization: Bearer <user JWT>`, except `health`, `stripe-webhook` and
-`desktop-auth-exchange`, which set `verify_jwt = false` in
-`supabase/config.toml` and authenticate in code. Errors are
+`Authorization: Bearer <user JWT>`, except `health`, `stripe-webhook`,
+`desktop-auth-exchange` and `retention-sweep`, which set `verify_jwt = false`
+in `supabase/config.toml` and authenticate in code (`health` is public). Errors are
 `{ error: { code, message, details? } }`:
 
 | Code | HTTP |
@@ -113,11 +123,15 @@ Shared code in `supabase/functions/_shared/`:
 | `http.ts` | `handler(fn, {methods})`, `HttpError(code, message, details?)`, `json`, `errorResponse`, `preflight`, `corsHeaders`, `readJson`, `bearerToken`, `requireUser(req) → {user, jwt}`, `ERROR_STATUS` |
 | `db.ts` | `serviceClient()`, `userClient(jwt)`, `anonClient()`, `env`, `optionalEnv`, `ARCHIVE_BUCKET`, `MAX_ARCHIVE_BYTES` |
 | `audit.ts` | `audit({action, actorId, orgId, appId, target, details, req})`, `redactSecrets`, `ipHash` |
-| `rateLimit.ts` | `rateLimit`, `enforceRateLimit` (throws RATE_LIMITED), `incrementMetric` |
+| `rateLimit.ts` | `RATE_LIMITS`, `enforceNamedRateLimit`, `rateLimit`, `enforceRateLimit` (throws RATE_LIMITED), `incrementMetric` |
 | `entitlements.ts` | `getEntitlement(appId)`, `requireEntitlement(appId, {adding})` (throws ENTITLEMENT_REQUIRED) |
 | `crypto.ts` | Ed25519 sign/verify, `canonicalJson`, `bundleFingerprint`, AES-256-GCM `wrapDek`/`unwrapDek`, `hmacSha256Hex`, `sha256Hex`, `pkceChallenge`, `randomToken`, `timingSafeEqual`, base64 helpers |
-| `billing.ts` | `billingProvider()` (`stripe` or `fake`), `verifyStripeSignature`, `signStripePayload`, `buildFakeEvent` |
+| `billing.ts` | `billingProvider()` (`stripe` or `fake`), `fakeBillingAllowed`, `verifyStripeSignature`, `signStripePayload`, `buildFakeEvent`, `decideSubscriptionEvent`, `accessChangeAction` |
 | `validate.ts` | `str`, `uuid`, `int`, `bool`, `oneOf`, `arr`, `record`, `sha256`, `semver`, `email` (throw VALIDATION) |
+| `distribution.ts` | paths, manifest, security summary, `mapDbError`, `publicUrl`, access checks for the distribution functions |
+| `credentials.ts`, `credentialAccess.ts` | envelope and PKCE input rules, `envelopeAad`, grant expiry, desktop sign-in state; live app and membership loading for the credential functions |
+| `commercial.ts` | billing app access, subscription rows, `cancelSubscriptionNow` |
+| `production.ts` | production-only guards (`IXTABLE_ENV=production`), `requireEmailConfirmations` |
 
 CORS echoes only the website origins (`SITE_URL`, local 3001,
 `CORS_ALLOWED_ORIGINS`) and the Tauri origins `tauri://localhost`,
@@ -143,11 +157,13 @@ security model for formats.
 Per-app plans with a runtime-user allowance. `app_entitlement` allows
 `active` and `trialing`, and `past_due` for 7 days after the period end;
 active Runtime Users must not exceed the allowance (the owner is not
-counted). Functions check it with `requireEntitlement(appId, {adding: 1})`
-when activating a member, and plain `requireEntitlement` on publish, bundle
-download, key grant and backup upload. `stripe-webhook` verifies the
+counted). Activating a member (invitation accept, re-activation) checks room
+for one more inside the SQL function `distribution_activate_member`, under
+the app row lock. Functions call `requireEntitlement` on publish, overwrite
+and fork, archive upload URLs, bundle download, key grant and backup commit. `stripe-webhook` verifies the
 `Stripe-Signature` HMAC and is idempotent through `billing_events.event_id`.
-`BILLING_PROVIDER=fake` (local/QA) returns website URLs; the flow completes
+`BILLING_PROVIDER=fake` (local/QA, and only with
+`IXTABLE_ALLOW_FAKE_BILLING=1`) returns website URLs; the flow completes
 with a Stripe-shaped event signed by the same secret.
 
 Webhook ordering (`_shared/billing.ts` `decideSubscriptionEvent`): the
@@ -168,7 +184,14 @@ A downgrade below the active Runtime Users is allowed and reported as
 Account deletion purges the caller's apps (soft delete and audit first,
 then the rows, since `cloud_apps.owner_id` is `ON DELETE RESTRICT`).
 Per-endpoint limits live in `RATE_LIMITS` (`_shared/rateLimit.ts`).
-Operations: `docs/ops/`.
+`account-export` returns the caller's own data without secrets, and
+`admin-support` gives operators (`profiles.is_operator`) diagnostics built
+from explicit field lists, audited as `admin.lookup`. Operations:
+`docs/ops/`.
+
+Evidence: `web/e2e/service-qa/specs/{billing,account,admin,ratelimit}.spec.ts`,
+`supabase/functions/_shared/billing_events_test.ts` (event ordering and
+outcomes) and `billing_test.ts`.
 
 ### Local stack and secrets
 
@@ -251,8 +274,8 @@ VALIDATION, IX423 VALIDATION with `details {requiresConfirm, installations}`).
   the upload `committed`; a consumed, expired or mismatched upload is 422.
   The signed upload URL refuses a second PUT (no upsert). The server does not
   re-hash archives; the desktop verifies sha256 against the signed manifest.
-  The desktop retries an upload PUT up to 4 times with exponential backoff
-  (1 s, 2 s, 4 s) after connect errors, timeouts, 5xx and 429. It never
+  The desktop makes up to 4 upload attempts, waiting 1 s, 2 s and 4 s
+  between them, after connect errors, timeouts, 5xx and 429. It never
   retries other 4xx replies. Because a retry keeps `x-upsert: false`, it
   cannot overwrite an object. If an earlier attempt landed but its reply was
   lost, the retry fails with 409 and the user uploads again.
@@ -293,8 +316,11 @@ VALIDATION, IX423 VALIDATION with `details {requiresConfirm, installations}`).
   remaining version (null when none); withdrawing the last published version
   that installations run needs `confirm: true`. Returns `{version,
   headVersionId, dependentInstallations}`. Withdraw is not entitlement-gated.
-- **Manifest.** Exactly the PLAN fields plus `roleName` and a signed
-  `owner` flag; the owner gets `owner: true` and `roleId`, `roleName` and
+- **Manifest.** Fields: `format` (`ixtable-cloud-bundle/1`), `appId`,
+  `appName`, `versionId`, `version`, `archiveSha256`, `archiveSize`,
+  `minRuntimeVersion`, `userId`, `roleId`, `roleName`, `rolePermissions`,
+  `owner`, `installationId`, `fingerprint`, `issuedAt`, `expiresAt`
+  (`buildManifest` in `_shared/distribution.ts`). The owner gets `owner: true` and `roleId`, `roleName` and
   `rolePermissions` null. A Runtime User always has a role. `expiresAt` is issue time
   plus 24 hours; the archive URL lives 15 minutes.
 - **Invitation delivery.** An email with no account gets a Supabase Auth
@@ -348,9 +374,15 @@ Studio and the Runtime talk to the cloud from two places
   environment variables: `IXTABLE_CLOUD_BUILD_URL`,
   `IXTABLE_CLOUD_BUILD_ANON_KEY`, `IXTABLE_CLOUD_BUILD_SITE_URL`, and the
   pinned bundle-signing key `IXTABLE_CLOUD_PUBLIC_KEY_RAW` (raw 32-byte
-  Ed25519 key, base64; or `IXTABLE_CLOUD_PUBLIC_KEY`, SPKI). Without a key
-  every cloud install is refused. Debug builds default to the local stack
-  and accept the key from the runtime environment (tests).
+  Ed25519 key, base64; or `IXTABLE_CLOUD_PUBLIC_KEY`, SPKI). The
+  `IXTABLE_CLOUD_URL`, `IXTABLE_CLOUD_ANON_KEY` and `IXTABLE_CLOUD_SITE_URL`
+  environment variables, then the `cloud.*` preferences, override the URL
+  defaults (`src-tauri/src/cloud/config.rs`); the key has no runtime
+  override in release builds. Without a key every cloud install is refused.
+  `release.yml` takes the key from the repository variable and refuses
+  beta/stable builds when it is missing or a known dev/test key
+  (`scripts/release/keys.mjs`). Debug builds default to the local stack and
+  accept the key from the runtime environment (tests).
 - **Install and update.** `bundle-manifest` returns the signed manifest and
   a 15-minute archive URL. Rust verifies the Ed25519 signature over the
   canonical JSON, expiry, app, user and installation, then the archive's
@@ -373,6 +405,12 @@ Studio and the Runtime talk to the cloud from two places
 - **Replies are decoded.** `src/cloud/contract.ts` and
   `src-tauri/src/cloud/contract.rs` decode every reply the desktop reads; a
   missing field fails with `CLOUD_CONTRACT` instead of an empty value.
+
+Evidence: `src-tauri/src/cloud/tests.rs` (manifest verification and
+tampering, envelopes, PKCE, config resolution, upload retry, tampered
+`cloud.json`), `tests/integration/cloud-{install,auth,distribution}.test.tsx`,
+`tests/unit/cloud-{contract,errors,rbac,recipient}.test.ts(x)` and
+`web/e2e/service-qa/ui/*.spec.ts` (website pages).
 
 ## Contract
 
@@ -425,3 +463,7 @@ website's `FunctionMap`).
 | `versions-resolve` | POST {appId, action:"withdraw", versionId, confirm?} → {version, headVersionId, dependentInstallations}; POST {appId, action:"overwrite", fromVersionId, uploadId, version, releaseNotes, minRuntimeVersion, migrations, security} → {version}; POST {appId, action:"fork", fromVersionId?, uploadId?, version?, …, name?, documentId?} → {app, version} | UNAUTHENTICATED, FORBIDDEN, NOT_FOUND, VERSION_CONFLICT, TOO_LARGE, ENTITLEMENT_REQUIRED, VALIDATION, RATE_LIMITED | 20 / 1 h | `app`, `version`, `headVersionId`, `dependentInstallations` |
 
 <!-- contract:end -->
+
+## Audit log
+
+- 2026-10-05: Status now covers the implemented functions and desktop client; added the later migrations, `billing_checkout_sessions`, missing shared modules, `retention-sweep` in the `verify_jwt = false` list and the client org writes; corrected member-activation entitlement, upload retry count, manifest fields (dropped the missing PLAN reference), build-config overrides and the release key gate; added billing and desktop Evidence.

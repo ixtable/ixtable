@@ -17,6 +17,25 @@ const sidebars: SidebarsConfig = {
     },
     {
       type: "category",
+      label: "Guides",
+      items: [
+        "guides/queries",
+        "guides/runtime-forms",
+        "guides/reports",
+        "guides/dashboards",
+        "guides/automation",
+        "guides/roles",
+        "guides/migrations",
+        "guides/runtime-bundles",
+      ],
+    },
+    {
+      type: "category",
+      label: "Reference",
+      items: ["reference/expressions"],
+    },
+    {
+      type: "category",
       label: "ixtable Cloud",
       items: ["cloud/getting-started", "cloud/security"],
     },

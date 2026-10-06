@@ -3,10 +3,13 @@
 // - fails closed when a beta/stable run lacks any signing secret (names only, never values),
 // - exports only the secrets that are set to $GITHUB_ENV (the Tauri CLI treats an empty
 //   APPLE_CERTIFICATE as "import this"), and
-// - writes the `tauri build --config` override (Windows signCommand, updater artifacts).
+// - fails closed when a beta/stable run would embed a missing or dev/test public key (keys.mjs),
+// - writes the `tauri build --config` override (Windows signCommand, updater artifacts, the
+//   production updater pubkey).
 import { appendFileSync, writeFileSync } from "node:fs";
 import { randomBytes } from "node:crypto";
 import { pathToFileURL } from "node:url";
+import { releaseKeyProblems } from "./keys.mjs";
 
 export const REQUIRED = {
   // minisign key for updater signatures (password may legitimately be empty).
@@ -80,7 +83,11 @@ export function tauriConfigOverride(platform, env) {
         ],
       },
     };
-  return { app, bundle };
+  const override = { app, bundle };
+  // The committed pubkey is a development key; releases pin the production one from vars.
+  if (present(env, "IXTABLE_UPDATER_PUBKEY"))
+    override.plugins = { updater: { pubkey: env.IXTABLE_UPDATER_PUBKEY.trim() } };
+  return override;
 }
 
 /** Names to export: required and optional secrets that are set (the key's password always travels with the key). */
@@ -111,10 +118,17 @@ function main() {
     );
     process.exit(1);
   }
+  const keyProblems = releaseKeyProblems(env);
+  if (keyProblems.length && channel !== "draft") {
+    for (const problem of keyProblems) console.error(`::error::${problem}`);
+    process.exit(1);
+  }
   if (missing.length)
     console.log(
       `::warning::Draft build for ${platform} is not fully signed; missing ${missing.join(", ")}`,
     );
+  for (const problem of keyProblems)
+    console.log(`::warning::Draft build only (not releasable): ${problem}`);
   if (env.GITHUB_ENV)
     for (const name of exportedNames(platform, env)) {
       const delimiter = `EOF_${randomBytes(12).toString("hex")}`;

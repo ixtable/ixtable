@@ -48,18 +48,26 @@ interface ComponentBase {
   style?: ComponentStyle;
 }
 
-export interface StaticTextComponent extends ComponentBase {
+/**
+ * Text components can grow: when the text needs more lines than fit, the box
+ * gets taller, components below it move down, and the band grows (PRD §15).
+ */
+interface TextBase extends ComponentBase {
+  canGrow?: boolean;
+}
+
+export interface StaticTextComponent extends TextBase {
   kind: "staticText";
   text: string;
 }
 /** A bound field: an expression over the current row, usually `record.<column>`. */
-export interface FieldComponent extends ComponentBase {
+export interface FieldComponent extends TextBase {
   kind: "field";
   expression: string;
   format?: string;
 }
 /** A calculated value: totals (`sum(rows.amount)`), page numbers (`page & ' of ' & pages`), … */
-export interface CalculatedComponent extends ComponentBase {
+export interface CalculatedComponent extends TextBase {
   kind: "calculated";
   expression: string;
   format?: string;

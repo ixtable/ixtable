@@ -22,8 +22,8 @@ describe("text metrics", () => {
     expect(measureText("€", 10)).toBe(5.56);
   });
 
-  it("normalizes to what the standard fonts can print", () => {
-    expect(normalizeText("a\tb\r\nc\u0001 € “q” ✓ 日")).toBe("a b\nc € “q” ? ?");
+  it("normalizes to what the standard and bundled fonts can print", () => {
+    expect(normalizeText("a\tb\r\nc\u0001 € “q” ✓ 日 א")).toBe("a b\nc € “q” ✓ 日 ?");
   });
 
   it("wraps greedily on spaces, keeps explicit breaks and splits long words", () => {

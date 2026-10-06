@@ -112,12 +112,19 @@ upload with a notice. The installers are still on the draft GitHub release.
 The repository variables `IXTABLE_CLOUD_BUILD_URL`,
 `IXTABLE_CLOUD_BUILD_ANON_KEY`, `IXTABLE_CLOUD_BUILD_SITE_URL` and
 `IXTABLE_CLOUD_PUBLIC_KEY_RAW` (the bundle-signing public key) are compiled
-into release builds (`cloud/config.rs`). Beta and stable runs fail when the
-public key is missing or a development or test key, and `keys.mjs embedded`
-checks that the built binary pins it. The URL's origin is also added to the
+into release builds (`cloud/config.rs`). `IXTABLE_CLOUD_PUBLIC_KEY` (SPKI
+DER base64) is the fallback when the RAW variable is unset or blank. Beta and
+stable runs fail when the public key is missing or a development or test key,
+both in `Signing setup` and in `build.rs` (`IXTABLE_RELEASE=1`). The
+`keys.mjs build` wrapper then checks that the built binary pins it, before
+tauri-action uploads anything. The URL's origin is also added to the
 release CSP (see [security.md](./security.md)).
 
 ## Local builds
+
+A local `tauri build` without `IXTABLE_RELEASE=1` is a development build: it
+may pin no cloud key and ships the committed development updater key. Only
+release.yml sets the opt-in.
 
 `bundle.createUpdaterArtifacts` is on, so a full local `npm run tauri build`
 needs an updater key. Either set `TAURI_SIGNING_PRIVATE_KEY` to a development

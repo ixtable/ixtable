@@ -2,14 +2,41 @@
  * Image XObjects for the PDF writer without decoding pixels:
  * JPEG passes through as DCTDecode; PNG IDAT data passes through as
  * FlateDecode with the PNG predictor (non-interlaced gray, RGB and palette
- * images). PNGs with alpha or interlacing are unsupported and the writer draws
- * a placeholder box instead.
+ * images). Other PNGs (alpha, tRNS transparency, interlacing) are decoded by
+ * Rust (`prepare_report_pdf`) into color samples plus a soft mask.
  */
 
 export interface PdfImage {
   /** Image dictionary entries after /Type /XObject /Subtype /Image (without /Length). */
   dict: string;
   data: Uint8Array;
+  /** 8-bit alpha samples (FlateDecode), written as the image's /SMask. */
+  smask?: { dict: string; data: Uint8Array };
+}
+
+/** A PNG decoded by `prepare_report_pdf`: zlib-compressed 8-bit samples. */
+export interface DecodedPng {
+  width: number;
+  height: number;
+  colors: 1 | 3;
+  colorBase64: string;
+  alphaBase64?: string | null;
+}
+
+/** Image XObject of a decoded PNG, with its alpha as a soft mask. */
+export function decodedImage(png: DecodedPng, bytes: (b64: string) => Uint8Array): PdfImage {
+  const size = `/Width ${png.width} /Height ${png.height}`;
+  const space = png.colors === 1 ? "/DeviceGray" : "/DeviceRGB";
+  return {
+    dict: `${size} /ColorSpace ${space} /BitsPerComponent 8 /Filter /FlateDecode`,
+    data: bytes(png.colorBase64),
+    smask: png.alphaBase64
+      ? {
+          dict: `${size} /ColorSpace /DeviceGray /BitsPerComponent 8 /Filter /FlateDecode`,
+          data: bytes(png.alphaBase64),
+        }
+      : undefined,
+  };
 }
 
 const be16 = (b: Uint8Array, i: number) => (b[i] << 8) | b[i + 1];
@@ -50,7 +77,7 @@ export function jpegImage(data: Uint8Array): PdfImage | null {
 
 const PNG_SIGNATURE = [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a];
 
-/** PNG passthrough for non-interlaced grayscale, RGB and palette images. */
+/** PNG passthrough for opaque non-interlaced grayscale, RGB and palette images. */
 export function pngImage(data: Uint8Array): PdfImage | null {
   if (!PNG_SIGNATURE.every((b, i) => data[i] === b)) return null;
   let i = 8;
@@ -73,6 +100,7 @@ export function pngImage(data: Uint8Array): PdfImage | null {
       interlace = body[12];
     } else if (type === "PLTE") palette = body;
     else if (type === "IDAT") idat.push(body);
+    else if (type === "tRNS") return null;
     else if (type === "IEND") break;
     i += 12 + length;
   }

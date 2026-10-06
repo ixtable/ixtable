@@ -39,19 +39,27 @@ limited too.
   `scripts/release/keys.mjs` runs in the `Signing setup` step. A beta or
   stable build stops before compiling when the updater pubkey or the cloud
   bundle-signing key is missing, malformed, or a known development or test
-  key. Known keys are the committed updater key (compared by key bytes), the
-  RFC 8032 test vectors, the all-zero key, and the local Supabase stack key of
-  the checkout. Two more checks follow. `keys.mjs probe` signs a probe file
-  with `TAURI_SIGNING_PRIVATE_KEY` and verifies it against the release pubkey,
-  so a mismatched pair fails before the build. After the build, `keys.mjs
-  embedded` checks that the binary contains the release cloud key and does
-  not contain the committed updater key. Draft runs only warn.
-- **Cloud bundle-signing key:** `cloud/config.rs` pins
-  `IXTABLE_CLOUD_PUBLIC_KEY_RAW` (or `IXTABLE_CLOUD_PUBLIC_KEY`) at compile
-  time with `option_env!`. The release `build` job sets both from repository
-  variables. A build without the key refuses every cloud install
-  (`CLOUD_KEY_MISSING`), and the release gate keeps such a build from
-  shipping.
+  key. Known keys are the committed updater key (compared by key bytes) and
+  `scripts/release/dev-cloud-keys.json`: the RFC 8032 test vectors, the
+  all-zero key, and every Ed25519 test key committed to the repository (a
+  unit test fails when one is missing). The local Supabase stack key is
+  random per checkout (`dev-secrets.mjs`) and never shared, so the list does
+  not depend on `.env.local`; when that file exists it is checked too.
+  `keys.mjs probe` signs a probe file with `TAURI_SIGNING_PRIVATE_KEY` and
+  verifies it against the release pubkey, so a mismatched pair fails before
+  the build. Draft runs only warn.
+- **Fail closed in the build itself:** release.yml sets `IXTABLE_RELEASE=1`
+  for beta and stable. With it, `src-tauri/build.rs`
+  (`src/release_keys.rs`) fails the compile when the cloud key is missing,
+  blank, malformed or in `dev-cloud-keys.json`, or when the updater pubkey
+  (`tauri.conf.json` merged with the `TAURI_CONFIG` override from
+  `--config`) is the committed development key. A local `tauri build`
+  without the opt-in is a development build.
+- **Binary check before upload:** tauri-action runs `tauri build` through
+  `tauriScript: node scripts/release/keys.mjs`. The `build` wrapper checks
+  that the binary contains the release cloud key and not the committed
+  updater key, so a failure stops the job before tauri-action uploads to the
+  draft release.
 - **Hosting:** static `<channel>/latest.json` plus versioned payloads on an
   S3-compatible host, uploaded by the `publish-update-manifest` job after
   approval through a GitHub environment.

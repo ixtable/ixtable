@@ -1,3 +1,4 @@
+import { generateKeyPairSync } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
@@ -5,6 +6,8 @@ import {
   cargoDependencies,
   committedPrivateKeys,
   GATES,
+  onlyDevTestKeys,
+  PRIVATE_KEY_FIXTURES,
   runGates,
   unreviewedCrypto,
 } from "../../scripts/ci/release-gates.mjs";
@@ -72,5 +75,30 @@ describe("release gates", () => {
       "c.txt",
       "cert.p12",
     ]);
+  });
+
+  it("finds Ed25519 PKCS8 keys and allows only the dev keys in known fixtures", () => {
+    const pkcs8 = (
+      der = generateKeyPairSync("ed25519").privateKey.export({ format: "der", type: "pkcs8" }),
+    ) => der.toString("base64");
+    const fixture = PRIVATE_KEY_FIXTURES[0];
+    const committed = readFileSync(join(root, fixture), "utf8");
+    expect(onlyDevTestKeys(committed)).toBe(true);
+    const fresh = pkcs8();
+    const pem = `-----BEGIN ${"PRIVATE"} KEY-----`;
+    const files: Record<string, string> = {
+      [fixture]: committed,
+      "new.ts": `const key = "${fresh}";`,
+      "hex.ts": `const key = "${Buffer.from(fresh, "base64").toString("hex").toUpperCase()}";`,
+      "copy/crypto_test.ts": committed,
+    };
+    const read = (f: string) => files[f];
+    expect(committedPrivateKeys(Object.keys(files), read)).toEqual([
+      "new.ts",
+      "hex.ts",
+      "copy/crypto_test.ts",
+    ]);
+    for (const planted of [`${committed}\n"${fresh}"`, `${committed}\n${pem}`])
+      expect(committedPrivateKeys([fixture], () => planted)).toEqual([fixture]);
   });
 });

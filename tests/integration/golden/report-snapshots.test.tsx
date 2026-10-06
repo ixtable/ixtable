@@ -4,9 +4,9 @@ import { fileURLToPath } from "node:url";
 import { invoke } from "@tauri-apps/api/core";
 import { expect, it } from "vitest";
 import type { DocumentConfig } from "../../../src/lib/types";
-import { base64Bytes, loadReportData } from "../../../src/reports/data";
+import { loadReportData } from "../../../src/reports/data";
 import { layoutReport } from "../../../src/reports/engine";
-import { writePdf } from "../../../src/reports/pdf";
+import { reportPdfBytes } from "../../../src/reports/export";
 import { startFromTemplate } from "./journey";
 
 process.env.TZ = "UTC";
@@ -55,15 +55,9 @@ async function snapshotReports(template: string, expectedReports: string[]) {
       assets,
     });
     expect(doc.diagnostics, `${report.name} lays out without problems`).toEqual([]);
-    const pdf = writePdf(doc, {
+    const pdf = await reportPdfBytes(doc, data.assets, {
       title: report.name,
       creationDate: NOW.toISOString(),
-      assets: Object.fromEntries(
-        Object.entries(data.assets).map(([id, a]) => [
-          id,
-          { mediaType: a.mediaType, data: base64Bytes(a.dataBase64) },
-        ]),
-      ),
     });
     const name = `${slug(template)}-${slug(report.name)}`;
     let json = JSON.stringify(doc, null, 1);

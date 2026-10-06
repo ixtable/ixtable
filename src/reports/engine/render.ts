@@ -1,5 +1,12 @@
 import { evaluate, formatValue } from "../../expr";
-import type { ComponentStyle, ReportComponent, TableComponent } from "../types";
+import type {
+  CalculatedComponent,
+  ComponentStyle,
+  FieldComponent,
+  ReportComponent,
+  StaticTextComponent,
+  TableComponent,
+} from "../types";
 import { type PositionedItem, type Row, r2 } from "./document";
 import { BASELINE, LINE_HEIGHT, measureText, normalizeText, wrapText } from "./text";
 
@@ -39,7 +46,7 @@ export function expressionText(
   }
 }
 
-interface Box {
+export interface Box {
   id: string;
   x: number;
   y: number;
@@ -119,6 +126,23 @@ export function textItem(
   };
 }
 
+/** Height a text box needs to show all of `raw` at its style, in points. */
+export function textHeight(box: Box, raw: string): number {
+  const fontSize = box.style?.fontSize ?? DEFAULT_FONT_SIZE;
+  const text = normalizeText(raw);
+  const width = Math.max(1, box.w - 2 * TEXT_PAD);
+  const lines = text ? wrapText(text, width, fontSize, box.style?.bold ?? false).length : 1;
+  return lines * fontSize * LINE_HEIGHT;
+}
+
+/** The text a static text, field or calculated component prints. */
+export function componentText(
+  c: StaticTextComponent | FieldComponent | CalculatedComponent,
+  ctx: RenderContext,
+): string {
+  return c.kind === "staticText" ? c.text : expressionText(c.id, c.expression, c.format, ctx);
+}
+
 function placeholder(box: Box, label: string, ox: number, oy: number): PositionedItem[] {
   return [
     {
@@ -147,13 +171,9 @@ export function componentItems(
 ): PositionedItem[] {
   switch (c.kind) {
     case "staticText":
-      return [...frame(c, ox, oy), textItem(c, c.text, ox, oy)];
     case "field":
     case "calculated":
-      return [
-        ...frame(c, ox, oy),
-        textItem(c, expressionText(c.id, c.expression, c.format, ctx), ox, oy),
-      ];
+      return [...frame(c, ox, oy), textItem(c, componentText(c, ctx), ox, oy)];
     case "line": {
       const lineWidth = c.style?.borderWidth ?? 1;
       if (lineWidth <= 0) return [];

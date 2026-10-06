@@ -5,7 +5,7 @@ import { GenerateAppButton } from "../design/GenerateAppButton";
 import { flattenNavigation, formTable, type NavigationItem } from "../design/schema";
 import { useDocumentConfig } from "../lib/config-store";
 import type { DocumentConfig } from "../lib/types";
-import { ReportPreview } from "../reports";
+import { ReportRun } from "../reports";
 import { ShellContext } from "../shell/context";
 import { type BackLink, BackCrumb } from "./BackCrumb";
 import { tableContext } from "./data";
@@ -234,7 +234,7 @@ export function PageView({ page, back = null }: { page: RuntimePage; back?: Back
       return (
         <>
           {back && <BackCrumb back={back} />}
-          <ReportPreview reportId={page.id} params={page.params} />
+          <ReportRun reportId={page.id} params={page.params} />
         </>
       );
     case "dashboard":

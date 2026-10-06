@@ -24,6 +24,7 @@ pub mod postgres;
 pub mod queries;
 pub mod recordstore;
 pub mod recovery;
+mod report_pdf;
 pub mod reports;
 pub mod roles;
 pub mod storage;
@@ -381,6 +382,7 @@ pub fn run() {
             // reports commands
             reports::write_report_pdf,
             reports::read_report_assets,
+            report_pdf::prepare_report_pdf,
             // asset_data commands
             asset_data::read_asset_data_url,
             // dashboards commands
@@ -493,8 +495,11 @@ pub fn run() {
 
 #[cfg(test)]
 mod durability_tests;
+// build.rs owns this module; the lib compiles it only for its unit tests.
 #[cfg(test)]
 mod perf_tests;
+#[cfg(test)]
+mod release_keys;
 #[cfg(test)]
 mod test_env;
 

@@ -1,4 +1,4 @@
-import type { Page, PositionedItem, ReportDocument } from "./engine";
+import { type Page, type PositionedItem, type ReportDocument, textRuns } from "./engine";
 
 /** Gray level (0 black … 1 white) as a CSS color. */
 const grayCss = (level: number) => {
@@ -8,6 +8,30 @@ const grayCss = (level: number) => {
 
 /** Same fallbacks as the metrics table: Arial/Liberation Sans share Helvetica's widths. */
 const FONT_FAMILY = "Helvetica, Arial, 'Liberation Sans', sans-serif";
+/** The bundled fallback fonts when installed, else the WebView's own; widths come from `textLength`. */
+const FALLBACK_FAMILY = "'DejaVu Sans', 'Droid Sans Fallback', sans-serif";
+
+const mixed = (text: string) => textRuns(text, 1).some((run) => run.font >= 0);
+
+/**
+ * A Helvetica-only line is plain text; a line with fallback characters
+ * becomes one tspan per run at the engine's position and width.
+ */
+function runsOf(text: string, fontSize: number, bold: boolean, x: number) {
+  if (!mixed(text)) return text;
+  const runs = textRuns(text, fontSize, bold);
+  return runs.map((run, i) => (
+    <tspan
+      key={i}
+      x={x + run.dx}
+      fontFamily={run.font < 0 ? undefined : FALLBACK_FAMILY}
+      textLength={run.width > 0 ? run.width : undefined}
+      lengthAdjust="spacingAndGlyphs"
+    >
+      {run.text}
+    </tspan>
+  ));
+}
 
 function Item({
   item,
@@ -52,11 +76,11 @@ function Item({
               fontSize={item.fontSize}
               fontWeight={item.bold ? "bold" : "normal"}
               fill={grayCss(item.gray)}
-              textLength={line.width > 0 ? line.width : undefined}
+              textLength={line.width > 0 && !mixed(line.text) ? line.width : undefined}
               lengthAdjust="spacingAndGlyphs"
               xmlSpace="preserve"
             >
-              {line.text}
+              {runsOf(line.text, item.fontSize, item.bold, line.x)}
             </text>
           ))}
         </>

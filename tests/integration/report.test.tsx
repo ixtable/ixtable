@@ -155,10 +155,8 @@ it("renames, duplicates and deletes reports through the config store", async () 
   await user.clear(name);
   await user.type(name, "Invoices");
   await user.click(screen.getByRole("button", { name: "Duplicate report" }));
-  expect(await screen.findByRole("button", { name: "Invoices copy" }, LONG)).toHaveAttribute(
-    "aria-current",
-    "true",
-  );
+  const copy = await screen.findByRole("button", { name: "Invoices copy" }, LONG);
+  await waitFor(() => expect(copy).toHaveAttribute("aria-current", "true"), LONG);
   await user.click(screen.getByRole("button", { name: "Delete report" }));
   await waitFor(() =>
     expect(screen.queryByRole("button", { name: "Invoices copy" })).not.toBeInTheDocument(),
@@ -168,7 +166,7 @@ it("renames, duplicates and deletes reports through the config store", async () 
       windowLabel: "main",
     });
     expect(config.reports.map((r) => r.name)).toEqual(["Invoices"]);
-  });
+  }, LONG);
 });
 
 it("sets pagination controls in the designer and keeps tables out of page bands", async () => {

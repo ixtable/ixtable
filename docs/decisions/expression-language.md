@@ -114,8 +114,8 @@ it does not know loads as `Tone::Other` and saves back unchanged.
 - One implementation means a filter in a dashboard and the same filter in an
   action behave the same.
 - Rust-side validation cannot catch an expression's syntax errors. The form,
-  report, and automation editors run `check` on every keystroke and show the
-  diagnostics next to the field.
+  report, dashboard, and automation editors run `check` on every keystroke and
+  show the diagnostics next to the field.
 - Expressions only see data the caller puts in scope. Adding a capability,
   such as a lookup function, is a language change with tests, not a plugin.
 - Expressions cannot run SQL. Queries stay in the DuckDB read path with bound
@@ -137,3 +137,9 @@ it does not know loads as `Tone::Other` and saves back unchanged.
   `src/reports/engine`, and `src/dashboards`, and their tests run real
   expressions: `tests/unit/automation-runner.test.ts`,
   `tests/unit/forms-state.test.ts`, and `tests/unit/report-engine.test.ts`.
+
+## Audit log
+
+- 2026-10-05: Added the dashboard editor to the editors that run `check`; the
+  rest matched the code.
+- 2026-10-05 (after merging #36): re-checked the list-filter pushdown text #36 added against `src/runtime/pushdown.ts`; it matches. No changes.

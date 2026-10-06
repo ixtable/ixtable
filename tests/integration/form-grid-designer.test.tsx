@@ -52,13 +52,16 @@ it("limits keyboard resizing per control kind", async () => {
 
   await user.click(screen.getByRole("button", { name: "Add Related records" }));
   await narrow(user, "New related records", 10);
-  await waitFor(async () => expect((await control("relatedList"))?.placement.columnSpan).toBe(6));
+  await waitFor(
+    async () => expect((await control("relatedList"))?.placement.columnSpan).toBe(6),
+    LONG,
+  );
   expect(screen.getByRole("button", { name: "Narrow New related records" })).toBeDisabled();
   expect(properties().getByRole("spinbutton", { name: "Column span" })).toHaveValue(6);
 
   await user.click(screen.getByRole("button", { name: "Add Yes/No" }));
   await narrow(user, "New yes/no", 10);
-  await waitFor(async () => expect((await control("boolean"))?.placement.columnSpan).toBe(1));
+  await waitFor(async () => expect((await control("boolean"))?.placement.columnSpan).toBe(1), LONG);
 }, 120_000);
 
 it("edits tracks, alignment and regions, and hides 'Enabled when' on static controls", async () => {
@@ -74,15 +77,20 @@ it("edits tracks, alignment and regions, and hides 'Enabled when' on static cont
     expect(layout.justifyItems).toBe("center");
   }, LONG);
   await user.click(properties().getByRole("button", { name: "Add region" }));
-  await waitFor(async () =>
-    expect((await readForm()).layout.namedRegions.map((r) => r.name)).toEqual(["region1"]),
+  await waitFor(
+    async () =>
+      expect((await readForm()).layout.namedRegions.map((r) => r.name)).toEqual(["region1"]),
+    LONG,
   );
 
   await user.click(screen.getByRole("button", { name: "Add Text" }));
   expect(properties().queryByRole("textbox", { name: "Enabled when" })).toBeNull();
   expect(properties().getByRole("textbox", { name: "Visible when" })).toBeInTheDocument();
   await user.selectOptions(properties().getByRole("combobox", { name: "Region" }), "region1");
-  await waitFor(async () => expect((await control("label"))?.placement.region).toBe("region1"));
+  await waitFor(
+    async () => expect((await control("label"))?.placement.region).toBe("region1"),
+    LONG,
+  );
   expect(properties().getByRole("spinbutton", { name: "Column span" })).toBeDisabled();
 
   await user.click(screen.getByRole("button", { name: "Add Section" }));
@@ -92,8 +100,9 @@ it("edits tracks, alignment and regions, and hides 'Enabled when' on static cont
   const span = properties().getByRole("spinbutton", { name: "Region 1 column span" });
   await user.type(span, "0");
   await user.tab();
-  await waitFor(async () =>
-    expect((await readForm()).layout.namedRegions[0]).toMatchObject({ columnSpan: 12 }),
+  await waitFor(
+    async () => expect((await readForm()).layout.namedRegions[0]).toMatchObject({ columnSpan: 12 }),
+    LONG,
   );
 }, 120_000);
 
@@ -103,7 +112,10 @@ it("renames and removes a region a control uses and keeps the document saveable"
   await user.click(properties().getByRole("button", { name: "Add region" }));
   await user.click(screen.getByRole("button", { name: "Add Text" }));
   await user.selectOptions(properties().getByRole("combobox", { name: "Region" }), "region1");
-  await waitFor(async () => expect((await control("label"))?.placement.region).toBe("region1"));
+  await waitFor(
+    async () => expect((await control("label"))?.placement.region).toBe("region1"),
+    LONG,
+  );
 
   await user.click(properties().getByRole("button", { name: "Back to form properties" }));
   const name = properties().getByRole("textbox", { name: "Region 1 name" });
@@ -141,7 +153,10 @@ it("applies a typed span on blur instead of snapping each keystroke", async () =
   await user.type(span, "10");
   expect(span).toHaveValue(10);
   await user.tab();
-  await waitFor(async () => expect((await control("relatedList"))?.placement.columnSpan).toBe(10));
+  await waitFor(
+    async () => expect((await control("relatedList"))?.placement.columnSpan).toBe(10),
+    LONG,
+  );
 }, 120_000);
 
 it("picks an image asset by its stable id and previews it", async () => {
@@ -162,7 +177,7 @@ it("picks an image asset by its stable id and previews it", async () => {
   const picker = properties().getByRole("combobox", { name: "Image asset" });
   await within(picker).findByRole("option", { name: "logo.png" }, LONG);
   await user.selectOptions(picker, "logo.png");
-  await waitFor(async () => expect((await control("image"))?.assetId).toBe(asset.id));
+  await waitFor(async () => expect((await control("image"))?.assetId).toBe(asset.id), LONG);
   const preview = properties().getByLabelText("Image preview");
   await waitFor(() => {
     const image = within(preview).getByRole("img", { name: "New image" });

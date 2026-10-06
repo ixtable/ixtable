@@ -1,9 +1,11 @@
 # Runtime-only bundles: signing, password protection, and trust
 
 Status: accepted for local manual distribution. Cloud personalized bundles and
-envelope-encrypted credential delivery are out of scope for the desktop work
-and need their own record and an external review before implementation. Covers
-PRD §4.1, §21.2, §22.3, §27.2, and the Phase 0 runtime-bundle spike.
+envelope-encrypted credential delivery are a separate design, recorded in
+[cloud security model](./cloud-security-model.md) and implemented in
+`src-tauri/src/cloud/`; they reuse this record's installation flow but not the
+`.ixtr` file format. Covers PRD §4.1, §21.2, §22.3, §27.2, and the Phase 0
+runtime-bundle spike.
 
 ## Context
 
@@ -110,8 +112,15 @@ forms and queries bound to dropped columns surface as problems at once.
 A `bundle.json` that exists but cannot be read or parsed fails with
 `INSTALLATION_CORRUPT`. It is never treated as "not installed", because that
 would drop the pinned signer. An installation folder with no `bundle.json` at
-all is moved aside to `<bundleId>.corrupt-<timestamp>` before a fresh install,
-never deleted.
+all is moved aside to `<bundleId>.corrupt-<timestamp>-<random>` before a
+fresh install, never deleted.
+
+Cloud installations (`src-tauri/src/cloud/install.rs`) go through the same
+`installation::apply_bundle`, under `<state>/cloud-installations/<appId>/`.
+Instead of a `.ixtr` file, the archive is authenticated by a manifest signed
+with the pinned cloud key, and its SHA-256 must match the manifest. The
+installation pins the cloud key and stores the verified manifest in
+`cloud.json`.
 
 ### Runtime window
 
@@ -162,9 +171,10 @@ words of PRD §4.1.
 
 - No account or network is needed to export, verify, or update a bundle.
 - Verification fails closed before any archive byte is parsed.
-- Cloud distribution will need per-user personalization, key grants, and
-  revocation (PRD §21.3). This format leaves room through the format version
-  and header fields, but none of that is built.
+- Cloud distribution needs per-user personalization, key grants, and
+  revocation (PRD §21.3). Those are built on signed cloud manifests
+  (`cloud/manifest.rs`, `cloud/envelope.rs`, `cloud/grants.rs`), not on new
+  `.ixtr` header fields. The `.ixtr` format is unchanged at format version 1.
 
 ## Evidence
 
@@ -174,8 +184,23 @@ words of PRD §4.1.
 - `src-tauri/src/installation/tests.rs`: first open seeds data and pins the
   signer, updates keep installation records, downgrade needs confirmation, a
   different signer is rejected, migrations on update, a failing migration or
-  health check reverts, restore of the previous version, reset, and unsafe
-  bundle ids.
+  health check reverts, restore of the previous version, reset, unsafe
+  bundle ids, a corrupt `bundle.json` failing closed, and a folder without one
+  moved aside.
+- `src-tauri/src/installation_commands.rs` (unit test): oversized bundles fail
+  with `BUNDLE_TOO_LARGE` before reading.
 - `tests/integration/bundle.test.tsx`: export from Studio, open runtime-only
   without Studio chrome, update while keeping records, password prompt, and a tampered bundle
   rejected before opening.
+- `tests/integration/runtime-update-diagnostics.test.tsx`: a protected
+  update's release notes and migrations in the confirm step, then the runtime
+  jobs and logs diagnostics.
+- `tests/integration/cloud-install.test.tsx`: a signed cloud bundle installs
+  through the same flow, tampering is rejected, and updates keep records.
+
+## Audit log
+
+- 2026-10-05: Status and consequences now point to the built cloud
+  installation path (`src-tauri/src/cloud/`), which reuses `apply_bundle`.
+  Added the cloud installation paragraph, the moved-aside folder suffix, and
+  missing evidence files.

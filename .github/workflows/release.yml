@@ -2,8 +2,9 @@ name: Release
 
 # Signed desktop installers and update channels (PRD §6.1, §27.2, Phase 5).
 # Tag vX.Y.Z → stable, vX.Y.Z-pre → beta; manual runs choose draft/beta/stable.
-# beta/stable fail closed when any signing secret is missing. Runbook and gates:
-# docs/release/checklist.md; secrets: docs/release/signing.md.
+# beta/stable fail closed when any signing secret is missing or a public key is
+# missing or a dev/test key (scripts/release/keys.mjs). Runbook and gates:
+# docs/release-checklist.md, docs/release/checklist.md; secrets: docs/release/signing.md.
 
 on:
   push:
@@ -50,6 +51,9 @@ jobs:
         env:
           RELEASE_CHANNEL: ${{ inputs.channel }}
         run: node scripts/release/plan.mjs
+      # Automated PRD §21.3/§27.2/Phase 5 gates (docs/release-checklist.md); sign-offs print as pending.
+      - name: Release gates (automated)
+        run: node scripts/ci/release-gates.mjs
 
   gates:
     name: Release gates (${{ matrix.os }})
@@ -114,6 +118,11 @@ jobs:
       IXTABLE_CLOUD_BUILD_URL: ${{ vars.IXTABLE_CLOUD_BUILD_URL }}
       IXTABLE_CLOUD_BUILD_ANON_KEY: ${{ vars.IXTABLE_CLOUD_BUILD_ANON_KEY }}
       IXTABLE_CLOUD_BUILD_SITE_URL: ${{ vars.IXTABLE_CLOUD_BUILD_SITE_URL }}
+      # Production public keys (docs/decisions/desktop-updates.md). The cloud key is pinned
+      # at compile time (cloud/config.rs); the updater key goes into the --config override.
+      IXTABLE_CLOUD_PUBLIC_KEY_RAW: ${{ vars.IXTABLE_CLOUD_PUBLIC_KEY_RAW }}
+      IXTABLE_CLOUD_PUBLIC_KEY: ${{ vars.IXTABLE_CLOUD_PUBLIC_KEY }}
+      IXTABLE_UPDATER_PUBKEY: ${{ vars.IXTABLE_UPDATER_PUBKEY }}
     steps:
       - name: Disable CRLF conversion
         if: runner.os == 'Windows'
@@ -146,7 +155,7 @@ jobs:
             done
           done
 
-      # Fails beta/stable runs with missing secrets; exports only the set ones.
+      # Fails beta/stable runs with missing secrets or missing/dev public keys; exports only the set ones.
       - name: Signing setup
         id: signing
         env:
@@ -167,6 +176,10 @@ jobs:
         run: >-
           node scripts/release/signing.mjs --platform "${{ matrix.platform }}" --channel "$CHANNEL"
           --out "$RUNNER_TEMP/tauri.release.json"
+      # The private key must sign what IXTABLE_UPDATER_PUBKEY verifies, or installed apps reject updates.
+      - name: Check the updater key pair
+        if: steps.signing.outputs.updater == 'true' && env.CHANNEL != 'draft'
+        run: node scripts/release/keys.mjs probe
       - name: Install Azure Trusted Signing client
         if: matrix.platform == 'windows' && steps.signing.outputs.signed == 'true'
         run: cargo install trusted-signing-cli --locked
@@ -187,7 +200,10 @@ jobs:
           updaterJsonPreferNsis: true
           args: ${{ matrix.args }} --config ${{ runner.temp }}/tauri.release.json
 
-      - name: Verify updater signatures against tauri.conf.json pubkey
+      - name: Check the binary pins the release keys
+        if: env.CHANNEL != 'draft'
+        run: node scripts/release/keys.mjs embedded --binary "${{ matrix.binary }}"
+      - name: Verify updater signatures against the release pubkey
         if: steps.signing.outputs.updater == 'true'
         env:
           ARTIFACTS: ${{ steps.tauri.outputs.artifactPaths }}
@@ -259,6 +275,7 @@ jobs:
       AWS_SECRET_ACCESS_KEY: ${{ secrets.RELEASE_S3_SECRET_ACCESS_KEY }}
       AWS_DEFAULT_REGION: ${{ vars.RELEASE_S3_REGION || 'auto' }}
       GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      IXTABLE_UPDATER_PUBKEY: ${{ vars.IXTABLE_UPDATER_PUBKEY }}
     steps:
       - name: Check release host configuration
         id: host
@@ -282,7 +299,7 @@ jobs:
       - name: Download release assets
         if: steps.host.outputs.configured == 'true'
         run: gh release download "$TAG" --repo "$GITHUB_REPOSITORY" --dir assets
-      # Verifies every platform's signature against the committed pubkey before anything is uploaded.
+      # Verifies every platform's signature against IXTABLE_UPDATER_PUBKEY (never the dev key) before anything is uploaded.
       - name: Prepare channel manifests
         if: steps.host.outputs.configured == 'true'
         run: |

@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from "@testing-library/react";
+import { act, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, expect, it, vi } from "vitest";
 
@@ -201,6 +201,14 @@ async function renderCapture() {
   return { store: () => store, onState };
 }
 
+function start<T>(run: () => T): T {
+  let out!: T;
+  act(() => {
+    out = run();
+  });
+  return out;
+}
+
 function slowWrites() {
   const gates: Array<() => void> = [];
   const failures = new Set<number>();
@@ -223,16 +231,16 @@ it("coalesces rapid updates into the in-flight write plus one write of the lates
   const writes = slowWrites();
   const { store, onState } = await renderCapture();
   const names = Array.from({ length: 10 }, (_, i) => `I${i}`);
-  const done = names.map((name) =>
-    store().update((draft) => ({ ...draft, name }), "Rename report"),
+  const done = start(() =>
+    names.map((name) => store().update((draft) => ({ ...draft, name }), "Rename report")),
   );
   expect(updateDocumentConfig).toHaveBeenCalledTimes(1);
   let flushed = false;
   void store()
     .settled()
     .then(() => (flushed = true));
-  await writes.release();
-  await writes.release();
+  await act(writes.release);
+  await act(writes.release);
   const states = await Promise.all(done);
   expect(updateDocumentConfig).toHaveBeenCalledTimes(2);
   expect(updateDocumentConfig.mock.calls.map(([config]) => config.name)).toEqual(["I0", "I9"]);
@@ -248,20 +256,22 @@ it("rejects only the updates whose state was in a failed write", async () => {
   const writes = slowWrites();
   writes.failWrite(2);
   const { store } = await renderCapture();
-  const results = ["A", "B", "C"].map((name) =>
-    store()
-      .update((draft) => ({ ...draft, name }))
-      .then(
-        (state) => state.name,
-        (reason: Error) => reason.message,
-      ),
+  const results = start(() =>
+    ["A", "B", "C"].map((name) =>
+      store()
+        .update((draft) => ({ ...draft, name }))
+        .then(
+          (state) => state.name,
+          (reason: Error) => reason.message,
+        ),
+    ),
   );
-  await writes.release();
-  await writes.release();
+  await act(writes.release);
+  await act(writes.release);
   expect(await Promise.all(results)).toEqual(["A", "write 2 failed", "write 2 failed"]);
   expect(backend.name).toBe("A");
-  const retry = store().update((draft) => ({ ...draft, name: "D" }));
-  await writes.release();
+  const retry = start(() => store().update((draft) => ({ ...draft, name: "D" })));
+  await act(writes.release);
   await expect(retry).resolves.toMatchObject({ name: "D" });
   expect(backend.name).toBe("D");
 });
@@ -269,11 +279,13 @@ it("rejects only the updates whose state was in a failed write", async () => {
 it("waits for queued writes before reloading", async () => {
   const writes = slowWrites();
   const { store } = await renderCapture();
-  void store().update((draft) => ({ ...draft, name: "A" }));
-  void store().update((draft) => ({ ...draft, name: "B" }));
-  const reloaded = store().reload();
-  await writes.release();
-  await writes.release();
+  const reloaded = start(() => {
+    void store().update((draft) => ({ ...draft, name: "A" }));
+    void store().update((draft) => ({ ...draft, name: "B" }));
+    return store().reload();
+  });
+  await act(writes.release);
+  await act(writes.release);
   await expect(reloaded).resolves.toMatchObject({ name: "B" });
   expect(readDocumentConfig).toHaveBeenCalledTimes(2);
 });

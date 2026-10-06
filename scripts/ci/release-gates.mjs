@@ -233,7 +233,8 @@ export const GATES = [
     check: (root) => {
       const problems = [];
       const desktop = file(root, ".github/workflows/desktop.yml");
-      const matrices = desktop.match(/os: \[[^\]]+\]/g) ?? [];
+      // A literal `os: [...]` list, or the push branch of a PR-conditional fromJSON matrix.
+      const matrices = desktop.match(/os: \[[^\]]+\]|'\["ubuntu-latest","macos-latest","windows-latest"\]'/g) ?? [];
       if (matrices.filter((m) => THREE_OS.test(m)).length < 2)
         problems.push("desktop.yml test and golden jobs must both run on all three OSes");
       if (

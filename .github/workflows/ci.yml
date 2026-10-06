@@ -17,6 +17,10 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
   verify:
     name: Typecheck
@@ -38,14 +42,15 @@ jobs:
   e2e:
     name: End-to-end tests
     runs-on: ubuntu-latest
-    needs: verify
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
           node-version: lts/*
           cache: npm
-          cache-dependency-path: web/package-lock.json
+          cache-dependency-path: |
+            web/package-lock.json
+            supabase/functions/package-lock.json
       # Same CLI pin as cloud.yml.
       - uses: supabase/setup-cli@v1
         with:
@@ -67,12 +72,34 @@ jobs:
       - name: Install dependencies
         working-directory: web
         run: npm ci
+      # Docusaurus/webpack build cache; restored from the newest entry.
+      - name: Cache Docusaurus build
+        uses: actions/cache@v4
+        with:
+          path: |
+            web/.docusaurus
+            web/node_modules/.cache
+          key: docusaurus-${{ runner.os }}-${{ hashFiles('web/package-lock.json') }}-${{ github.sha }}
+          restore-keys: docusaurus-${{ runner.os }}-${{ hashFiles('web/package-lock.json') }}-
       - name: Build site
         working-directory: web
         run: npm run build
+      # Browser binaries are keyed by the lockfile (it pins the Playwright version).
+      - name: Cache Playwright browsers
+        id: playwright-cache
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-${{ runner.os }}-${{ hashFiles('web/package-lock.json') }}
       - name: Install Playwright browsers
+        if: steps.playwright-cache.outputs.cache-hit != 'true'
         working-directory: web
         run: npx playwright install --with-deps chromium
+      # Cached browsers still need the system libraries.
+      - name: Install Playwright system dependencies
+        if: steps.playwright-cache.outputs.cache-hit == 'true'
+        working-directory: web
+        run: npx playwright install-deps chromium
       - name: Run Playwright tests
         working-directory: web
         run: npm run test:e2e

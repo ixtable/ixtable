@@ -83,7 +83,8 @@ remove that build first when one exists.
 
 ### CI
 
-The `perf` job in `.github/workflows/desktop.yml` runs both halves in release
+The `perf` job in `.github/workflows/desktop.yml` runs on pushes to `main`
+(not on pull requests, to keep PR runners free). It runs both halves in release
 mode on `ubuntu-latest` with a PostgreSQL 16 service, publishes the table to
 the job summary, and uploads `reports/perf/*.json` and `summary.md` as the
 `performance-budgets` artifact. The job has `continue-on-error: true` and no

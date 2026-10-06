@@ -2,7 +2,8 @@
 
 Status: accepted, pending Windows CI. Windows is a release-blocking platform (PRD §6.1).
 Green Desktop CI on Windows, macOS, and Linux is the `green-ci-all-os` gate in
-[the release gates](../release-checklist.md).
+[the release gates](../release-checklist.md). Pull requests run the golden
+suite on Linux only; `main` and the release workflow run it on all three.
 
 ## What failed
 
@@ -93,3 +94,5 @@ The `dumpbin /imports` diagnostic step stays until the Windows jobs are green.
   unchanged.
 - 2026-10-05 (later): runners returned. Recorded the first Windows results and
   the fixes (global.db race, data gate starvation, basename, state dir cleanup).
+- 2026-10-06: golden suite runs on Linux only for pull requests; `main`
+  and release still run it on Windows, macOS, and Linux.

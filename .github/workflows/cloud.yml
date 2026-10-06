@@ -62,6 +62,10 @@ jobs:
       - uses: ./.github/actions/setup-desktop
         with:
           cache-key: cloud
+          npm-cache-paths: |
+            package-lock.json
+            web/package-lock.json
+            supabase/functions/package-lock.json
       # Pinned to the CLI version the stack is developed against. A maintainer
       # should also pin this action to a commit SHA.
       - uses: supabase/setup-cli@v1
@@ -77,6 +81,13 @@ jobs:
           key=$(sed -n 's/^IXTABLE_CLOUD_PUBLIC_KEY_RAW=//p' supabase/functions/.env.local)
           test -n "$key"
           echo "IXTABLE_CLOUD_PUBLIC_KEY_RAW=$key" >> "$GITHUB_ENV"
+      # Deno module cache for the Edge Function type check and tests.
+      - name: Cache Deno modules
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/deno
+          key: deno-${{ runner.os }}-${{ hashFiles('supabase/functions/deno.json', 'supabase/functions/deno.lock', 'scripts/cloud/deno-test.mjs') }}
+          restore-keys: deno-${{ runner.os }}-
       # Deno comes from npm (npx deno@<pinned>) inside the script.
       - name: Edge Function type check and Deno unit tests
         run: npm run service-qa:deno

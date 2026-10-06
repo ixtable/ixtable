@@ -117,7 +117,7 @@ jobs:
         run: sudo apt-get install -y --no-install-recommends libfuse2
       - name: Prepare pinned DuckDB extensions
         run: bash scripts/prepare-duckdb-artifacts.sh "${{ matrix.duckdb }}"
-      # No signing secrets: draft channel disables updater artifacts and code signing.
+      # No signing secrets: the draft channel builds unsigned.
       - name: Build config
         run: node scripts/release/signing.mjs --platform "${{ matrix.platform }}" --channel draft --out "$RUNNER_TEMP/tauri.release.json"
       - name: Build and upload to the nightly release
@@ -128,5 +128,4 @@ jobs:
           tagName: ${{ env.TAG }}
           releaseName: Nightly
           prerelease: true
-          includeUpdaterJson: false
           args: ${{ matrix.args }} --config ${{ runner.temp }}/tauri.release.json

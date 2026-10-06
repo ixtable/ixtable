@@ -305,7 +305,7 @@ export const GATES = [
   {
     id: "install-signoff",
     prd: "Phase 5",
-    title: "Installers and the update path checked by hand on each OS",
+    title: "Installers checked by hand on each OS",
     signoff: "Release manager completes docs/release/checklist.md section 3 for all three OSes",
   },
   {

@@ -191,8 +191,10 @@ jobs:
 
   # Service containers are Linux-only, so macOS and Windows start PostgreSQL
   # natively (scripts/ci/start-postgres.mjs exports IXTABLE_TEST_POSTGRES_URL).
+  # Main only: PRs get PostgreSQL coverage from the ubuntu job, freeing macOS/Windows runners.
   postgres-native:
     name: PostgreSQL conformance (${{ matrix.os }})
+    if: github.event_name != 'pull_request'
     strategy:
       fail-fast: false
       matrix:

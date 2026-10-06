@@ -107,7 +107,10 @@ export function ReportRun({
   const report = config.reports.find((r) => r.id === reportId);
   const parameters = report ? reportParameters(report, config.savedQueries) : [];
   const given = params ?? {};
-  const complete = parameters.every((p) => p.name in given);
+  // A required parameter passed as null still needs a value, so it prompts too.
+  const complete = parameters.every(
+    (p) => p.name in given && (!p.required || (given[p.name] ?? null) !== null),
+  );
   const [values, setValues] = useState<Record<string, unknown> | null>(complete ? given : null);
   const [prompting, setPrompting] = useState(!complete);
   if (!report) return <ReportPreview reportId={reportId} params={params} />;

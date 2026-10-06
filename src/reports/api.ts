@@ -30,6 +30,8 @@ export interface PdfResources {
   fonts: PdfFontSubset[];
   /** One per requested PNG, in order; null when it can't be decoded. */
   images: (DecodedPng | null)[];
+  /** Why images print as placeholders, one line per undecodable PNG. */
+  warnings: string[];
 }
 
 /** Font subsets and decoded PNGs for the PDF writer (Rust `prepare_report_pdf`). */

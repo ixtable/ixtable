@@ -17,14 +17,15 @@ export function fallbackCodePoints(doc: ReportDocument): number[] {
 
 /**
  * PDF bytes of a laid-out report. Asks Rust for subsets of the bundled fonts
- * and for PNGs the writer can't pass through (alpha, tRNS, interlacing) only
- * when the report needs them, so plain reports make no extra call.
+ * and for PNGs the writer can't pass through (alpha, tRNS, interlacing,
+ * 16-bit) only when the report needs them, so plain reports make no extra
+ * call. `warnings` says which images print as placeholders and why.
  */
 export async function reportPdfBytes(
   doc: ReportDocument,
   assets: Record<string, { mediaType: string; dataBase64: string }>,
   options: Omit<PdfOptions, "assets" | "fonts" | "decodedImages">,
-): Promise<Uint8Array> {
+): Promise<{ bytes: Uint8Array; warnings: string[] }> {
   const used = new Set(
     doc.pages.flatMap((p) => p.items.flatMap((i) => (i.kind === "image" ? [i.assetId] : []))),
   );
@@ -45,9 +46,10 @@ export async function reportPdfBytes(
           codePoints,
           pngs.map((id) => assets[id].dataBase64),
         )
-      : { fonts: [], images: [] };
+      : { fonts: [], images: [], warnings: [] };
   const decodedImages = Object.fromEntries(
     pngs.flatMap((id, i) => (prepared.images[i] ? [[id, prepared.images[i]]] : [])),
   );
-  return writePdf(doc, { ...options, assets: bytes, fonts: prepared.fonts, decodedImages });
+  const pdf = writePdf(doc, { ...options, assets: bytes, fonts: prepared.fonts, decodedImages });
+  return { bytes: pdf, warnings: prepared.warnings };
 }

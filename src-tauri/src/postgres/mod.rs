@@ -109,6 +109,9 @@ pub fn map_error(e: postgres::Error) -> StoreError {
         || *code == SqlState::UNDEFINED_OBJECT
     {
         StoreError::new("NOT_FOUND", db.message())
+    } else if code.code().starts_with("28") {
+        // invalid_authorization_specification / invalid_password: wrong login.
+        StoreError::new("AUTH_FAILED", crate::data::redact(db.message()))
     } else if code.code().starts_with("08") {
         StoreError::new("CONNECTION", db.message())
     } else if code.code().starts_with("22") {

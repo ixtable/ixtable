@@ -12,6 +12,8 @@ A **runtime-only bundle** is an `.ixtr` file that holds a complete application. 
 
 Open Settings, then the Release tab. Enter a version such as `1.2.0`, release notes, and an optional minimum Runtime version, then choose **Export runtime bundle…**. ixtable signs every bundle with a key it creates on your computer the first time you export. After an export, the Release tab shows the signer fingerprint. Send it to recipients over a channel they trust.
 
+ixtable refuses to export while the application has problems. That includes any formula with an error, such as a visibility condition with a typo. Settings › Problems lists each one with an Open link that takes you to the field. Publishing to ixtable Cloud is blocked the same way.
+
 You can also protect the bundle with a password. A password protects the bundle at rest and against casual unauthorized opening. It does not stop an authorized recipient from extracting the data the application shows them, or any credentials the application can reach.
 
 ## Open and update a bundle
@@ -23,6 +25,8 @@ Each recipient keeps their own records. The bundle's records seed the installati
 ## Databases
 
 An application that uses the embedded SQLite database gives every recipient a separate copy of the records. An application that uses PostgreSQL connects each recipient to the database you configured. The bundle never contains the PostgreSQL password. The project file only stores a reference to a password saved on your computer.
+
+When a recipient opens a PostgreSQL bundle, the Runtime asks for a database login. It also asks when the database refuses the saved login. The username starts as the one you configured, and the recipient can change it, so you can give each person their own least-privileged role. The Runtime connects before it saves anything. It then keeps the login encrypted on that computer for that installation, never in the bundle. **Database login…** in the Runtime sidebar changes the login or forgets it.
 
 ## Next steps
 

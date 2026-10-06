@@ -138,3 +138,50 @@ fn runtime_sessions_read_the_configured_datasource() {
     crate::installation::forget_runtime(&state.session_id);
     let _ = std::fs::remove_dir_all(base);
 }
+
+#[test]
+fn runtime_sessions_read_bundled_file_sources() {
+    let (m, base) = manager();
+    let installation = base.join("installation");
+    fs::create_dir_all(&installation).unwrap();
+    rusqlite::Connection::open(installation.join("data.db")).unwrap();
+    let mut doc = archive::create_document("Runtime").unwrap();
+    let asset = uuid::Uuid::now_v7().to_string();
+    doc.attachments.push(archive::Attachment {
+        id: asset.clone(),
+        display_name: "rates.csv".into(),
+        media_type: "text/csv".into(),
+        checksum: String::new(),
+        size: 0,
+        created_at: String::new(),
+        updated_at: String::new(),
+        contents: b"code,rate\nEUR,1.1\nGBP,1.3\n".to_vec(),
+    });
+    doc.config.file_sources.push(crate::import::FileSource {
+        id: uuid::Uuid::new_v4().to_string(),
+        name: "rates".into(),
+        asset_id: asset,
+        format: crate::data::files::FileFormat::Csv,
+        csv: Default::default(),
+    });
+    let state = m
+        .open_runtime_session(
+            "rt-files",
+            &installation,
+            doc,
+            crate::installation::RuntimeSession {
+                bundle_id: "b".into(),
+                version: "1.0.0".into(),
+                dir: installation.clone(),
+            },
+        )
+        .unwrap();
+    let count = m
+        .with_session("rt-files", |s| {
+            Ok(s.reader.query("SELECT count(*) FROM files.rates").unwrap().rows)
+        })
+        .unwrap();
+    assert_eq!(count, vec![vec![crate::data::DataValue::Integer(2)]]);
+    crate::installation::forget_runtime(&state.session_id);
+    let _ = std::fs::remove_dir_all(base);
+}

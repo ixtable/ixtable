@@ -75,3 +75,16 @@ export interface ResetPreview {
   bundled: TableCount[];
   message: string;
 }
+
+/** Database login of a manually installed PostgreSQL bundle (never the password). */
+export interface RuntimeLoginStatus {
+  applies: boolean;
+  attached: boolean;
+  source: "grant" | "installation" | "studio" | "none";
+  user: string;
+  host: string;
+  database: string;
+  needsLogin: boolean;
+  reason?: "missing" | "rejected" | null;
+  error?: string | null;
+}

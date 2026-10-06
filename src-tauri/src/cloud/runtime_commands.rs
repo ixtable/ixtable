@@ -235,7 +235,13 @@ pub async fn cloud_key_grant(
             .map(|t| t.with_timezone(&Utc))
             .unwrap_or(max)
             .min(max);
-        grants::put(&target, cred.password, expires);
+        let user = cred.user.filter(|u| !u.is_empty());
+        if let Some(u) = &user {
+            crate::recordstore::secrets::validate_login_user(u).map_err(|_| {
+                err("CREDENTIAL_DECRYPT", "The delivered credential names an invalid database user")
+            })?;
+        }
+        grants::put(&target, user, cred.password, expires);
         let status = reattach(&window_label)?;
         Ok(GrantResult {
             needed: true,

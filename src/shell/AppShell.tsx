@@ -13,7 +13,13 @@ import { DocumentConfigProvider, useDocumentConfig } from "../lib/config-store";
 import { chooseDocumentDestination } from "../lib/dialog";
 import { AutomationHost } from "../automation/AutomationHost";
 import type { DbObject, SessionState } from "../lib/types";
-import { type Doc, type Selection, type ShellApi, ShellContext } from "./context";
+import {
+  type Doc,
+  type RevealTarget,
+  type Selection,
+  type ShellApi,
+  ShellContext,
+} from "./context";
 import { ModeSwitch } from "./ModeSwitch";
 import { findMode, type ModeId, modes } from "./modes";
 import { SaveStatus } from "../persistence";
@@ -113,6 +119,7 @@ function ShellFrame({
   const [metadataLoading, setMetadataLoading] = useState(true);
   const [metadataError, setMetadataError] = useState("");
   const [selection, select] = useState<Selection | null>(null);
+  const [reveal, setReveal] = useState<RevealTarget | null>(null);
   const [dismissed, setDismissed] = useState<TauriError | null>(null);
   useOpenRequestInShell({
     request: openRequest,
@@ -176,6 +183,14 @@ function ShellFrame({
     },
     [doc.mode, store],
   );
+  const requestReveal = useCallback(
+    (target: RevealTarget) => {
+      setReveal(target);
+      void changeMode(target.mode);
+    },
+    [changeMode],
+  );
+  const clearReveal = useCallback(() => setReveal(null), []);
   const save = useCallback(
     async (forceDestination = false) => {
       setPending("Saving document…");
@@ -235,6 +250,9 @@ function ShellFrame({
       setError,
       save,
       changeMode,
+      reveal,
+      requestReveal,
+      clearReveal,
     }),
     [
       doc,
@@ -248,6 +266,9 @@ function ShellFrame({
       applySession,
       save,
       changeMode,
+      reveal,
+      requestReveal,
+      clearReveal,
     ],
   );
   const mode = findMode(doc.mode);

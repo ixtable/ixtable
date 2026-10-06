@@ -4,6 +4,7 @@ import { saveDocument } from "../lib/api";
 import { useDocumentConfig } from "../lib/config-store";
 import { documentState } from "../release/api";
 import { useShell } from "../shell/context";
+import { expressionBlocker, loadExpressionIssues } from "../shell/expressionIssues";
 import { publishPreflight, uploadArchive } from "./api";
 import { invokeFunction, runtimeCapacity, requireSession } from "./client";
 import type { PublishedVersion } from "./contract";
@@ -57,8 +58,23 @@ export function PublishPanel({
   useEffect(() => {
     check().catch(() => setPreflight(null));
   }, [check]);
+  // Rust cannot check expressions (they run only in TypeScript), so they block here.
+  const [expressionErrors, setExpressionErrors] = useState<number | null>(null);
+  useEffect(() => {
+    let live = true;
+    loadExpressionIssues(config)
+      .then((issues) => live && setExpressionErrors(issues.length))
+      .catch(() => live && setExpressionErrors(0));
+    return () => {
+      live = false;
+    };
+  }, [config]);
 
   if (!link) return null;
+  const shown =
+    preflight && expressionErrors
+      ? { ...preflight, blockers: [expressionBlocker(expressionErrors), ...preflight.blockers] }
+      : preflight;
   const security = preflight?.security;
   const needsShared = !!security?.sharedCredentialWarning;
   const needsInsecure = !!security?.insecureOverrideConfirmed;
@@ -68,8 +84,9 @@ export function PublishPanel({
       ? ""
       : "Enter a semantic version or leave blank.";
   const blocked =
-    !preflight ||
-    preflight.blockers.length > 0 ||
+    !shown ||
+    expressionErrors === null ||
+    shown.blockers.length > 0 ||
     !!versionError ||
     !!minError ||
     (needsShared && !ackShared) ||
@@ -108,6 +125,9 @@ export function PublishPanel({
       };
       await update((draft) => ({ ...draft, release }), "Edit release");
       await settled();
+      const expressionIssues = await loadExpressionIssues(config);
+      if (expressionIssues.length)
+        throw new CloudError("EXPRESSION_ERRORS", expressionBlocker(expressionIssues.length));
       if (!(await documentState()).path) await shell.save();
       let state = await documentState();
       if (state.dirty) {
@@ -177,8 +197,8 @@ export function PublishPanel({
       <p className="cloud-muted">
         Publishing uploads the saved archive as an immutable version. Autosave never publishes.
       </p>
-      {preflight ? (
-        <PreflightSummary preflight={preflight} />
+      {shown ? (
+        <PreflightSummary preflight={shown} />
       ) : (
         <p className="cloud-muted" role="status">
           Checking the application…

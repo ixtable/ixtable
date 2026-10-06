@@ -15,7 +15,7 @@ import type { Job, JobAttempt, JobStatus, StepLog } from "./types";
 
 const STATUSES: JobStatus[] = ["queued", "running", "succeeded", "failed", "cancelled"];
 
-export function JobsPanel({ refreshMs = 2000 }: { refreshMs?: number }) {
+export function JobsPanel({ refreshMs = 2000 }: { refreshMs?: number; focusId?: string }) {
   const { config } = useDocumentConfig();
   const [status, setStatus] = useState<JobStatus | "">("");
   const [jobs, setJobs] = useState<Job[]>([]);

@@ -35,6 +35,9 @@ pub struct DatasourceConfig {
     pub insecure_transport_confirmed: bool,
     #[serde(default)]
     pub insecure_transport_confirmed_at: Option<String>,
+    /// Runtime-only installation (bundle id) whose entered login applies; never serialized.
+    #[serde(skip)]
+    pub installation: Option<String>,
 }
 fn default_kind() -> String {
     "sqlite".into()
@@ -66,6 +69,7 @@ impl Default for DatasourceConfig {
             password_ref: None,
             insecure_transport_confirmed: false,
             insecure_transport_confirmed_at: None,
+            installation: None,
         }
     }
 }

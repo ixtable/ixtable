@@ -105,6 +105,16 @@ jobs:
       - name: Rust unit tests
         working-directory: src-tauri
         run: cargo test --lib
+      # The 500 MB archive boundary (docs/decisions/archive-format.md) is opt-in
+      # locally and always runs here: about a minute and 1.5 GB of temp disk.
+      # Fails unless exactly that test ran, so a rename cannot skip it silently.
+      - name: 500 MB archive boundary (Rust)
+        working-directory: src-tauri
+        env:
+          IXTABLE_HEAVY_TESTS: '1'
+        run: |
+          cargo test --lib durability_tests::heavy 2>&1 | tee heavy.log
+          grep -q "test result: ok. 1 passed" heavy.log
       - name: Build NAPI test bridge
         run: npm run pretest
       # Diagnostic (docs/decisions/windows-support.md): list the bridge DLL's imports so
@@ -175,6 +185,45 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: test-evidence-postgres
+          path: reports/
+          if-no-files-found: ignore
+          retention-days: 7
+
+  # Service containers are Linux-only, so macOS and Windows start PostgreSQL
+  # natively (scripts/ci/start-postgres.mjs exports IXTABLE_TEST_POSTGRES_URL).
+  postgres-native:
+    name: PostgreSQL conformance (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      # Keep LF endings so fixtures and snapshots match on Windows.
+      - name: Disable CRLF conversion
+        if: runner.os == 'Windows'
+        run: git config --global core.autocrlf false
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/setup-desktop
+      - name: Start PostgreSQL
+        run: node scripts/ci/start-postgres.mjs
+      - name: RecordStore conformance (Rust)
+        working-directory: src-tauri
+        run: cargo test --lib -- recordstore postgres migrations data
+      - name: Build NAPI test bridge
+        run: npm run pretest
+      - name: PostgreSQL datasource integration tests
+        run: >-
+          npx vitest run --config vitest.integration.config.ts tests/integration/datasource
+          --reporter=default --reporter=junit --outputFile.junit=reports/postgres.xml
+      # The datasource suite skips its PostgreSQL cases without a URL.
+      - name: Check no PostgreSQL spec was skipped
+        run: node scripts/ci/check-junit-no-skips.mjs reports/postgres.xml "PostgreSQL datasource suite"
+      - name: Upload test evidence
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-evidence-postgres-${{ matrix.os }}
           path: reports/
           if-no-files-found: ignore
           retention-days: 7

@@ -1,6 +1,7 @@
 import type { ActionDef, Trigger } from "../automation/types";
 import type { Dashboard } from "../dashboards/types";
 import type { DesignSchema } from "../design/schema";
+import type { FileSource } from "../import/types";
 import type { Migration } from "../migrations/types";
 import type { SavedQuery } from "../query/types";
 import type { CloudLink } from "../cloud/types";
@@ -56,6 +57,8 @@ export interface DocumentConfig {
   release: ReleaseInfo;
   /** The ixtable Cloud application this document publishes to. */
   cloud?: CloudLink | null;
+  /** Bundled read-only files, queried as `files.<name>`. */
+  fileSources?: FileSource[];
 }
 
 export interface Issue {

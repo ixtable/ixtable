@@ -3,21 +3,32 @@ import { useEffect, useState } from "react";
 import { asTauriError, type TauriError, validateDocument } from "../lib/api";
 import { useDocumentConfig } from "../lib/config-store";
 import type { Issue } from "../lib/types";
+import { useShell } from "./context";
+import { type ExpressionIssue, loadExpressionIssues } from "./expressionIssues";
 
-/** Lists `validate_document` issues; re-checks whenever the config changes. */
+type Problem = Issue | ExpressionIssue;
+const isExpression = (issue: Problem): issue is ExpressionIssue => "target" in issue;
+
+/**
+ * Lists `validate_document` issues plus expression errors found by `src/expr`;
+ * re-checks whenever the config changes. Expression errors link to their object.
+ */
 export function ProblemsTab() {
   const { config, settled } = useDocumentConfig();
-  const [issues, setIssues] = useState<Issue[] | null>(null);
+  const { requestReveal } = useShell();
+  const [issues, setIssues] = useState<Problem[] | null>(null);
   const [error, setError] = useState<TauriError | null>(null);
   const [revision, setRevision] = useState(0);
 
   useEffect(() => {
     let current = true;
+    const expressions = loadExpressionIssues(config);
     settled()
       .then(validateDocument)
-      .then((next) => {
+      .then(async (next) => {
+        const found = await expressions;
         if (!current) return;
-        setIssues(next);
+        setIssues([...found, ...next]);
         setError(null);
       })
       .catch((reason: unknown) => current && setError(asTauriError(reason)));
@@ -59,12 +70,30 @@ export function ProblemsTab() {
               ) : (
                 <TriangleAlert aria-label="Warning" />
               )}
-              <span>
-                <b>
-                  {issue.objectKind} {issue.objectId}
-                </b>
-                {issue.message}
-              </span>
+              {isExpression(issue) ? (
+                <span>
+                  <b>
+                    {issue.objectKind} {issue.objectName || issue.objectId}
+                  </b>
+                  <span>
+                    {issue.field}: {issue.message}
+                  </span>
+                  <button
+                    type="button"
+                    className="problem-link"
+                    onClick={() => requestReveal(issue.target)}
+                  >
+                    Open {issue.objectKind} {issue.objectName || issue.objectId}
+                  </button>
+                </span>
+              ) : (
+                <span>
+                  <b>
+                    {issue.objectKind} {issue.objectId}
+                  </b>
+                  {issue.message}
+                </span>
+              )}
             </li>
           ))}
         </ul>

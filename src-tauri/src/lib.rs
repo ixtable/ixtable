@@ -11,6 +11,7 @@ pub mod cloud;
 pub mod dashboards;
 pub mod data;
 pub mod design;
+pub mod import;
 pub mod installation;
 pub mod installation_checks;
 pub mod installation_commands;
@@ -385,6 +386,10 @@ pub fn run() {
             // asset_data commands
             asset_data::read_asset_data_url,
             // dashboards commands
+            // import commands
+            import::preview_import_file,
+            import::import_file,
+            import::file_source_info,
             // automation commands
             automation::validate_automation,
             jobs::enqueue_job,
@@ -417,6 +422,9 @@ pub fn run() {
             recordstore::commands::set_datasource_password,
             recordstore::commands::clear_datasource_password,
             recordstore::commands::connect_datasource,
+            recordstore::runtime_login::runtime_datasource_login_status,
+            recordstore::runtime_login::set_runtime_datasource_login,
+            recordstore::runtime_login::clear_runtime_datasource_login,
             // roles commands
             authz::set_runtime_role_preview,
             // design commands

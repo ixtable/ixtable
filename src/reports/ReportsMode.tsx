@@ -4,6 +4,7 @@ import { inspectTable } from "../lib/api";
 import { useDocumentConfig } from "../lib/config-store";
 import type { DocumentConfig } from "../lib/types";
 import { useShell } from "../shell/context";
+import { useReveal } from "../shell/reveal";
 import { loadDataset } from "./data";
 import { DatasetPicker } from "./designer/ReportSettings";
 import { ReportDesigner } from "./designer/ReportDesigner";
@@ -48,6 +49,12 @@ export function ReportsMode() {
   const { objects } = useShell();
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [tab, setTab] = useState<"design" | "preview">("design");
+  const [focus, setFocus] = useState({ id: undefined as string | undefined, seq: 0 });
+  useReveal("reports", (target) => {
+    setSelectedId(target.objectId);
+    setTab("design");
+    setFocus((f) => ({ id: target.elementId, seq: f.seq + 1 }));
+  });
   const reports = config.reports;
   const report = reports.find((r) => r.id === selectedId) ?? reports[0];
   const columns = useDatasetColumns(report, config);
@@ -178,7 +185,8 @@ export function ReportsMode() {
             </div>
             {tab === "design" ? (
               <ReportDesigner
-                key={report.id}
+                key={`${report.id}:${focus.seq}`}
+                focusId={focus.id}
                 report={report}
                 queries={config.savedQueries}
                 columns={columns}

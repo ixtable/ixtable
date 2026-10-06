@@ -177,6 +177,7 @@ const friendly: Record<string, string> = {
   ARCHIVE_CHECKSUM: "The download was corrupted or modified. It was discarded.",
   CLOUD_KEY_MISSING: "This build cannot verify cloud bundles (no signing key).",
   SAVE_REQUIRED: "Save the document first.",
+  EXPRESSION_ERRORS: "Some expressions have errors. Fix them in Settings › Problems first.",
   NOT_INSTALLED: "Connect to ixtable Cloud once to install this application.",
   UPDATE_FAILED: "The update failed and was rolled back. The previous version is still in use.",
 };

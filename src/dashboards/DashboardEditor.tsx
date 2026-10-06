@@ -47,9 +47,18 @@ const ICONS: Record<ComponentKind, LucideIcon> = {
 
 type Edit = (fn: (d: Dashboard) => Dashboard, label?: string) => void;
 
-export function DashboardEditor({ dashboard, edit }: { dashboard: Dashboard; edit: Edit }) {
+export function DashboardEditor({
+  dashboard,
+  edit,
+  focusId,
+}: {
+  dashboard: Dashboard;
+  edit: Edit;
+  /** Component to select on mount (a Problems link). */
+  focusId?: string;
+}) {
   const { config } = useDocumentConfig();
-  const [selectedId, setSelectedId] = useState<string>();
+  const [selectedId, setSelectedId] = useState<string | undefined>(focusId);
   const selected = dashboard.components.find((c) => c.id === selectedId);
   const params = useMemo(
     () => dashboardParams(dashboard.filters, defaultFilterValues(dashboard.filters)),

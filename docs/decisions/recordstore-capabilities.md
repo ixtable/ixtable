@@ -182,6 +182,13 @@ store, sealed with ChaCha20-Poly1305 under a random key in
 `<state>/secrets/secret.key`. The archive never holds it. `sslmode=disable`
 needs an explicit, recorded confirmation (PRD §21.4).
 
+`secrets::datasource_login` returns the username and password a connection
+uses: a cloud key grant first (which may name a per-user database user), then
+a login entered in Runtime for the installation (`runtime-bundles.md`), then
+`passwordRef`. `secrets::connection` applies that username to the datasource
+for both the record store and the DuckDB reader. PostgreSQL authentication
+failures (SQLSTATE class 28) map to `AUTH_FAILED`.
+
 ## Consequences
 
 - The designer shows rebuilds on SQLite and in-place changes on PostgreSQL,

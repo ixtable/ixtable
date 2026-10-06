@@ -437,7 +437,7 @@ fn granted_credentials_are_released_only_to_their_target_until_expiry() {
         ..Default::default()
     };
     let target = crate::recordstore::secrets::datasource_target(&ds);
-    grants::put(&target, "pw".into(), Utc::now() + Duration::hours(1));
+    grants::put(&target, None, "pw".into(), Utc::now() + Duration::hours(1));
     assert_eq!(grants::granted_password(&ds).as_deref(), Some("pw"));
     assert_eq!(
         crate::recordstore::secrets::datasource_credential(&ds)
@@ -451,7 +451,12 @@ fn granted_credentials_are_released_only_to_their_target_until_expiry() {
     assert_eq!(grants::granted_password(&other), None);
     grants::clear(&target);
     assert_eq!(grants::granted_password(&ds), None);
-    grants::put(&target, "old".into(), Utc::now() - Duration::seconds(1));
+    grants::put(
+        &target,
+        None,
+        "old".into(),
+        Utc::now() - Duration::seconds(1),
+    );
     assert_eq!(
         grants::granted_password(&ds),
         None,
@@ -757,4 +762,25 @@ fn retry_backs_off_exponentially_and_retries_connect_errors() {
     assert_eq!(calls, 3);
     // 10 ms + 20 ms between the three attempts.
     assert!(start.elapsed() >= std::time::Duration::from_millis(30));
+}
+
+#[test]
+fn per_user_envelopes_carry_their_own_database_user() {
+    let v1: envelope::Credential =
+        serde_json::from_str(r#"{"v":1,"kind":"postgres","password":"pw","target":"t"}"#).unwrap();
+    assert_eq!(v1.user, None, "v1 envelopes keep the datasource user");
+    let v2 = envelope::Credential {
+        v: 2,
+        kind: "postgres".into(),
+        user: Some("alice".into()),
+        password: "alice-pw".into(),
+        target: "t".into(),
+    };
+    let aad = envelope::aad_for("app", "ds", "user", Some("u1"));
+    let sealed = envelope::seal(&serde_json::to_vec(&v2).unwrap(), &aad).unwrap();
+    assert!(!sealed.ciphertext.contains("alice"));
+    let plain = envelope::open(&sealed.ciphertext, &sealed.nonce, &aad, &sealed.dek).unwrap();
+    let back: envelope::Credential = serde_json::from_slice(&plain).unwrap();
+    assert_eq!(back.user.as_deref(), Some("alice"));
+    assert_eq!(back.password, "alice-pw");
 }

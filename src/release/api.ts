@@ -7,6 +7,7 @@ import type {
   InstalledBundle,
   PendingMigration,
   ResetPreview,
+  RuntimeLoginStatus,
 } from "./types";
 
 export const exportRuntimeBundle = (path: string, options: ExportOptions) =>
@@ -44,3 +45,7 @@ export const previewInstallationReset = () => call<ResetPreview>("preview_instal
 export const resetRuntimeInstallationData = () =>
   call<SessionState>("reset_runtime_installation_data", { confirmed: true });
 export const documentState = () => call<SessionState>("document_state");
+export const runtimeLoginStatus = () => call<RuntimeLoginStatus>("runtime_datasource_login_status");
+export const setRuntimeLogin = (user: string, password: string) =>
+  call<RuntimeLoginStatus>("set_runtime_datasource_login", { user, password });
+export const clearRuntimeLogin = () => call<RuntimeLoginStatus>("clear_runtime_datasource_login");

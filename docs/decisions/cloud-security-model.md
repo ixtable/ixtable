@@ -29,14 +29,18 @@ users cannot obtain new bundles or keys.
 
 ### Trusted-user limits (PRD §20.2, §21.2, §21.3)
 
-- Runtime RBAC protects navigation, queries, forms, reports and actions in
-  the official Runtime. Rust enforces it at every command entry point that
+- Runtime RBAC protects navigation, queries, forms, reports, dashboards
+  and actions in the official Runtime. Rust enforces it at every command
+  entry point that
   reads or writes records (`src-tauri/src/authz.rs`): row and batch writes,
   table pages, saved queries, report PDF export and attachment export. A
-  role gets `FORBIDDEN` for anything its permissions (or the forms and
-  reports it may open) do not grant. No role may run ad hoc SQL or export
-  attachments. Table
-  listing and schema inspection show only tables the role may read.
+  role gets `FORBIDDEN` for anything its permissions (or the forms,
+  reports and dashboards it may open) do not grant. No role may run ad hoc
+  SQL or export attachments. A dashboard grant implies read on the saved
+  queries of its components and filters and of the forms it embeds; it
+  grants no form, table, write or action, so an embedded form or report
+  still needs its own grant. Table listing and schema inspection show only
+  tables the role may read.
   Checkpoints, restoring a checkpoint as a copy and resetting installation
   data copy or replace every table, so they need unrestricted access. The
   readable-table set is cached per session and role and recomputed after a
@@ -123,6 +127,15 @@ users cannot obtain new bundles or keys.
   nonce, aad and wrapped DEK in the same transaction; a check constraint
   keeps retired rows empty. The metadata stays so key grants remain
   attributable to the credential they delivered.
+- The envelope plaintext is `{v, kind, password, target}`. A per-user
+  credential may also carry `user`, its own database username (`v: 2`). The
+  username sits inside the ciphertext, so the cloud never sees it. Studio
+  accepts a username only with `scope = user` and an explicit password.
+  Runtime checks it like any login username and connects as it. `target`
+  still names the datasource's configured user, so the binding to host,
+  port, and database is unchanged. A runtime older than v2 ignores `user`
+  and tries that password with the configured user, which the server
+  refuses unless both roles share a password.
 - Per-user envelopes (`scope = 'user'`) need the target to be an active
   member (or the owner). `key-grant` prefers the caller's per-user envelope
   over the shared one.

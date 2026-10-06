@@ -1,7 +1,12 @@
 import { describe, expect, it } from "vitest";
 import type { DocumentConfig } from "../../src/lib/types";
 import { canOpen, startPage, visibleNavigation } from "../../src/runtime/navigation";
-import { can, setObjectPermission, toggleListed } from "../../src/runtime/rbac";
+import {
+  can,
+  canReadDashboardQuery,
+  setObjectPermission,
+  toggleListed,
+} from "../../src/runtime/rbac";
 import type { Role } from "../../src/runtime/types";
 
 const clerk: Role = {
@@ -54,6 +59,27 @@ describe("rbac.can", () => {
     expect(can(config, "clerk", "action", "approve", "execute")).toBe(true);
     expect(can(config, "clerk", "action", "approve", "read")).toBe(false);
     expect(can(config, "clerk", "action", "purge", "execute")).toBe(false);
+  });
+
+  it("lets a dashboard grant read the dashboard's queries, and nothing else", () => {
+    const viewer: Role = {
+      id: "viewer",
+      name: "Viewer",
+      permissions: {
+        navigation: [],
+        objects: [
+          { kind: "dashboard", id: "d1", read: true, create: false, update: false, delete: false },
+        ],
+        actions: [],
+      },
+    };
+    const withViewer = { ...config, roles: [clerk, viewer] } as DocumentConfig;
+    expect(canReadDashboardQuery(withViewer, "viewer", "d1", "q-sales")).toBe(true);
+    expect(canReadDashboardQuery(withViewer, "viewer", "d2", "q-sales")).toBe(false);
+    expect(can(withViewer, "viewer", "query", "q-sales", "read")).toBe(false);
+    expect(can(withViewer, "viewer", "query", "q-sales", "update")).toBe(false);
+    expect(canReadDashboardQuery(withViewer, "clerk", "d1", "q-sales")).toBe(false);
+    expect(canReadDashboardQuery(withViewer, null, "d1", "q-sales")).toBe(true);
   });
 
   it("denies unknown roles", () => {

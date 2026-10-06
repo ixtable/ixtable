@@ -2129,6 +2129,16 @@ button {
   display: grid;
   gap: 2px;
 }
+.problem-list .problem-link {
+  justify-self: start;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--ix-link);
+  text-decoration: underline;
+  cursor: pointer;
+  font-size: 12px;
+}
 .problem-list svg {
   width: 15px;
   flex: none;

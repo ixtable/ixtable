@@ -37,14 +37,19 @@ export function ReportDesigner({
   queries,
   columns,
   change,
+  focusId,
 }: {
   report: Report;
   queries: SavedQuery[];
   columns: string[];
   change: Change;
+  /** Component to select on mount (a Problems link). */
+  focusId?: string;
 }) {
-  const [bandKey, setBandKey] = useState<BandKey>("detail");
-  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [bandKey, setBandKey] = useState<BandKey>(
+    () => (focusId && findComponent(report, focusId)?.key) || "detail",
+  );
+  const [selectedId, setSelectedId] = useState<string | null>(focusId ?? null);
   const [assets, setAssets] = useState<AssetSummary[]>([]);
   const width = contentWidth(report.page);
   const bands = bandEntries(report);

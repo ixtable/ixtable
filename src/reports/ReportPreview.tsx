@@ -5,16 +5,10 @@ import { asTauriError } from "../lib/api";
 import { useDocumentConfig } from "../lib/config-store";
 import { choosePdfDestination } from "../lib/dialog";
 import { writeReportPdf } from "./api";
-import {
-  base64Bytes,
-  loadReportData,
-  REPORT_ROW_LIMIT,
-  type ReportData,
-  ReportCancelled,
-} from "./data";
+import { loadReportData, REPORT_ROW_LIMIT, type ReportData, ReportCancelled } from "./data";
 import { layoutReport, type ReportDocument } from "./engine";
+import { reportPdfBytes } from "./export";
 import { PageView } from "./PageView";
-import { writePdf } from "./pdf";
 import type { Report } from "./types";
 import "./reports.css";
 
@@ -153,19 +147,15 @@ function LoadedPreview({
     try {
       const path = await choosePdfDestination(report.name);
       if (!path) return;
-      const assets = Object.fromEntries(
-        Object.entries(result.data.assets).map(([id, a]) => [
-          id,
-          { mediaType: a.mediaType, data: base64Bytes(a.dataBase64) },
-        ]),
-      );
-      const bytes = writePdf(result.doc, {
+      const { bytes, warnings } = await reportPdfBytes(result.doc, result.data.assets, {
         title: report.name,
         creationDate: result.generatedAt,
-        assets,
       });
       await writeReportPdf(path, bytes, report.id);
-      setNotice(`Exported PDF to ${path}`);
+      const placeholders = warnings.length
+        ? `. Printed as placeholders: ${warnings.join("; ")}`
+        : "";
+      setNotice(`Exported PDF to ${path}${placeholders}`);
     } catch (reason) {
       setError(asTauriError(reason).message);
     }

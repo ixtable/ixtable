@@ -3,7 +3,7 @@ use crate::cloud::grants;
 use chrono::{Duration, Utc};
 use secrets::{
     clear_installation_login, connection, datasource_login, installation_login,
-    store_installation_login, validate_login_user,
+    store_installation_login, validate_login_user, Login, SecretError,
 };
 
 fn runtime_ds(installation: Option<&str>) -> DatasourceConfig {
@@ -56,7 +56,15 @@ fn a_runtime_login_is_sealed_per_installation_and_replaces_the_bundled_user() {
     assert_eq!(login.source, LoginSource::None);
     assert_eq!(login.password, None);
 
-    store_installation_login(&ds, "alice", "alice-s3cret!").unwrap();
+    // sslmode require does not verify the server: the recipient must accept.
+    assert_eq!(
+        store_installation_login(&ds, "alice", "alice-s3cret!", false)
+            .unwrap_err()
+            .code,
+        "UNVERIFIED_TRANSPORT"
+    );
+    assert_eq!(datasource_login(&ds).unwrap().source, LoginSource::None);
+    store_installation_login(&ds, "alice", "alice-s3cret!", true).unwrap();
     let login = datasource_login(&ds).unwrap();
     assert_eq!(login.source, LoginSource::Installation);
     assert_eq!(login.user, "alice");
@@ -98,13 +106,13 @@ fn a_runtime_login_is_sealed_per_installation_and_replaces_the_bundled_user() {
 fn runtime_logins_need_an_installation_and_a_confirmed_transport() {
     let studio = runtime_ds(None);
     assert_eq!(
-        store_installation_login(&studio, "alice", "pw")
+        store_installation_login(&studio, "alice", "pw", true)
             .unwrap_err()
             .code,
         "NOT_RUNTIME"
     );
     let mut ds = runtime_ds(Some("bundle-tls"));
-    store_installation_login(&ds, "alice", "pw").unwrap();
+    store_installation_login(&ds, "alice", "pw", true).unwrap();
     ds.sslmode = "disable".into();
     assert_eq!(
         datasource_login(&ds).unwrap_err().code,
@@ -115,38 +123,140 @@ fn runtime_logins_need_an_installation_and_a_confirmed_transport() {
 }
 
 #[test]
-fn a_per_user_cloud_grant_connects_as_its_own_database_user() {
-    let ds = runtime_ds(Some(&format!("bundle-{}", uuid::Uuid::new_v4())));
-    store_installation_login(&ds, "local_user", "local-pw").unwrap();
+fn a_runtime_login_is_bound_to_the_transport_it_was_entered_for() {
+    let mut ds = runtime_ds(Some(&format!("bundle-{}", uuid::Uuid::new_v4())));
+    ds.sslmode = "verify-full".into();
+    // verify-full checks the server: no acceptance needed.
+    store_installation_login(&ds, "alice", "pw", false).unwrap();
+    assert_eq!(
+        datasource_login(&ds).unwrap().source,
+        LoginSource::Installation
+    );
+    // An update that downgrades the transport reads the login as none.
+    for downgraded in [
+        DatasourceConfig {
+            sslmode: "require".into(),
+            ..ds.clone()
+        },
+        DatasourceConfig {
+            sslmode: "verify-ca".into(),
+            ..ds.clone()
+        },
+        DatasourceConfig {
+            sslmode: "disable".into(),
+            insecure_transport_confirmed: true,
+            ..ds.clone()
+        },
+    ] {
+        assert_eq!(
+            installation_login(&downgraded).unwrap(),
+            None,
+            "{}",
+            downgraded.sslmode
+        );
+        let login = datasource_login(&downgraded).unwrap();
+        assert_eq!(login.source, LoginSource::None, "Runtime asks again");
+        assert_eq!(login.password, None);
+    }
+    // A plaintext bundle confirmed by its author still needs the recipient.
+    let mut plain = ds.clone();
+    plain.sslmode = "disable".into();
+    plain.insecure_transport_confirmed = true;
+    assert_eq!(
+        store_installation_login(&plain, "alice", "pw", false)
+            .unwrap_err()
+            .code,
+        "UNVERIFIED_TRANSPORT"
+    );
+    plain.insecure_transport_confirmed = false;
+    assert_eq!(
+        store_installation_login(&plain, "alice", "pw", true)
+            .unwrap_err()
+            .code,
+        "INSECURE_TRANSPORT"
+    );
+    clear_installation_login(&ds).unwrap();
+}
+
+#[test]
+fn a_manual_installation_never_uses_a_cloud_grant() {
+    let mut ds = runtime_ds(Some(&format!("bundle-{}", uuid::Uuid::new_v4())));
+    store_installation_login(&ds, "local_user", "local-pw", true).unwrap();
+    let manual = ds.clone();
     let target = secrets::datasource_target(&ds);
     grants::put(
+        "cloud-window",
         &target,
         Some("bob".into()),
         "bob-pw".into(),
         Utc::now() + Duration::hours(1),
     );
     let login = datasource_login(&ds).unwrap();
-    assert_eq!(login.source, LoginSource::Grant, "a grant wins");
+    assert_eq!(login.source, LoginSource::Installation);
+    assert_eq!(login.user, "local_user");
+    // The cloud session holding the grant ignores the manual install's login.
+    ds.installation = None;
+    ds.grant_scope = Some("cloud-window".into());
+    let login = datasource_login(&ds).unwrap();
+    assert_eq!(login.source, LoginSource::Grant);
     assert_eq!(login.user, "bob");
     assert_eq!(connection(&ds).unwrap().0.user, "bob");
     // A shared grant keeps the configured user.
     grants::put(
+        "cloud-window",
         &target,
         None,
         "shared-pw".into(),
         Utc::now() + Duration::hours(1),
     );
     assert_eq!(datasource_login(&ds).unwrap().user, "app_owner");
-    grants::clear(&target);
-    clear_installation_login(&ds).unwrap();
+    grants::clear("cloud-window", &target);
+    clear_installation_login(&manual).unwrap();
+}
+
+#[test]
+fn status_reasons_tell_missing_rejected_and_lookup_errors_apart() {
+    let source = |r: &Result<Login, SecretError>| match r {
+        Ok(l) if l.password.is_some() => l.source,
+        _ => LoginSource::None,
+    };
+    let stored: Result<Login, SecretError> = Ok(Login {
+        user: "alice".into(),
+        password: Some("pw".into()),
+        source: LoginSource::Installation,
+    });
+    let none: Result<Login, SecretError> = Ok(Login {
+        user: "app".into(),
+        password: None,
+        source: LoginSource::None,
+    });
+    let failed: Result<Login, SecretError> = Err(SecretError {
+        code: "INSECURE_TRANSPORT",
+        message: "sslmode disable".into(),
+    });
+    let refused = Some("FATAL: password authentication failed for user \"alice\"");
+    let reason = |attached, r: &Result<Login, SecretError>, error| {
+        login_reason(attached, r.is_err(), source(r), error)
+    };
+    assert_eq!(reason(false, &none, None), Some("missing"));
+    assert_eq!(reason(false, &none, refused), Some("missing"));
+    assert_eq!(reason(false, &stored, refused), Some("rejected"));
+    // Unreachable server with a stored login: report, do not ask again.
+    assert_eq!(reason(false, &stored, Some("Connection refused")), None);
+    // A lookup error is reported, never asked for.
+    assert_eq!(reason(false, &failed, None), None);
+    assert_eq!(reason(false, &failed, refused), None);
+    // Connected: nothing to ask.
+    assert_eq!(reason(true, &none, None), None);
+    assert_eq!(reason(true, &stored, refused), None);
 }
 
 /// Against a real server (`IXTABLE_TEST_POSTGRES_URL`): a wrong password maps
 /// to AUTH_FAILED without echoing it, and a stored login connects.
 #[test]
+#[ignore = "needs IXTABLE_TEST_POSTGRES_URL; CI runs it with --include-ignored"]
 fn postgres_refuses_a_wrong_login_with_auth_failed() {
-    let Ok(url) = std::env::var("IXTABLE_TEST_POSTGRES_URL") else {
-        eprintln!("skipping: set IXTABLE_TEST_POSTGRES_URL");
+    let Some(url) = crate::test_env::postgres_url() else {
         return;
     };
     let cfg: postgres::Config = url.parse().unwrap();
@@ -184,7 +294,7 @@ fn postgres_refuses_a_wrong_login_with_auth_failed() {
     assert!(is_auth_failure(&message), "{message}");
     assert!(!message.contains("not-the-password-123"), "{message}");
 
-    store_installation_login(&ds, &user, &password).unwrap();
+    store_installation_login(&ds, &user, &password, true).unwrap();
     let (connect_as, pw) = connection(&ds).unwrap();
     assert!(crate::postgres::probe(&connect_as, pw.as_deref()).is_ok());
     drop(reader);

@@ -15,6 +15,8 @@ const FILLS: [string, number | null][] = [
 
 interface Props {
   component: ReportComponent;
+  /** Page header or footer: their height is fixed, so text can't grow there. */
+  pageBand?: boolean;
   columns: string[];
   queries: SavedQuery[];
   assets: AssetSummary[];
@@ -25,6 +27,7 @@ interface Props {
 /** Property editor for the selected report component. */
 export function ComponentProperties({
   component: c,
+  pageBand = false,
   columns,
   queries,
   assets,
@@ -165,6 +168,18 @@ export function ComponentProperties({
               onChange={(e) => setStyle({ bold: e.target.checked })}
             />
             Bold
+          </label>
+        )}
+        {isText && !pageBand && (
+          <label className="inline">
+            <input
+              type="checkbox"
+              checked={!!c.canGrow}
+              onChange={(e) =>
+                onChange({ canGrow: e.target.checked || undefined } as Partial<ReportComponent>)
+              }
+            />
+            Can grow
           </label>
         )}
         <PointInput

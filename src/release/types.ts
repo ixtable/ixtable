@@ -84,6 +84,8 @@ export interface RuntimeLoginStatus {
   user: string;
   host: string;
   database: string;
+  sslmode: string;
+  serverVerified: boolean;
   needsLogin: boolean;
   reason?: "missing" | "rejected" | null;
   error?: string | null;

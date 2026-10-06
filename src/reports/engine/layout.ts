@@ -9,6 +9,8 @@ import type {
   ReportDocument,
   Row,
 } from "./document";
+import { type Growth, grown, growBand } from "./grow";
+import { cutAt, sliceItems } from "./split";
 import {
   componentItems,
   measureTable,
@@ -42,6 +44,8 @@ interface Block {
 
 interface Prepared extends Block {
   table?: { comp: TableComponent; geo: TableGeometry };
+  /** Can-grow text: moved and grown components (bands without a table). */
+  growth?: Growth | null;
   height: number;
   splittable: boolean;
   /** Smallest first piece: whole band, or everything above the table plus header and one row. */
@@ -199,17 +203,26 @@ export function layoutReport(
   const bodyTop = m.top + bands.pageHeader.height;
   const bodyBottom = height - m.bottom - bands.pageFooter.height;
   const bodyHeight = bodyBottom - bodyTop;
-  // Repeated headers print their non-table items at design height (see `newPage`).
-  const repeatHeight = (b: Block) => b.repeat.reduce((sum, h) => sum + h.band.height, 0);
+  // Repeated headers print their non-table items at design height, or grown height without a table.
+  const repeatedHeight = (p: Prepared) => (p.table ? p.band.height : p.height);
+  const repeatHeight = (b: Block) =>
+    b.repeat.reduce((sum, h) => sum + repeatedHeight(prepareOnce(h)), 0);
   const prepare = (block: Block): Prepared => {
     const comp = block.band.components.find((c): c is TableComponent => c.kind === "table");
-    if (!comp)
+    const growth = growBand(block.band, context(block.scope));
+    if (!comp) {
+      const h = block.band.height + (growth?.extra ?? 0);
+      // Grown text splits between lines unless keepTogether holds and the band fits a page.
+      const splittable =
+        !!growth && (!block.band.keepTogether || h > bodyHeight - repeatHeight(block) + EPS);
       return {
         ...block,
-        height: block.band.height,
-        splittable: false,
-        minFirst: block.band.height,
+        growth,
+        height: h,
+        splittable,
+        minFirst: splittable ? block.band.height : h,
       };
+    }
     const geo = measureTable(comp, context(block.scope));
     const h = block.band.height + Math.max(0, geo.height - comp.h);
     const splittable = !block.band.keepTogether || h > bodyHeight - repeatHeight(block) + EPS;
@@ -242,7 +255,7 @@ export function layoutReport(
       const r = prepareOnce(h);
       const oy = cursor;
       add((ctx) => bandItems(r, left, oy, ctx, context, "repeat"));
-      cursor += r.band.height;
+      cursor += repeatedHeight(r);
     }
     pageTop = cursor;
   };
@@ -251,6 +264,34 @@ export function layoutReport(
   let pendingBreak = false;
 
   const firstNeed = (p: Prepared) => (p.splittable ? p.minFirst : p.height);
+  // Split a band with grown text at line boundaries, continuing on the next pages.
+  const splitGrown = (p: Prepared) => {
+    const noPage = { page: 0, pages: 0, groupPage: 0, groupPages: 0 };
+    const shape = bandItems(p, left, 0, noPage, context, "all");
+    const piece = (from: number, to: number, oy: number) =>
+      add((ctx) => sliceItems(bandItems(p, left, 0, ctx, context, "all"), from, to, oy - from));
+    let from = 0;
+    for (;;) {
+      const room = bodyBottom - cursor;
+      if (p.height - from <= room + EPS) {
+        piece(from, Number.POSITIVE_INFINITY, cursor);
+        cursor += p.height - from;
+        return;
+      }
+      let cut = cutAt(shape, from, from + room);
+      if (cut <= from + EPS) {
+        if (!atTop()) {
+          newPage(p.repeat);
+          continue;
+        }
+        // Not even one line fits an empty page: cut at the body bottom.
+        cut = from + room;
+      }
+      piece(from, cut, cursor);
+      from = cut;
+      newPage(p.repeat);
+    }
+  };
   // A block that fits a page only without the repeated headers gets a page without them.
   const pageFor = (p: Prepared) =>
     newPage(firstNeed(p) > bodyHeight - repeatHeight(p) + EPS ? [] : p.repeat);
@@ -267,6 +308,10 @@ export function layoutReport(
     pendingBreak = p.breakAfter;
     if (p.section) pageSection[pages.length - 1] = ++sections;
     if (cursor + need > bodyBottom + EPS && !atTop()) pageFor(p);
+    if (p.growth && p.splittable && cursor + p.height > bodyBottom + EPS) {
+      splitGrown(p);
+      continue;
+    }
     if (!p.table || cursor + p.height <= bodyBottom + EPS || !p.splittable) {
       const oy = cursor;
       add((ctx) => bandItems(p, left, oy, ctx, context, "all"));
@@ -394,6 +439,7 @@ function bandItems(
   const belowStart = table ? table.comp.y + table.comp.h : Number.POSITIVE_INFINITY;
   const growth = table ? Math.max(0, table.geo.height - table.comp.h) : 0;
   return p.band.components.flatMap((c) => {
+    if (c.kind !== "table" && p.growth) return componentItems(grown(c, p.growth), left, oy, ctx);
     if (part === "repeat") return c.kind === "table" ? [] : componentItems(c, left, oy, ctx);
     if (c.kind === "table") {
       if (part !== "all" || c !== table?.comp) return [];

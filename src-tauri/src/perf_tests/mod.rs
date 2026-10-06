@@ -1,5 +1,5 @@
 //! Performance budget harness (PRD §27.3, docs/decisions/performance-budgets.md).
-//! Opt-in and report-only: `IXTABLE_PERF=1 cargo test --lib perf_tests -- --test-threads=1`
+//! Ignored and report-only: `IXTABLE_PERF=1 cargo test --lib perf_tests -- --include-ignored --test-threads=1`
 //! writes `reports/perf/rust.json` (or `$IXTABLE_PERF_OUT/rust.json`) and the fixture
 //! archive the UI harness (`tests/perf/`) opens. A budget miss is reported, never failed.
 use crate::durability_tests::fresh_manager;
@@ -16,11 +16,7 @@ mod scenarios;
 pub(crate) const SAMPLES: usize = 7;
 
 pub(crate) fn enabled() -> bool {
-    if std::env::var("IXTABLE_PERF").as_deref() == Ok("1") {
-        return true;
-    }
-    eprintln!("skipped: set IXTABLE_PERF=1 to run the performance harness");
-    false
+    crate::test_env::flag("IXTABLE_PERF")
 }
 
 pub(crate) fn out_dir() -> PathBuf {
@@ -109,6 +105,7 @@ pub(crate) fn fixture_manager(tag: &str) -> (PathBuf, DocumentManager, PathBuf) 
 }
 
 #[test]
+#[ignore = "timing harness; needs IXTABLE_PERF=1 and --include-ignored"]
 fn write_fixture_for_the_ui_harness() {
     if !enabled() {
         return;

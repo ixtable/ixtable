@@ -328,6 +328,7 @@ impl DocumentManager {
         let (id, workspace) = (old.id.clone(), old.workspace.clone());
         // Released only after the workspace and its record are gone.
         let lock = old.workspace_lock.take();
+        crate::cloud::grants::release(&old.doc.config.datasource);
         drop(old);
         if crate::installation::runtime_session(&id).is_some() {
             crate::installation::forget_runtime(&id);
@@ -456,7 +457,7 @@ impl DocumentManager {
             .map_err(|e| read_error(sql, e))
     }
     /// A fresh DuckDB connection to the session's read database (queries.rs runs long, cancellable reads on it without holding the session lock).
-    /// It holds the embedded file's shared gate until dropped, so a RecordStore write never overlaps the read (see `data::gate`).
+    /// It holds the shared gate of the reader's `data` catalog until dropped, so neither a RecordStore write to the embedded file nor a reader refresh (SQLite or PostgreSQL) overlaps the read (see `data::gate`).
     pub fn read_connection(
         &self,
         window: &str,
@@ -470,15 +471,11 @@ impl DocumentManager {
             .connection()
             .try_clone()
             .map_err(|e| AppError::new("DATABASE_ERROR", e.to_string()))?;
-        let embedded = (*reader.target() == data::ReadTarget::Sqlite)
-            .then(|| reader.workspace.join("data.db"));
+        let db = reader.workspace.join("data.db");
         drop(all);
-        let gate = embedded
-            .map(|db| data::gate::shared(&db))
-            .transpose()
-            .map_err(|e| AppError::new("BUSY", e))?;
+        let gate = data::gate::shared(&db).map_err(|e| AppError::new("BUSY", e))?;
         let _ = connection.execute_batch("USE data");
-        Ok(data::gate::Gated::new(connection, gate))
+        Ok(data::gate::Gated::new(connection, Some(gate)))
     }
     pub fn save_query(
         &self,
@@ -799,6 +796,7 @@ impl DocumentManager {
         let mut s = all.remove(window).unwrap();
         // Released only after the workspace and its record are gone.
         let lock = s.workspace_lock.take();
+        crate::cloud::grants::release(&s.doc.config.datasource);
         if crate::installation::runtime_session(&s.id).is_some() {
             // The workspace is the installation itself; keep it.
             crate::installation::forget_runtime(&s.id);
@@ -825,8 +823,13 @@ impl DocumentManager {
         mut doc: ArchiveDocument,
         runtime: crate::installation::RuntimeSession,
     ) -> Result<SessionState, AppError> {
-        // Logins entered in Runtime are stored per installation (secrets::datasource_login).
-        doc.config.datasource.installation = Some(runtime.bundle_id.clone());
+        // Cloud and manual installs share bundle ids: only a manual install names one.
+        let ds = &mut doc.config.datasource;
+        if crate::cloud::install::is_cloud_dir(&runtime.dir) {
+            ds.grant_scope = Some(window.to_string());
+        } else {
+            ds.installation = Some(runtime.bundle_id.clone());
+        }
         // The reader follows the bundle's datasource, like the record store does
         // (built before the sessions lock: a PostgreSQL attach can block).
         crate::import::sources::materialize(installation, &doc);

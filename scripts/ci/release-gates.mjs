@@ -4,9 +4,11 @@
 // each human sign-off as PENDING. Exit 1 when an automated gate fails.
 //   node scripts/ci/release-gates.mjs [--json]
 import { execFileSync } from "node:child_process";
+import { createPrivateKey, createPublicKey } from "node:crypto";
 import { existsSync, readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
+import { DEV_CLOUD_KEYS } from "../release/keys.mjs";
 import { readVersions } from "../release/plan.mjs";
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "../..");
@@ -53,24 +55,60 @@ export function unreviewedCrypto(cargoToml, packageJson) {
   return [...cargo, ...npm];
 }
 
-// PEM private keys, and Tauri/minisign secret key files (raw or base64, as `tauri signer generate`
-// writes). Built at runtime so this file does not match its own scan.
+// PEM private keys, Tauri/minisign secret key files (raw or base64, as `tauri signer generate`
+// writes), and Ed25519 PKCS8 DER keys in base64 or hex. Built at runtime so this file does not
+// match its own scan.
 const SECRET_KEY_COMMENT = ["untrusted comment:", "rsign encrypted secret key"].join(" ");
+const ED25519_PKCS8_PREFIX = ["302e0201003005", "06032b657004220420"].join("");
+const ED25519_PKCS8_B64 = Buffer.from(ED25519_PKCS8_PREFIX, "hex").toString("base64").slice(0, 20);
 // Extended regular expressions, valid for both `git grep -E` and JavaScript.
 const PRIVATE_KEY_PATTERNS = [
   "-----BEGIN ([A-Z]+ )?PRIVATE KEY-----",
   SECRET_KEY_COMMENT.replace("rsign", "(rsign|minisign)"),
   Buffer.from(SECRET_KEY_COMMENT).toString("base64").slice(0, 56),
+  ED25519_PKCS8_B64,
+  ED25519_PKCS8_PREFIX,
 ];
-const PRIVATE_KEY_MARKERS = PRIVATE_KEY_PATTERNS.map((pattern) => new RegExp(pattern));
+const PRIVATE_KEY_MARKERS = PRIVATE_KEY_PATTERNS.map((pattern) => new RegExp(pattern, "i"));
 const PRIVATE_KEY_FILE = /\.(p12|pfx|p8|keystore|jks)$|(^|\/)[^/]*\.key$/i;
+
+/**
+ * Test fixtures allowed to hold Ed25519 PKCS8 test keys. Each key in them must derive to a public
+ * key in DEV_CLOUD_KEYS, and no other private key marker may appear, so a new key still fails.
+ */
+export const PRIVATE_KEY_FIXTURES = ["supabase/functions/_shared/crypto_test.ts"];
+const PKCS8_B64_KEY = new RegExp(`${ED25519_PKCS8_B64}[A-Za-z0-9+/]{44}`, "g");
+const NON_FIXTURE_MARKERS = PRIVATE_KEY_MARKERS.filter((m) => m.source !== ED25519_PKCS8_B64);
+
+/** True when `text` (a fixture file) holds only Ed25519 PKCS8 keys whose public keys are dev keys. */
+export function onlyDevTestKeys(text) {
+  const keys = text.match(PKCS8_B64_KEY) ?? [];
+  if (!keys.length || NON_FIXTURE_MARKERS.some((marker) => marker.test(text))) return false;
+  return keys.every((b64) => {
+    try {
+      const key = createPrivateKey({
+        key: Buffer.from(b64, "base64"),
+        format: "der",
+        type: "pkcs8",
+      });
+      const spki = createPublicKey(key).export({ format: "der", type: "spki" });
+      return DEV_CLOUD_KEYS.includes(spki.subarray(12).toString("hex"));
+    } catch {
+      return false;
+    }
+  });
+}
+
+const allowedFixture = (path, read) =>
+  PRIVATE_KEY_FIXTURES.includes(path) && onlyDevTestKeys(read(path) ?? "");
 
 /** Tracked files that hold, or are named like, private keys. `read(path)` returns text or null. */
 export function committedPrivateKeys(files, read) {
   return files.filter((file) => {
     if (PRIVATE_KEY_FILE.test(file)) return true;
     const text = read(file);
-    return text !== null && PRIVATE_KEY_MARKERS.some((marker) => marker.test(text));
+    if (text === null || !PRIVATE_KEY_MARKERS.some((marker) => marker.test(text))) return false;
+    return !allowedFixture(file, read);
   });
 }
 
@@ -122,7 +160,7 @@ export const GATES = [
     check: (root) => {
       const problems = evidence(root, {
         ".github/workflows/release.yml":
-          /scripts\/release\/signing\.mjs[\s\S]*keys\.mjs probe[\s\S]*keys\.mjs embedded[\s\S]*update-manifest\.mjs verify/,
+          /scripts\/release\/signing\.mjs[\s\S]*keys\.mjs probe[\s\S]*tauriScript: node scripts\/release\/keys\.mjs[\s\S]*update-manifest\.mjs verify/,
         "scripts/release/keys.mjs": /export function releaseKeyProblems/,
         "src-tauri/src/updater/tests.rs": /foreign|other_key|other-key/,
       });
@@ -139,8 +177,9 @@ export const GATES = [
     check: (root) =>
       evidence(root, {
         "src-tauri/src/cloud/config.rs": /CLOUD_KEY_MISSING/,
+        "src-tauri/build.rs": /IXTABLE_RELEASE/,
         ".github/workflows/release.yml":
-          /IXTABLE_CLOUD_PUBLIC_KEY_RAW: \$\{\{ vars\.IXTABLE_CLOUD_PUBLIC_KEY_RAW \}\}/,
+          /IXTABLE_CLOUD_PUBLIC_KEY_RAW: \$\{\{ vars\.IXTABLE_CLOUD_PUBLIC_KEY_RAW \}\}[\s\S]*IXTABLE_RELEASE: /,
       }),
   },
   {
@@ -154,13 +193,15 @@ export const GATES = [
       const patterns = PRIVATE_KEY_PATTERNS.flatMap((pattern) => ["-e", pattern]);
       let matched = [];
       try {
-        matched = git(["grep", "-l", "-z", "-I", "-E", ...patterns])
+        matched = git(["grep", "-l", "-z", "-I", "-i", "-E", ...patterns])
           .split("\0")
           .filter(Boolean);
       } catch (error) {
         // Exit status 1 means no match; anything else is a real failure.
         if (error.status !== 1) throw error;
       }
+      const read = (path) => file(root, path);
+      matched = matched.filter((path) => !allowedFixture(path, read));
       const flagged = new Set([...files.filter((path) => PRIVATE_KEY_FILE.test(path)), ...matched]);
       return [...flagged].sort().map((path) => `${path} looks like a private key`);
     },

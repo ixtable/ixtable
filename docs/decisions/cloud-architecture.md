@@ -397,7 +397,16 @@ Studio and the Runtime talk to the cloud from two places
 - **Credentials.** `key-grant` returns a DEK and the envelope; Rust opens it
   (XChaCha20-Poly1305) and keeps the password, and a per-user envelope's
   database username, in memory only, for at most 24 hours. Revocation,
-  sign-out and closing the app clear it.
+  sign-out, closing the session and closing the app clear it. A grant is
+  keyed by the cloud session's window and the datasource target
+  (`cloud/grants.rs`), and only a datasource whose `grantScope` names that
+  window uses it (`DatasourceConfig.grant_scope`, set by
+  `open_runtime_session` for a cloud installation). Studio, other windows,
+  and manual installs of the same app keep their own identity, so a per-user
+  grant cannot change Studio's database user, and `cloud_upload_credential`
+  without a password seals only the developer's stored password. A cloud
+  session never reads a login entered for a manual install, so a revoked
+  user gets no credential.
 - **Offline.** An installed app opens without the cloud. `sync-check`
   failures that mean "cannot reach the cloud" let the installed version run;
   an expired grant means a PostgreSQL datasource stays detached until a new
@@ -407,8 +416,9 @@ Studio and the Runtime talk to the cloud from two places
   missing field fails with `CLOUD_CONTRACT` instead of an empty value.
 
 Evidence: `src-tauri/src/cloud/tests.rs` (manifest verification and
-tampering, envelopes, PKCE, config resolution, upload retry, tampered
-`cloud.json`), `tests/integration/cloud-{install,auth,distribution}.test.tsx`,
+tampering, envelopes, a v2 per-user envelope through `open_credential`,
+grants scoped to one cloud window, PKCE, config resolution, upload retry,
+tampered `cloud.json`), `tests/integration/cloud-{install,auth,distribution}.test.tsx`,
 `tests/unit/cloud-{contract,errors,rbac,recipient}.test.ts(x)` and
 `web/e2e/service-qa/ui/*.spec.ts` (website pages).
 

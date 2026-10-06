@@ -11,7 +11,9 @@ const databaseChanged = () => window.dispatchEvent(new Event("ixtable:database-c
  * Database login for a manually shared PostgreSQL bundle (PRD §9.3). The bundle
  * carries no password, so Runtime asks for one when none is stored or the
  * server refuses it, verifies it by connecting, and keeps it encrypted on this
- * computer for this installation. It can be changed or forgotten later.
+ * computer for this installation. It can be changed or forgotten later. Unless
+ * the connection verifies the server (verify-full), the recipient must accept
+ * the risk before the password is sent; the acceptance is stored with it.
  */
 export function DatabaseLogin({ version }: { version?: string | null }) {
   const { setNotice } = useShell();
@@ -19,6 +21,7 @@ export function DatabaseLogin({ version }: { version?: string | null }) {
   const [open, setOpen] = useState(false);
   const [user, setUser] = useState("");
   const [password, setPassword] = useState("");
+  const [acceptUnverified, setAcceptUnverified] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const titleId = useId();
@@ -27,6 +30,7 @@ export function DatabaseLogin({ version }: { version?: string | null }) {
     setStatus(next);
     setUser(next.user);
     setPassword("");
+    setAcceptUnverified(false);
     setError("");
   }, []);
 
@@ -72,7 +76,7 @@ export function DatabaseLogin({ version }: { version?: string | null }) {
   const submit = (event: FormEvent) => {
     event.preventDefault();
     act(
-      () => setRuntimeLogin(user.trim(), password),
+      () => setRuntimeLogin(user.trim(), password, acceptUnverified),
       (next) => {
         setOpen(false);
         setNotice(
@@ -107,6 +111,17 @@ export function DatabaseLogin({ version }: { version?: string | null }) {
             {status.host}. Enter the login you were given. ixtable checks it by connecting, then
             keeps it encrypted on this computer for this installation only.
           </p>
+          <p>
+            Connection security: sslmode {status.sslmode}
+            {status.serverVerified ? " (server certificate and name verified)." : "."}
+          </p>
+          {!status.serverVerified && (
+            <p role="note" className="transport-warning">
+              This connection does not verify the database server, so someone on your network could
+              pose as it and read your password. Continue only on a network you trust, or ask the
+              developer to use sslmode verify-full.
+            </p>
+          )}
           {status.reason === "rejected" && (
             <p role="alert">The database refused the saved login. Enter it again.</p>
           )}
@@ -133,9 +148,24 @@ export function DatabaseLogin({ version }: { version?: string | null }) {
                 onChange={(e) => setPassword(e.target.value)}
               />
             </label>
+            {!status.serverVerified && (
+              <label className="check">
+                <input
+                  type="checkbox"
+                  checked={acceptUnverified}
+                  required
+                  onChange={(e) => setAcceptUnverified(e.target.checked)}
+                />
+                I accept sending my password over a connection that does not verify the server
+              </label>
+            )}
             {error && <p role="alert">{error}</p>}
             <div className="settings-actions">
-              <button type="submit" className="save" disabled={busy}>
+              <button
+                type="submit"
+                className="save"
+                disabled={busy || (!status.serverVerified && !acceptUnverified)}
+              >
                 Connect
               </button>
               {status.source === "installation" && (

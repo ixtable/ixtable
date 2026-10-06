@@ -36,11 +36,19 @@ users cannot obtain new bundles or keys.
   table pages, saved queries, report PDF export and attachment export. A
   role gets `FORBIDDEN` for anything its permissions (or the forms,
   reports and dashboards it may open) do not grant. No role may run ad hoc
-  SQL or export attachments. A dashboard grant implies read on the saved
-  queries of its components and filters and of the forms it embeds; it
-  grants no form, table, write or action, so an embedded form or report
-  still needs its own grant. Table listing and schema inspection show only
-  tables the role may read.
+  SQL or export attachments. Read on a form, report or dashboard implies
+  read on the saved queries it shows. For a dashboard that is the queries
+  of its KPI, table and chart components and of its filter options, never
+  those of an embedded form or report: an embedded form, report or button
+  action still needs its own grant, and the form grant is what opens the
+  form's queries. A `queryId` on any other component kind grants nothing.
+  Table listing and schema inspection show only tables the role may read.
+- Dashboard filters, columns, `visibleWhen` and fixed filter options are
+  presentation, not row or column security. `run_saved_query` and
+  `run_saved_query_page` take parameters, filters, sorts and limits from
+  the caller, so a role that may read a query can read every row and
+  column it returns. Row- and field-level rules are deferred (PRD §20.1).
+  To limit what a role sees, grant it a narrower saved query.
   Checkpoints, restoring a checkpoint as a copy and resetting installation
   data copy or replace every table, so they need unrestricted access. The
   readable-table set is cached per session and role and recomputed after a

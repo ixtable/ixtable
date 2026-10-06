@@ -1,5 +1,5 @@
-//! The 500 MB boundary (Phase 1 exit). Opt-in because it writes about 1.5 GB of
-//! temporary files: `IXTABLE_HEAVY_TESTS=1 cargo test --lib durability_tests::heavy`.
+//! The 500 MB boundary (Phase 1 exit). Ignored because it writes about 1.5 GB of
+//! temporary files: `IXTABLE_HEAVY_TESTS=1 cargo test --lib durability_tests::heavy -- --include-ignored`.
 use super::fresh_manager;
 use crate::archive_io;
 use crate::assets::CLOUD_LIMIT_BYTES;
@@ -31,9 +31,9 @@ fn write_noise(path: &Path, len: u64) {
 }
 
 #[test]
+#[ignore = "writes 1.5 GB; needs IXTABLE_HEAVY_TESTS=1 and --include-ignored"]
 fn archive_over_500_mb_saves_reopens_and_is_blocked_from_publishing() {
-    if std::env::var("IXTABLE_HEAVY_TESTS").as_deref() != Ok("1") {
-        eprintln!("skipped: set IXTABLE_HEAVY_TESTS=1 to run the 500 MB boundary test");
+    if !crate::test_env::flag("IXTABLE_HEAVY_TESTS") {
         return;
     }
     let (base, m) = fresh_manager("heavy");

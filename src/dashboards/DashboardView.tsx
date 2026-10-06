@@ -67,16 +67,15 @@ function LiveDashboard({
     () => ({ ...initial, ...dashboardParams(dashboard.filters, settled) }),
     [initial, dashboard.filters, settled],
   );
-  const readable = (id: string) =>
-    canReadDashboardQuery(config, runtime.roleId, dashboard.id, id);
+  const readable = (id: string) => canReadDashboardQuery(config, runtime.roleId, dashboard, id);
   const queryIds = useMemo(() => {
     const ids = dashboard.components
       .filter((c) => ["kpi", "table", "chart"].includes(c.kind) && c.queryId)
       .map((c) => c.queryId as string);
     return [...new Set(ids)].filter((id) =>
-      canReadDashboardQuery(config, runtime.roleId, dashboard.id, id),
+      canReadDashboardQuery(config, runtime.roleId, dashboard, id),
     );
-  }, [dashboard.components, dashboard.id, config, runtime.roleId]);
+  }, [dashboard, config, runtime.roleId]);
   const data = useDashboardData(queryIds, params);
   const { refresh } = data;
 

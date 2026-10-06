@@ -105,16 +105,13 @@ jobs:
       - name: Rust unit tests
         working-directory: src-tauri
         run: cargo test --lib
-      # The 500 MB archive boundary (docs/decisions/archive-format.md) is opt-in
-      # locally and always runs here: about a minute and 1.5 GB of temp disk.
-      # Fails unless exactly that test ran, so a rename cannot skip it silently.
+      # The 500 MB archive boundary (docs/decisions/archive-format.md) is #[ignore]d
+      # and always runs here: about a minute and 1.5 GB of temp disk. The script
+      # fails unless every ignored test under the filter ran and passed.
       - name: 500 MB archive boundary (Rust)
-        working-directory: src-tauri
         env:
           IXTABLE_HEAVY_TESTS: '1'
-        run: |
-          cargo test --lib durability_tests::heavy 2>&1 | tee heavy.log
-          grep -q "test result: ok. 1 passed" heavy.log
+        run: node scripts/ci/run-ignored-rust-tests.mjs "500 MB boundary" durability_tests::heavy
       - name: Build NAPI test bridge
         run: npm run pretest
       # Diagnostic (docs/decisions/windows-support.md): list the bridge DLL's imports so
@@ -169,17 +166,20 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: ./.github/actions/setup-desktop
-      # The RecordStore conformance suite runs every scenario on SQLite and,
-      # with IXTABLE_TEST_POSTGRES_URL set, on PostgreSQL (reads via DuckDB).
+      # The RecordStore conformance suite runs every scenario on SQLite and on
+      # PostgreSQL (reads via DuckDB). The PostgreSQL tests are #[ignore]d; the
+      # script runs them and fails unless each one ran and passed.
       - name: RecordStore conformance (Rust)
-        working-directory: src-tauri
-        run: cargo test --lib -- recordstore postgres migrations data
+        run: node scripts/ci/run-ignored-rust-tests.mjs "PostgreSQL conformance" recordstore postgres migrations data --skip perf_tests
       - name: Build NAPI test bridge
         run: npm run pretest
       - name: PostgreSQL datasource integration tests
         run: >-
           npx vitest run --config vitest.integration.config.ts tests/integration/datasource
           --reporter=default --reporter=junit --outputFile.junit=reports/postgres.xml
+      # The datasource suite skips its PostgreSQL cases without a URL.
+      - name: Check no PostgreSQL spec was skipped
+        run: node scripts/ci/check-junit-no-skips.mjs reports/postgres.xml "PostgreSQL datasource suite"
       - name: Upload test evidence
         if: failure()
         uses: actions/upload-artifact@v4
@@ -208,8 +208,7 @@ jobs:
       - name: Start PostgreSQL
         run: node scripts/ci/start-postgres.mjs
       - name: RecordStore conformance (Rust)
-        working-directory: src-tauri
-        run: cargo test --lib -- recordstore postgres migrations data
+        run: node scripts/ci/run-ignored-rust-tests.mjs "PostgreSQL conformance" recordstore postgres migrations data --skip perf_tests
       - name: Build NAPI test bridge
         run: npm run pretest
       - name: PostgreSQL datasource integration tests
@@ -307,8 +306,7 @@ jobs:
           cache-key: desktop-perf
       # Release build, like the shipped app; it also writes the fixture the UI harness opens.
       - name: Rust harness
-        working-directory: src-tauri
-        run: cargo test --release --lib perf_tests -- --test-threads=1
+        run: node scripts/ci/run-ignored-rust-tests.mjs --release "Performance harness" perf_tests --test-threads=1
       - name: Build NAPI test bridge (release)
         run: node scripts/ci/build-test-bridge.mjs --release
       - name: UI harness

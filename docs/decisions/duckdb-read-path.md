@@ -47,6 +47,29 @@ commit before the refresh returns, a workflow that writes and then reads gets
 its own write back. Config edits re-attach only when `datasource` changed, and
 build the new reader outside the sessions lock.
 
+Refresh takes the exclusive side of the reader's gate (`data::gate`, keyed by
+`<workspace>/data.db`) for both targets, and every read takes the shared side,
+including PostgreSQL reads and the cloned connections `read_connection` hands
+to long queries. For SQLite the gate also keeps reads off the file while a
+RecordStore write is open. For PostgreSQL it orders the cache clear against
+reads. Cloned connections share one DuckDB database and so one attached
+catalog; before the in-place clear, a rebuild swapped in a new database and
+clones kept the old one. In the pinned postgres_scanner (commit `41223e5`,
+built for DuckDB 1.5.5) the clear is memory-safe on its own: each
+PostgreSQL transaction holds a `shared_ptr` to every catalog entry it looked
+up (`ReferenceEntry`), so a running query keeps its entries alive. It is not
+ordered, though: `ClearEntries` takes only the entry lock, while a read that
+is loading the catalog holds the separate load lock, so a load that started
+before the clear can store the pre-DDL catalog after it and mark it loaded,
+and the writer's next read misses its new table or column. An ungated stress
+run (8 readers, 3,000 refreshes) showed no failure, but the window exists.
+The gate keeps the in-place clear (no rebuild, so the refresh stays cheap) and
+makes it wait for running reads. A refresh behind a long query waits up to
+the gate timeout (30 s) and then fails as busy, as on SQLite.
+`data::race_tests::postgres_refresh_never_races_reads_on_cloned_connections`
+runs refreshes after DDL and writes against four threads reading through
+clones, in the PostgreSQL CI jobs.
+
 ### External files
 
 DuckDB reads CSV, JSON, and Parquet with its own readers. The `json` and
@@ -246,9 +269,14 @@ Linux for extensions that do.
   escapes `LIKE` wildcards and is case-insensitive, and `in` filters match
   nothing when the list is empty.
 - `src-tauri/src/recordstore/conformance.rs`: every scenario reads through
-  DuckDB after writing through the store, on SQLite and on PostgreSQL when
-  `IXTABLE_TEST_POSTGRES_URL` is set (the `postgres` CI job). A PostgreSQL
-  refresh keeps the same DuckDB database and still sees new rows and tables.
+  DuckDB after writing through the store, as `sqlite::<scenario>` and as the
+  ignored `postgres::<scenario>`, which needs `IXTABLE_TEST_POSTGRES_URL` (the
+  PostgreSQL CI jobs run it, see [RecordStore capabilities](./recordstore-capabilities.md)).
+  A PostgreSQL refresh keeps the same DuckDB database and still sees new rows
+  and tables.
+- `src-tauri/src/data/race_tests.rs`: concurrent SQLite writes and reads, and
+  PostgreSQL refreshes against reads on cloned connections (ignored, PostgreSQL
+  CI jobs).
 - `src-tauri/src/queries/tests.rs`: named placeholders rewritten outside
   literals, typed binding, injection attempts bound, mutating SQL rejected,
   cancellation.

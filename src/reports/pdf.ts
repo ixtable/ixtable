@@ -1,15 +1,19 @@
 /**
  * Minimal deterministic PDF 1.4 writer for laid-out reports (no dependencies).
  *
- * - Fonts: standard Helvetica / Helvetica-Bold, WinAnsiEncoding (not embedded).
- * - Graphics: text, lines, rectangles in gray levels; JPEG and some PNG images
- *   passed through without decoding (see pdf-images.ts).
+ * - Fonts: standard Helvetica / Helvetica-Bold, WinAnsiEncoding (not embedded),
+ *   plus embedded subsets of the bundled fallback fonts for other characters
+ *   (see pdf-fonts.ts).
+ * - Graphics: text, lines, rectangles in gray levels; JPEG and opaque PNG
+ *   images passed through, other PNGs decoded by Rust with an alpha soft mask
+ *   (see pdf-images.ts).
  * - Determinism: fixed object order, uncompressed content streams, no random
  *   file id, and the CreationDate comes from the options. Same input, same bytes.
  */
 import type { PositionedItem, ReportDocument } from "./engine";
-import { winAnsiCode } from "./engine";
-import { type PdfImage, pdfImage } from "./pdf-images";
+import { textRuns, winAnsiCode } from "./engine";
+import { cidMap, cidString, fallbackFontName, fontObjects, type PdfFontSubset } from "./pdf-fonts";
+import { type DecodedPng, decodedImage, type PdfImage, pdfImage } from "./pdf-images";
 
 export interface PdfAsset {
   mediaType: string;
@@ -21,6 +25,10 @@ export interface PdfOptions {
   /** ISO timestamp written as /CreationDate. Required so output is reproducible. */
   creationDate: string;
   assets?: Record<string, PdfAsset>;
+  /** Fallback font subsets from `prepare_report_pdf`; without them those characters print as `?`. */
+  fonts?: PdfFontSubset[];
+  /** PNG assets decoded by `prepare_report_pdf`, by asset id. */
+  decodedImages?: Record<string, DecodedPng>;
 }
 
 /** Formats a number for content streams: at most 2 decimals, no exponent, no -0. */
@@ -57,7 +65,42 @@ const ascii = (s: string) => {
   return bytes;
 };
 
-function itemOps(item: PositionedItem, pageHeight: number, image: (id: string) => string | null) {
+type Fonts = Map<number, Map<number, number>>;
+
+/** Text operators of one line: Helvetica runs as WinAnsi strings, fallback runs as CIDs. */
+function lineOps(
+  item: Extract<PositionedItem, { kind: "text" }>,
+  line: { text: string; x: number; y: number },
+  y: string,
+  fonts: Fonts,
+  current: { font: string },
+): string {
+  const base = item.bold ? "/F2" : "/F1";
+  const size = num(item.fontSize);
+  const ops: string[] = [];
+  for (const run of textRuns(line.text, item.fontSize, item.bold)) {
+    const cids = fonts.get(run.font);
+    const font = cids ? fallbackFontName(run.font) : base;
+    if (font !== current.font) ops.push(`${font} ${size} Tf`);
+    current.font = font;
+    const text = cids ? cidString(cids, run.text) : pdfString(run.text);
+    const show = `1 0 0 1 ${num(line.x + run.dx)} ${y} Tm ${text} Tj`;
+    // Fallback fonts have no bold face: stroke the outlines (render mode 2) instead.
+    ops.push(
+      cids && item.bold
+        ? `${num(item.gray)} G ${num(item.fontSize * 0.03)} w 2 Tr ${show} 0 Tr`
+        : show,
+    );
+  }
+  return ops.join("\n");
+}
+
+function itemOps(
+  item: PositionedItem,
+  pageHeight: number,
+  image: (id: string) => string | null,
+  fonts: Fonts,
+) {
   const y = (v: number) => num(pageHeight - v);
   switch (item.kind) {
     case "rect": {
@@ -80,9 +123,8 @@ function itemOps(item: PositionedItem, pageHeight: number, image: (id: string) =
     case "text": {
       if (!item.lines.length) return "";
       const font = item.bold ? "/F2" : "/F1";
-      const lines = item.lines.map(
-        (line) => `1 0 0 1 ${num(line.x)} ${y(line.y)} Tm ${pdfString(line.text)} Tj`,
-      );
+      const current = { font };
+      const lines = item.lines.map((line) => lineOps(item, line, y(line.y), fonts, current));
       return ["BT", `${font} ${num(item.fontSize)} Tf ${num(item.gray)} g`, ...lines, "ET"].join(
         "\n",
       );
@@ -103,24 +145,33 @@ function itemOps(item: PositionedItem, pageHeight: number, image: (id: string) =
 
 /** Serializes a laid-out report to PDF 1.4 bytes. */
 export function writePdf(doc: ReportDocument, options: PdfOptions): Uint8Array {
-  // Object numbers: 1 catalog, 2 pages, 3-4 fonts, 5 info, then images, then page/content pairs.
-  const images: { id: string; name: string; image: PdfImage }[] = [];
+  // Objects: 1 catalog, 2 pages, 3-4 fonts, 5 info, images (+ soft mask), fallback fonts (5 each), pages.
+  const images: { name: string; image: PdfImage; ref: number }[] = [];
   const imageNames = new Map<string, string | null>();
+  let next = 6;
   for (const page of doc.pages)
     for (const item of page.items) {
       if (item.kind !== "image" || imageNames.has(item.assetId)) continue;
       const asset = options.assets?.[item.assetId];
-      const image = asset ? pdfImage(asset.mediaType, asset.data) : null;
+      const decoded = options.decodedImages?.[item.assetId];
+      const image = decoded
+        ? decodedImage(decoded, fromBase64)
+        : asset
+          ? pdfImage(asset.mediaType, asset.data)
+          : null;
       if (!image) {
         imageNames.set(item.assetId, null);
         continue;
       }
       const name = `/Im${images.length + 1}`;
       imageNames.set(item.assetId, name);
-      images.push({ id: item.assetId, name, image });
+      images.push({ name, image, ref: next });
+      next += image.smask ? 2 : 1;
     }
-  const firstImage = 6;
-  const firstPage = firstImage + images.length;
+  const fonts = (options.fonts ?? []).map((font, i) => ({ font, ref: next + i * 5 }));
+  next += fonts.length * 5;
+  const fontCids: Fonts = new Map(fonts.map(({ font }) => [font.index, cidMap(font)]));
+  const firstPage = next;
   const pageRef = (i: number) => firstPage + i * 2;
 
   const chunks: Uint8Array[] = [];
@@ -156,21 +207,32 @@ export function writePdf(doc: ReportDocument, options: PdfOptions): Uint8Array {
     5,
     `<<${title} /Producer (ixtable report engine) /CreationDate (${pdfDate(options.creationDate)}) >>`,
   );
-  images.forEach((img, i) =>
-    stream(firstImage + i, `/Type /XObject /Subtype /Image ${img.image.dict}`, img.image.data),
-  );
+  for (const { image, ref } of images) {
+    const smask = image.smask ? ` /SMask ${ref + 1} 0 R` : "";
+    stream(ref, `/Type /XObject /Subtype /Image ${image.dict}${smask}`, image.data);
+    if (image.smask)
+      stream(ref + 1, `/Type /XObject /Subtype /Image ${image.smask.dict}`, image.smask.data);
+  }
+  for (const { font, ref } of fonts)
+    fontObjects(font, ref, fromBase64(font.dataBase64)).forEach((part, i) => {
+      if (part.stream) {
+        const data = part.stream.data;
+        stream(ref + i, part.stream.dict, typeof data === "string" ? ascii(data) : data);
+      } else object(ref + i, part.body ?? "");
+    });
   const xobjects = images.length
-    ? ` /XObject << ${images.map((img, i) => `${img.name} ${firstImage + i} 0 R`).join(" ")} >>`
+    ? ` /XObject << ${images.map((img) => `${img.name} ${img.ref} 0 R`).join(" ")} >>`
     : "";
+  const fontRefs = fonts.map(({ font, ref }) => ` ${fallbackFontName(font.index)} ${ref} 0 R`);
   doc.pages.forEach((page, i) => {
     const n = pageRef(i);
     object(
       n,
       `<< /Type /Page /Parent 2 0 R /MediaBox [0 0 ${num(doc.width)} ${num(doc.height)}]` +
-        ` /Resources << /Font << /F1 3 0 R /F2 4 0 R >>${xobjects} >> /Contents ${n + 1} 0 R >>`,
+        ` /Resources << /Font << /F1 3 0 R /F2 4 0 R${fontRefs.join("")} >>${xobjects} >> /Contents ${n + 1} 0 R >>`,
     );
     const content = page.items
-      .map((item) => itemOps(item, doc.height, (id) => imageNames.get(id) ?? null))
+      .map((item) => itemOps(item, doc.height, (id) => imageNames.get(id) ?? null, fontCids))
       .filter(Boolean)
       .join("\n");
     stream(n + 1, "", ascii(content));
@@ -189,6 +251,13 @@ export function writePdf(doc: ReportDocument, options: PdfOptions): Uint8Array {
     at += chunk.length;
   }
   return out;
+}
+
+function fromBase64(data: string): Uint8Array {
+  const binary = atob(data);
+  const bytes = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+  return bytes;
 }
 
 /** Base64 for passing PDF bytes to Rust. */

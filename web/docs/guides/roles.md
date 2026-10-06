@@ -21,7 +21,9 @@ The **Objects** table lists every form, report, dashboard, table, and saved quer
 
 A grant on a form or report also lets the role read the tables and queries it needs to load, such as the source of a lookup.
 
-A dashboard needs more than its own read grant. Each number, chart, and table on it needs read on its query, and each report on it needs read on that report.
+Read on a form, report, or dashboard also lets the role read the saved queries it shows. For a dashboard, that covers its numbers, charts, tables, and filter choices. It does not cover embedded forms and reports. Each of those needs its own grant, and each button needs its action.
+
+Permissions apply to whole objects. Dashboard filters and columns do not limit which rows or columns a role can read. To show a role less, write a narrower saved query and grant that one.
 
 ## Navigation
 

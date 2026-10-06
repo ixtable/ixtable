@@ -33,8 +33,26 @@ widths for every WinAnsi code come from the Adobe Core14 AFM files and ship as a
 TypeScript table in `src/reports/engine/metrics.ts`. Wrapping sums integer
 widths from that table, so the same string always breaks at the same place.
 
-Characters outside WinAnsi print as `?`. The preview and the PDF show the same
-substitution, so the preview never promises a glyph the PDF can't draw.
+Characters outside WinAnsi fall back to two bundled TrueType fonts, in this
+order: DejaVu Sans (Latin extensions, Greek, Cyrillic, symbols; Bitstream Vera
+license) and Droid Sans Fallback (CJK ideographs and kana; Apache-2.0). They
+live in `src-tauri/fonts/` and are compiled into the app, so output never
+depends on the fonts a machine has installed. Their advance widths ship as
+runs in `src/reports/engine/fallback-metrics.ts`, which a Rust test generates
+from the font files and fails on when it is stale.
+
+The fallback fonts never draw these code points, which print as `?`:
+WinAnsi characters (Helvetica draws them), U+0590–U+08FF (Hebrew, Arabic,
+Syriac, Thaana, N'Ko, Samaritan, Mandaic and their supplements), U+FB1D–U+FDFF
+and U+FE70–U+FEFF (Hebrew and Arabic presentation forms), and lone surrogates.
+These scripts need right-to-left order or contextual shaping, which the
+engine doesn't do. Neither font has Hangul syllables, Thai, or Devanagari and
+the other Indic scripts, so they print as `?` too. Lao and combining marks
+are in DejaVu Sans and print, but unshaped: a mark sits at the pen position
+instead of over its base. A character no font covers prints as `?`, in the
+preview and in the PDF alike. Bold text
+in a fallback font uses the regular glyphs at the same width; the PDF strokes
+their outlines to darken them.
 
 The on-screen and printed SVG ask for Helvetica, then Arial and Liberation Sans,
 which share Helvetica's widths. Each line also sets `textLength` to the engine's
@@ -85,8 +103,29 @@ past its box.
   bands. `reports::validate` returns a warning, not an error, so older
   documents that hold one still export. Layout leaves the table out and reports
   a diagnostic.
-- Text boxes don't grow. Lines past the box height are dropped, and at least one
-  line always shows.
+- Text boxes don't grow unless `canGrow` is set. Lines past the box height are
+  dropped, and at least one line always shows.
+- A text box with `canGrow` (static text, field, calculated) grows to the
+  height of its wrapped text. Every component that starts at or below a growing
+  box's designed bottom edge moves down by that box's growth plus the box's own
+  shift, so stacked boxes push each other down. The band grows by the largest
+  shift plus growth, and pagination uses the grown height. Text is measured
+  with the band's row scope before pagination, so `page` and `pages` don't
+  make a box grow. A repeated group header prints at its grown height. In a
+  band with a table, and in page headers and footers, boxes keep their
+  designed height; a table band reports a diagnostic, and the designer hides
+  Can grow on page header and footer text.
+- A band whose text grew splits across pages (`engine/split.ts`) unless
+  `keepTogether` is set and the band fits on one page. It starts on the
+  current page when its designed height fits there. Layout renders the whole
+  band at its own origin, then cuts it into pieces that fit the remaining
+  body: a cut falls between text lines, and an image or line that would cross
+  it moves the cut above that item. Text keeps the lines that start in a
+  piece; text frames, rectangles and vertical lines are clipped to it, so a
+  bordered box shows its own part on each page. Each continuation starts at
+  the body top below any repeated group headers, and components under the
+  grown text follow its last piece. When not even one line fits an empty page
+  body, the band is cut at the body bottom.
 
 ### Determinism guarantees and tolerances
 
@@ -110,18 +149,55 @@ fallback font is used.
 ### PDF writer
 
 `src/reports/pdf.ts` writes PDF 1.4 without dependencies. It references the
-standard fonts with WinAnsiEncoding, so nothing is embedded. Strings escape `\`,
-`(`, and `)`, and bytes outside printable ASCII are written as octal escapes,
-which keeps the file ASCII apart from image streams. Graphics use gray levels
-only.
+standard fonts with WinAnsiEncoding, so they are not embedded. Strings escape
+`\`, `(`, and `)`, and bytes outside printable ASCII are written as octal
+escapes, which keeps the file ASCII apart from image and font streams. Graphics
+use gray levels only.
 
-JPEG images pass through unchanged with `DCTDecode`. Non-interlaced grayscale,
-RGB, and palette PNGs pass their IDAT data through with `FlateDecode` and the
-PNG predictor, so no pixel decoding is needed. Other images print as a crossed
-placeholder box.
+Text in a fallback font is written as a Type0 font with `Identity-H` encoding
+and a `CIDFontType2` descendant (`CIDToGIDMap /Identity`), with a ToUnicode
+CMap for copy and search. Each line splits into runs of one font, placed at the
+engine's offsets. The preview draws the same runs as `tspan`s at the same
+positions and widths.
 
-Rust only stores and validates definitions (`reports::validate`) and writes the
-finished bytes (`write_report_pdf`). Rust never evaluates expressions.
+JPEG images pass through unchanged with `DCTDecode`. Opaque non-interlaced
+grayscale, RGB, and palette PNGs pass their IDAT data through with
+`FlateDecode` and the PNG predictor. Every other PNG (an alpha channel, `tRNS`
+transparency, interlacing, 16-bit samples) is decoded by Rust into 8-bit color
+samples and, when any pixel is translucent, an 8-bit alpha image that the
+writer attaches as the image's `/SMask`. 16-bit samples never pass through,
+because `/BitsPerComponent 16` needs PDF 1.5. Rust rejects a PNG that
+declares more than 50 megapixels before it allocates the pixel buffer, and
+caps the decoder's own buffers at 64 MiB, so a small file that declares a huge
+image can't exhaust memory. Other formats, and PNGs that are too large or
+unreadable, print as a crossed placeholder box, and the export message names
+each such image and the reason.
+
+Export calls `prepare_report_pdf` (`src-tauri/src/report_pdf.rs`) only when a
+report needs a fallback font or a decoded PNG. It is an async command, so the
+subsetting, decoding and deflating run on a worker thread instead of the main
+thread. It returns the font subsets
+(`subsetter` crate, glyph ids renumbered in ascending order, subset tag hashed
+from the glyphs) and the decoded images, all zlib-compressed by the pinned
+`flate2` backend. Its output depends only on its input, so the same report
+exports the same bytes on every OS. Reports that use neither write exactly the
+bytes they wrote before.
+
+Rust otherwise only stores and validates definitions (`reports::validate`) and
+writes the finished bytes (`write_report_pdf`). Rust never evaluates
+expressions.
+
+### Parameters at run time
+
+A report's parameters are the ones its dataset query declares, then its table
+queries' (first declaration wins), with the report's `params` as defaults
+ahead of the query's. When Runtime navigation or an `openReport` action opens a
+report without a value for every parameter, `ReportRun` shows a dialog with one
+input per parameter (number, date, date-time, checkbox, or text by logical type),
+prefilled from the values passed, then the defaults. Required parameters must
+have a value. Cancel leaves the report unrun with a button to enter parameters,
+and "Change parameters…" reopens the dialog over a rendered report. Dashboards
+and the Studio preview pass their own values and never prompt.
 
 ### Print
 
@@ -140,12 +216,15 @@ monochrome printer.
 PRD §15 defers nested subreports, report scripts, barcodes, label layouts, and
 arbitrary HTML or CSS. This engine also leaves these for later:
 
-- fonts other than Helvetica, italic text, and characters outside WinAnsi
-- text boxes that grow with their content, and more than one table per band
-- PNG images with alpha or interlacing, and formats other than JPEG and PNG,
-  which print as placeholders in the PDF
+- fonts other than Helvetica and the bundled fallbacks, italic text, a true
+  bold fallback face, Hangul syllables, and scripts that need shaping or
+  right-to-left layout
+- can-grow text in bands with a table, can-shrink, and more than one table per
+  band
+- caching font subsets between exports
+- image formats other than JPEG and PNG, which print as placeholders in the PDF
 - color
-- PDF compression, embedded fonts, and PDF/A
+- content stream compression and PDF/A
 
 ## Proof
 
@@ -155,6 +234,21 @@ arbitrary HTML or CSS. This engine also leaves these for later:
 - `tests/unit/report-pdf.test.ts`: a byte-for-byte golden PDF, xref offset
   checks, string escaping, image passthrough, and two runs giving identical
   bytes.
+- `tests/unit/report-grow.test.ts`: can-grow boxes push components and the band
+  down, chain through stacked boxes, paginate by grown height, and repeat at
+  grown height.
+- `tests/unit/report-grow-split.test.ts`: a grown band taller than a page splits
+  across pages without losing or repeating a line, a sibling beside it stays
+  put, `keepTogether` moves a band that fits, and the cut and slice helpers.
+- `tests/unit/report-unicode.test.ts`: fallback metrics, font runs, Type0 font
+  objects and CID text, and SMask image objects.
+- `src-tauri/src/report_pdf_tests.rs`: glyph coverage, deterministic subsets,
+  the metrics table against the font files, PNG alpha splitting, and PNGs with
+  huge declared sizes, truncated data, 16-bit samples, and interlacing.
+- `tests/integration/report-pdf-resources.test.tsx`: exports Greek, Cyrillic,
+  and CJK text and an RGBA PNG through the Rust command.
+- `tests/integration/report-parameters.test.tsx`: the parameter prompt from
+  Runtime navigation.
 - `tests/unit/report-pagination.test.ts`: page assignments and positions for
   page breaks, new page per group, repeated group headers (also above a split
   table), group page numbers, and the diagnostic for a table in a page band.

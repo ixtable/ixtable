@@ -80,6 +80,13 @@ it("Work orders: nested navigation, queries, printable sheet, and operations das
       "Printable work-order sheet: page 1 of N, headers, footers, totals",
       async () => {
         await openPage(user, "Work order sheet");
+        const prompt = await screen.findByRole(
+          "dialog",
+          { name: "Work order sheet parameters" },
+          LONG,
+        );
+        expect(within(prompt).getByRole("textbox", { name: "number" })).toHaveValue("");
+        await user.click(within(prompt).getByRole("button", { name: "Run report" }));
         const first = await within(runtimePage()).findByRole(
           "img",
           { name: /^Page 1 of \d+$/ },
@@ -149,9 +156,14 @@ async function addTask(user: User, step: number, description: string, hours: str
 }
 
 async function markTaskDone(user: User, row: number) {
-  const { tasks, form } = await taskForm(user, row);
-  const done = await within(form).findByRole("checkbox", { name: "Done" }, LONG);
-  await waitFor(() => expect(done).toBeEnabled(), LONG);
+  const { tasks } = await taskForm(user, row);
+  let form!: HTMLElement;
+  let done!: HTMLElement;
+  await waitFor(() => {
+    form = within(tasks).getByRole("form", { name: "Edit Task" });
+    done = within(form).getByRole("checkbox", { name: "Done" });
+    expect(done).toBeEnabled();
+  }, LONG);
   await user.click(done);
   await user.click(within(form).getByRole("button", { name: "Save" }));
   await waitFor(() => {
@@ -162,9 +174,13 @@ async function markTaskDone(user: User, row: number) {
 }
 
 async function press(user: User, label: string) {
-  const form = await within(runtimePage()).findByRole("form", { name: "Work order" }, LONG);
-  const button = await within(form).findByRole("button", { name: label }, LONG);
-  await waitFor(() => expect(button).toBeEnabled(), LONG);
+  let form!: HTMLElement;
+  let button!: HTMLElement;
+  await waitFor(() => {
+    form = within(runtimePage()).getByRole("form", { name: "Work order" });
+    button = within(form).getByRole("button", { name: label });
+    expect(button).toBeEnabled();
+  }, LONG);
   await user.click(button);
   return form;
 }

@@ -1,9 +1,11 @@
 import { describe, expect, it } from "vitest";
+import type { Dashboard } from "../../src/dashboards/types";
 import type { DocumentConfig } from "../../src/lib/types";
 import { canOpen, startPage, visibleNavigation } from "../../src/runtime/navigation";
 import {
   can,
   canReadDashboardQuery,
+  dashboardQueryIds,
   setObjectPermission,
   toggleListed,
 } from "../../src/runtime/rbac";
@@ -74,12 +76,30 @@ describe("rbac.can", () => {
       },
     };
     const withViewer = { ...config, roles: [clerk, viewer] } as DocumentConfig;
-    expect(canReadDashboardQuery(withViewer, "viewer", "d1", "q-sales")).toBe(true);
-    expect(canReadDashboardQuery(withViewer, "viewer", "d2", "q-sales")).toBe(false);
+    const component = (kind: string, extra: Record<string, string>) =>
+      ({ id: kind, kind, ...extra }) as unknown as Dashboard["components"][number];
+    const d1 = {
+      id: "d1",
+      filters: [{ id: "f", name: "Region", param: "region", optionsQueryId: "q-regions" }],
+      components: [
+        component("kpi", { queryId: "q-sales" }),
+        component("chart", { queryId: "q-chart" }),
+        component("table", { queryId: "q-table" }),
+        component("form", { formId: "orders-form", queryId: "q-form" }),
+        component("text", { queryId: "q-stray" }),
+      ],
+    } as Pick<Dashboard, "id" | "components" | "filters">;
+    const d2 = { ...d1, id: "d2" };
+    expect(dashboardQueryIds(d1)).toEqual(["q-sales", "q-chart", "q-table", "q-regions"]);
+    for (const q of ["q-sales", "q-chart", "q-table", "q-regions"])
+      expect(canReadDashboardQuery(withViewer, "viewer", d1, q)).toBe(true);
+    for (const q of ["q-form", "q-stray", "q-other"])
+      expect(canReadDashboardQuery(withViewer, "viewer", d1, q)).toBe(false);
+    expect(canReadDashboardQuery(withViewer, "viewer", d2, "q-sales")).toBe(false);
     expect(can(withViewer, "viewer", "query", "q-sales", "read")).toBe(false);
     expect(can(withViewer, "viewer", "query", "q-sales", "update")).toBe(false);
-    expect(canReadDashboardQuery(withViewer, "clerk", "d1", "q-sales")).toBe(false);
-    expect(canReadDashboardQuery(withViewer, null, "d1", "q-sales")).toBe(true);
+    expect(canReadDashboardQuery(withViewer, "clerk", d1, "q-sales")).toBe(false);
+    expect(canReadDashboardQuery(withViewer, null, d1, "q-sales")).toBe(true);
   });
 
   it("denies unknown roles", () => {

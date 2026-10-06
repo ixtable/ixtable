@@ -1,0 +1,133 @@
+name: Nightly
+
+# Unsigned desktop builds of main, published to the rolling `nightly` GitHub
+# prerelease. Skips when main has not moved since the last nightly. No update
+# manifest: installed apps never auto-update to a nightly (docs/release/updates.md).
+
+on:
+  schedule:
+    - cron: '17 3 * * *'
+  workflow_dispatch:
+    inputs:
+      force:
+        description: Build even when main has not changed since the last nightly
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: nightly
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: 0
+  TAG: nightly
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  prepare:
+    name: Prepare nightly release
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    outputs:
+      build: ${{ steps.check.outputs.build }}
+      version: ${{ steps.check.outputs.version }}
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+    steps:
+      - uses: actions/checkout@v4
+      - id: check
+        run: |
+          previous="$(git ls-remote origin "refs/tags/$TAG" | cut -f1)"
+          if [ "$previous" = "$GITHUB_SHA" ] && [ "${{ inputs.force }}" != true ]; then
+            echo "::notice::main is unchanged since the last nightly ($GITHUB_SHA); skipping."
+            echo "build=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          version="$(node -p 'require("./src-tauri/tauri.conf.json").version')"
+          echo "build=true" >> "$GITHUB_OUTPUT"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+      # Replace the rolling release so its assets and tag always match this commit.
+      - name: Recreate the nightly release
+        if: steps.check.outputs.build == 'true'
+        run: |
+          gh release delete "$TAG" --repo "$GITHUB_REPOSITORY" --cleanup-tag --yes || true
+          git push origin ":refs/tags/$TAG" 2>/dev/null || true
+          short="${GITHUB_SHA::7}"
+          {
+            echo "Unsigned nightly build of \`main\` at $GITHUB_SHA, built $(date -u +%Y-%m-%d)."
+            echo
+            echo "Not for production use. macOS and Windows will warn that the app is unsigned."
+            echo
+            echo "Changes: https://github.com/$GITHUB_REPOSITORY/commits/$GITHUB_SHA"
+          } > notes.md
+          gh release create "$TAG" --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" \
+            --prerelease --title "Nightly ($(date -u +%Y-%m-%d), $short)" --notes-file notes.md
+
+  build:
+    name: Build ${{ matrix.platform }}
+    needs: prepare
+    if: needs.prepare.outputs.build == 'true'
+    permissions:
+      contents: write
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: macos
+            os: macos-latest
+            duckdb: macos-universal
+            args: --target universal-apple-darwin
+          - platform: windows
+            os: windows-latest
+            duckdb: windows-x64
+            args: ''
+          # The oldest supported Ubuntu keeps the AppImage's glibc floor low.
+          - platform: linux
+            os: ubuntu-22.04
+            duckdb: linux-x64
+            args: ''
+    runs-on: ${{ matrix.os }}
+    env:
+      IXTABLE_CLOUD_BUILD_URL: ${{ vars.IXTABLE_CLOUD_BUILD_URL }}
+      IXTABLE_CLOUD_BUILD_ANON_KEY: ${{ vars.IXTABLE_CLOUD_BUILD_ANON_KEY }}
+      IXTABLE_CLOUD_BUILD_SITE_URL: ${{ vars.IXTABLE_CLOUD_BUILD_SITE_URL }}
+      # Pinned at compile time (cloud/config.rs); without it the build refuses cloud installs.
+      IXTABLE_CLOUD_PUBLIC_KEY_RAW: ${{ vars.IXTABLE_CLOUD_PUBLIC_KEY_RAW }}
+      IXTABLE_CLOUD_PUBLIC_KEY: ${{ vars.IXTABLE_CLOUD_PUBLIC_KEY }}
+    steps:
+      - name: Disable CRLF conversion
+        if: runner.os == 'Windows'
+        run: git config --global core.autocrlf false
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/setup-desktop
+        with:
+          cache-key: release-${{ matrix.platform }}
+      - name: Rust targets for the universal macOS binary
+        if: matrix.platform == 'macos'
+        run: rustup target add aarch64-apple-darwin x86_64-apple-darwin
+      - name: Linux bundling dependencies
+        if: matrix.platform == 'linux'
+        run: sudo apt-get install -y --no-install-recommends libfuse2
+      - name: Prepare pinned DuckDB extensions
+        run: bash scripts/prepare-duckdb-artifacts.sh "${{ matrix.duckdb }}"
+      # No signing secrets: draft channel disables updater artifacts and code signing.
+      - name: Build config
+        run: node scripts/release/signing.mjs --platform "${{ matrix.platform }}" --channel draft --out "$RUNNER_TEMP/tauri.release.json"
+      - name: Build and upload to the nightly release
+        uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          tagName: ${{ env.TAG }}
+          releaseName: Nightly
+          prerelease: true
+          includeUpdaterJson: false
+          args: ${{ matrix.args }} --config ${{ runner.temp }}/tauri.release.json

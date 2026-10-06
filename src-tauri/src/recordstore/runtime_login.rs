@@ -20,6 +20,10 @@ pub struct RuntimeLoginStatus {
     pub user: String,
     pub host: String,
     pub database: String,
+    /// Effective libpq sslmode of the connection.
+    pub sslmode: String,
+    /// False: the recipient must accept the risk (`ensure_recipient_transport`).
+    pub server_verified: bool,
     /// Runtime should ask for a login: none is stored, or the server refused it.
     pub needs_login: bool,
     /// `missing` or `rejected` when `needs_login`.
@@ -54,6 +58,26 @@ fn runtime_datasource(window: &str) -> Result<Option<DatasourceConfig>, AppError
     Ok(Some(ds).filter(|ds| ds.is_postgres() && ds.installation.is_some()))
 }
 
+/// Why Runtime asks for a login: `missing` when none is stored, `rejected`
+/// when the server refused it. A lookup failure (e.g. INSECURE_TRANSPORT) is
+/// reported as an error, not asked for.
+fn login_reason(
+    attached: bool,
+    lookup_failed: bool,
+    source: LoginSource,
+    error: Option<&str>,
+) -> Option<&'static str> {
+    if attached || lookup_failed {
+        None
+    } else if source == LoginSource::None {
+        Some("missing")
+    } else if error.is_some_and(is_auth_failure) {
+        Some("rejected")
+    } else {
+        None
+    }
+}
+
 fn status(window: &str) -> Result<RuntimeLoginStatus, AppError> {
     let Some(ds) = runtime_datasource(window)? else {
         return Ok(RuntimeLoginStatus {
@@ -63,6 +87,8 @@ fn status(window: &str) -> Result<RuntimeLoginStatus, AppError> {
             user: String::new(),
             host: String::new(),
             database: String::new(),
+            sslmode: String::new(),
+            server_verified: true,
             needs_login: false,
             reason: None,
             error: None,
@@ -82,20 +108,14 @@ fn status(window: &str) -> Result<RuntimeLoginStatus, AppError> {
     if let Err(e) = &login {
         error = Some(redact(&e.message));
     }
-    let reason = if attached || login.is_err() {
-        None
-    } else if source == LoginSource::None {
-        Some("missing")
-    } else if error.as_deref().is_some_and(is_auth_failure) {
-        Some("rejected")
-    } else {
-        None
-    };
+    let reason = login_reason(attached, login.is_err(), source, error.as_deref());
     Ok(RuntimeLoginStatus {
         applies: true,
         attached,
         source,
         user,
+        server_verified: ds.verifies_server(),
+        sslmode: ds.sslmode,
         host: ds.host,
         database: ds.database,
         needs_login: reason.is_some(),
@@ -128,27 +148,34 @@ pub fn runtime_datasource_login_status(
 
 /// Verifies a username and password by connecting, then stores them for this
 /// installation and re-attaches the reader. A refused login is not stored.
+/// Unless the connection verifies the server (verify-full), the password is
+/// sent only after the recipient accepts the risk (`accept_unverified`).
 #[tauri::command]
 pub fn set_runtime_datasource_login(
     window_label: String,
     user: String,
     password: String,
+    accept_unverified: Option<bool>,
 ) -> Result<RuntimeLoginStatus, AppError> {
+    let accept_unverified = accept_unverified.unwrap_or(false);
     let ds = require_runtime(&window_label)?;
     let user = user.trim().to_string();
     secrets::validate_login_user(&user)?;
     if password.is_empty() {
         return Err(AppError::new("VALIDATION", "Enter the database password"));
     }
-    secrets::ensure_transport(&ds)?;
+    secrets::ensure_recipient_transport(&ds, accept_unverified)?;
     let mut probe = ds.clone();
     probe.user = user.clone();
     super::blocking(|| crate::postgres::probe(&probe, Some(&password)))
         .map_err(|e| AppError::new(e.code, redact(&e.message)))?;
-    secrets::store_installation_login(&ds, &user, &password)?;
+    secrets::store_installation_login(&ds, &user, &password, accept_unverified)?;
     crate::logging::info(
         "recordstore",
-        &format!("runtime database login saved for user {user}"),
+        &format!(
+            "runtime database login saved for user {user} (sslmode {})",
+            ds.sslmode
+        ),
     );
     reattach(&window_label)
 }

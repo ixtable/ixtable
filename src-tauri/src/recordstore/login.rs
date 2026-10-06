@@ -33,6 +33,47 @@ pub struct Login {
 struct StoredLogin {
     user: String,
     password: String,
+    /// The recipient accepted a transport that does not verify the server.
+    #[serde(default)]
+    unverified_accepted: bool,
+}
+
+/// What a Runtime login is bound to: the datasource target plus its
+/// transport (sslmode and the bundle's insecure-transport flag). A bundle
+/// update that weakens the transport reads the stored login as none.
+pub fn installation_target(ds: &DatasourceConfig) -> String {
+    serde_json::json!([
+        "pg",
+        ds.id,
+        ds.host,
+        ds.port,
+        ds.database,
+        ds.user,
+        ds.sslmode,
+        ds.insecure_transport_confirmed
+    ])
+    .to_string()
+}
+
+/// Refuses (UNVERIFIED_TRANSPORT) a password typed in Runtime for a
+/// connection that does not verify the server, unless the recipient accepted
+/// that risk. The bundle author's `insecure_transport_confirmed` does not
+/// count: the recipient owns the password.
+pub fn ensure_recipient_transport(
+    ds: &DatasourceConfig,
+    accepted: bool,
+) -> Result<(), SecretError> {
+    ensure_transport(ds)?;
+    if ds.verifies_server() || accepted {
+        return Ok(());
+    }
+    Err(SecretError {
+        code: "UNVERIFIED_TRANSPORT",
+        message: format!(
+            "The connection uses sslmode {}, which does not verify the database server, so someone on the network could read the password. Accept the risk in the login dialog, or ask the developer to use verify-full.",
+            ds.sslmode
+        ),
+    })
 }
 
 /// The secret-store key of a login entered in Runtime for one installation.
@@ -61,13 +102,13 @@ fn installation_key(ds: &DatasourceConfig) -> Option<String> {
 }
 
 /// The Runtime login stored for the datasource's installation. A login saved
-/// for another server, database, or user (an update moved the datasource)
-/// reads as none, so Runtime asks again.
+/// for another server, database, user, or a stronger transport (an update
+/// moved or downgraded the datasource) reads as none, so Runtime asks again.
 pub fn installation_login(ds: &DatasourceConfig) -> Result<Option<(String, String)>, SecretError> {
     let Some(id) = installation_key(ds) else {
         return Ok(None);
     };
-    let raw = match SecretStore::default_location()?.get_for(&id, &datasource_target(ds)) {
+    let raw = match SecretStore::default_location()?.get_for(&id, &installation_target(ds)) {
         Ok(Some(raw)) => raw,
         Ok(None) => return Ok(None),
         Err(e) if e.code == "CREDENTIAL_TARGET_MISMATCH" => return Ok(None),
@@ -75,27 +116,34 @@ pub fn installation_login(ds: &DatasourceConfig) -> Result<Option<(String, Strin
     };
     let login: StoredLogin = serde_json::from_str(&raw)
         .map_err(|_| SecretError::io("A stored database login is corrupt"))?;
+    if !ds.verifies_server() && !login.unverified_accepted {
+        return Ok(None);
+    }
     Ok(Some((login.user, login.password)))
 }
 
 /// Stores a Runtime login for the datasource's installation, bound to the
-/// datasource's current target.
+/// datasource's current target and transport. `accept_unverified` records
+/// the recipient's acceptance of a transport that does not verify the server.
 pub fn store_installation_login(
     ds: &DatasourceConfig,
     user: &str,
     password: &str,
+    accept_unverified: bool,
 ) -> Result<(), SecretError> {
     validate_login_user(user)?;
     let id = installation_key(ds).ok_or_else(|| SecretError {
         code: "NOT_RUNTIME",
         message: "Database logins are entered only in an installed runtime bundle".into(),
     })?;
+    ensure_recipient_transport(ds, accept_unverified)?;
     let raw = serde_json::to_string(&StoredLogin {
         user: user.into(),
         password: password.into(),
+        unverified_accepted: !ds.verifies_server(),
     })
     .map_err(|e| SecretError::io(e.to_string()))?;
-    Ok(SecretStore::default_location()?.put_for(&id, &raw, &datasource_target(ds))?)
+    Ok(SecretStore::default_location()?.put_for(&id, &raw, &installation_target(ds))?)
 }
 
 /// Forgets the Runtime login of the datasource's installation.
@@ -106,9 +154,9 @@ pub fn clear_installation_login(ds: &DatasourceConfig) -> Result<(), SecretError
     }
 }
 
-/// The login a datasource connects with, in order: a cloud key grant, a
-/// login entered in Runtime for this installation, then the developer's
-/// `password_ref`. A password is released only to the target it was stored
+/// The login a datasource connects with, in order: a key grant held by its
+/// cloud session, a login entered in Runtime for its manual installation,
+/// then the developer's `password_ref`. A password is released only to the target it was stored
 /// for and only over a confirmed transport.
 pub fn datasource_login(ds: &DatasourceConfig) -> Result<Login, SecretError> {
     let login = |user: Option<String>, password: String, source| Login {

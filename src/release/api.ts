@@ -46,6 +46,6 @@ export const resetRuntimeInstallationData = () =>
   call<SessionState>("reset_runtime_installation_data", { confirmed: true });
 export const documentState = () => call<SessionState>("document_state");
 export const runtimeLoginStatus = () => call<RuntimeLoginStatus>("runtime_datasource_login_status");
-export const setRuntimeLogin = (user: string, password: string) =>
-  call<RuntimeLoginStatus>("set_runtime_datasource_login", { user, password });
+export const setRuntimeLogin = (user: string, password: string, acceptUnverified: boolean) =>
+  call<RuntimeLoginStatus>("set_runtime_datasource_login", { user, password, acceptUnverified });
 export const clearRuntimeLogin = () => call<RuntimeLoginStatus>("clear_runtime_datasource_login");

@@ -97,6 +97,19 @@
   background: #fff;
   font-size: 12px;
 }
+.bundle-password label.check {
+  flex-direction: row;
+  align-items: flex-start;
+  gap: 8px;
+  font-weight: 400;
+}
+.bundle-password .transport-warning {
+  background: #fff8e6;
+  border: 1px solid #f0d68a;
+  border-radius: 6px;
+  padding: 8px 10px;
+  line-height: 1.5;
+}
 .bundle-password h2 {
   font-size: 14px;
   margin: 0 0 8px;

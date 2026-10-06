@@ -40,6 +40,18 @@ The screenshot shows a draft order with `ORD-10483` and `CUST-001`. The active r
 
 Each edit is written to the database at once. Constraint failures, such as a duplicate key or a missing related record, appear next to the grid and leave the record unchanged. Tables with optimistic concurrency reject an edit made from stale values and show the current ones. Page through large tables with the previous and next page buttons.
 
+## Import records
+
+Select **Import records** above the table browser to load a CSV, XLSX, JSON, or Parquet file. The wizard shows the first rows and the type it found for each column. For a CSV file you can turn off the header row or set the delimiter. For an XLSX file you pick the worksheet.
+
+Import into a new table or an existing one. A new table gets the columns you keep, with the names and types you choose, and an `id` key unless you pick a column as the key. For an existing table, each file column maps to a field or is skipped. Columns with the same name map on their own.
+
+Each value is checked against the type of its field before it is written. A row with a bad value, an empty required field, or a broken constraint such as a duplicate key is skipped. The report lists each skipped row with its field and the reason. The other rows are saved. Record triggers do not run for imported rows.
+
+## File sources
+
+A file source keeps a CSV, JSON, or Parquet file inside the project and reads it like a table. Add one in **Settings**, **File sources**, then query it as `files.<name>` in saved queries, reports, and dashboards. A file source is read-only. To edit its rows, import the file into a table instead.
+
 ## Ribbon commands
 
 The ribbon groups workspace actions by task. The View control switches between every mode, and Undo and Redo apply to design changes across the project. Record edits are not part of undo, because they are already saved in the database.

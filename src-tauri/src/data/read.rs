@@ -3,6 +3,7 @@
 //! over the embedded SQLite file or an attached PostgreSQL database. Writes
 //! never enter this connection.
 use super::extensions::postgres_extension_path;
+use super::files::{create_views, lock_down, FileView};
 use super::logical::LogicalType;
 use super::support::{logical_from_duckdb, redact};
 use super::{
@@ -39,6 +40,8 @@ pub enum ReadTarget {
 /// refresh clears postgres_scanner's catalog cache on the live attachment; a
 /// datasource switch (or a failed attach) builds a fresh locked database,
 /// because DuckDB refuses Postgres ATTACH once external access is off.
+/// Bundled file sources are views in the `files` catalog; their extracted
+/// files are added to `allowed_paths` and nothing else.
 pub struct ReadRuntime {
     pub workspace: PathBuf,
     pub(super) connection: duckdb::Connection,
@@ -46,17 +49,23 @@ pub struct ReadRuntime {
     sqlite_extension: PathBuf,
     /// Set when the configured datasource could not be attached; reads fail with this message (code CONNECTION) instead of silently reading the embedded file.
     attach_error: Option<String>,
+    files: Vec<FileView>,
+    /// File sources whose view could not be created (`name: error`).
+    file_errors: Vec<String>,
 }
 
 impl ReadRuntime {
     pub fn new(workspace: &Path, sqlite_extension: &Path) -> Result<Self, String> {
-        let (connection, attached) = open_locked(workspace, sqlite_extension, &ReadTarget::Sqlite)?;
+        let (connection, attached, file_errors) =
+            open_locked(workspace, sqlite_extension, &ReadTarget::Sqlite, &[])?;
         Ok(Self {
             workspace: workspace.to_owned(),
             connection,
             target: ReadTarget::Sqlite,
             sqlite_extension: sqlite_extension.to_owned(),
             attach_error: attached.err(),
+            files: vec![],
+            file_errors,
         })
     }
     pub fn target(&self) -> &ReadTarget {
@@ -67,11 +76,20 @@ impl ReadRuntime {
     }
     /// Points the reader at another datasource. A failed attach is remembered (see `attach_error`) and also returned.
     pub fn set_target(&mut self, target: ReadTarget) -> Result<(), String> {
-        if target == self.target && self.attach_error.is_none() {
+        let files = self.files.clone();
+        self.configure(target, files)
+    }
+    /// Sets the datasource and the file views, rebuilding the database when either changed.
+    pub fn configure(&mut self, target: ReadTarget, files: Vec<FileView>) -> Result<(), String> {
+        if target == self.target && files == self.files && self.attach_error.is_none() {
             return Ok(());
         }
         self.target = target;
+        self.files = files;
         self.rebuild()
+    }
+    pub fn file_errors(&self) -> &[String] {
+        &self.file_errors
     }
     pub(super) fn schema_name(&self) -> &str {
         match &self.target {
@@ -81,10 +99,15 @@ impl ReadRuntime {
     }
     /// Replaces the DuckDB database with a freshly attached, locked one.
     fn rebuild(&mut self) -> Result<(), String> {
-        let (connection, attached) =
-            open_locked(&self.workspace, &self.sqlite_extension, &self.target)?;
+        let (connection, attached, file_errors) = open_locked(
+            &self.workspace,
+            &self.sqlite_extension,
+            &self.target,
+            &self.files,
+        )?;
         self.connection = connection;
         self.attach_error = attached.as_ref().err().cloned();
+        self.file_errors = file_errors;
         attached
     }
     /// Makes committed writes and DDL visible to the next read. SQLite re-attaches
@@ -365,6 +388,8 @@ impl ReadRuntime {
             target: ReadTarget::Sqlite,
             sqlite_extension: PathBuf::new(),
             attach_error: None,
+            files: vec![],
+            file_errors: vec![],
         })
     }
     /// A reader over `<workspace>/data.db` using the bundled extension for this platform (or `IXTABLE_DUCKDB_SQLITE_EXTENSION`).
@@ -380,15 +405,18 @@ impl ReadRuntime {
     }
 }
 
-/// Opens an in-memory DuckDB database, loads the extensions `target` needs, and
-/// attaches the datasource as `data`. External access is then disabled and the
-/// configuration locked whether or not the attach succeeded; the attach result is
-/// returned separately so a failed datasource still yields a safe connection.
+/// Opens an in-memory DuckDB database, loads the extensions `target` needs,
+/// attaches the datasource as `data`, and creates the file views. External
+/// access is then disabled and the configuration locked whether or not the
+/// attach succeeded; the attach result and file view errors are returned
+/// separately so a failed datasource still yields a safe connection.
+type Opened = (duckdb::Connection, Result<(), String>, Vec<String>);
 fn open_locked(
     workspace: &Path,
     sqlite_extension: &Path,
     target: &ReadTarget,
-) -> Result<(duckdb::Connection, Result<(), String>), String> {
+    files: &[FileView],
+) -> Result<Opened, String> {
     let config = duckdb::Config::default()
         .enable_autoload_extension(false)
         .map_err(|e| e.to_string())?
@@ -414,13 +442,12 @@ fn open_locked(
         }
     }
     .and_then(|()| attach(&connection, workspace, target));
-    let db = sql_path(workspace);
-    connection
-        .execute_batch(&format!(
-            "SET allowed_paths=['{db}']; SET enable_external_access=false; SET lock_configuration=true"
-        ))
-        .map_err(|e| format!("DuckDB lockdown: {e}"))?;
-    Ok((connection, attached))
+    let file_errors = create_views(&connection, files);
+    let db = workspace.join("data.db");
+    let mut allowed: Vec<&Path> = vec![&db];
+    allowed.extend(files.iter().map(|f| f.path.as_path()));
+    lock_down(&connection, &allowed)?;
+    Ok((connection, attached, file_errors))
 }
 
 /// Flags SQLite's `INTEGER PRIMARY KEY` (a rowid alias) as filled in by the database.

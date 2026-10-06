@@ -1,7 +1,8 @@
 // Released archive fixtures are never rewritten (docs/decisions/archive-format.md).
-// On a pull request, fails when a file under tests/fixtures/archives/format-*/
-// that exists on the base branch was modified or deleted. New format directories
-// and new files are allowed. No-op without a base branch (e.g. push to main).
+// On a pull request, fails when a file under tests/fixtures/archives/<dir>/
+// (format-<N>/, newer-build/) that exists on the base branch was modified or
+// deleted. New fixture directories and new files are allowed. No-op without a
+// base branch (e.g. push to main).
 // Usage: node scripts/ci/check-archive-fixtures.mjs <base-branch>
 import { execFileSync } from "node:child_process";
 
@@ -35,7 +36,7 @@ const changed = git(
   "tests/fixtures/archives",
 )
   .split("\n")
-  .filter((f) => /^tests\/fixtures\/archives\/format-[^/]+\//.test(f));
+  .filter((f) => /^tests\/fixtures\/archives\/[^/]+\//.test(f));
 if (changed.length > 0) {
   console.error("released archive fixtures were modified or deleted:");
   for (const f of changed) console.error(`  ${f}`);

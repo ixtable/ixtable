@@ -1,5 +1,6 @@
 //! Release-blocking durability tests (PRD §26.5, §27.1): archive upgrade fixtures,
-//! forced termination during autosave, and the opt-in 500 MB boundary check.
+//! archives from a newer build, forced termination during autosave, and the 500 MB
+//! boundary check (opt-in locally, always run in CI).
 use crate::manager::DocumentManager;
 use std::path::PathBuf;
 
@@ -7,6 +8,7 @@ mod fixtures;
 mod heavy;
 mod incremental;
 mod kill;
+mod newer_build;
 
 /// A fresh state directory and a manager over it.
 pub(crate) fn fresh_manager(tag: &str) -> (PathBuf, DocumentManager) {

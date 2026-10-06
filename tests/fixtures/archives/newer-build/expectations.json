@@ -1,0 +1,19 @@
+[
+  {
+    "file": "newer-config.ixt",
+    "outcome": "refuse",
+    "message": "This document's configuration (version 99) was created by a newer ixtable. Update ixtable to open it.",
+    "sha256": "264bcf13f05dd5bffa41b87c77a063ee36291b736d779bb88eb5161ce1d10703"
+  },
+  {
+    "file": "newer-format.ixt",
+    "outcome": "refuse",
+    "message": "This document was created by a newer ixtable (format 99). Update ixtable to open it.",
+    "sha256": "2bef72e4064722694ed0b353629797db533048c1e48e6e189287bc2bca2e1e5e"
+  },
+  {
+    "file": "unknown-entries.ixt",
+    "outcome": "open",
+    "sha256": "16f498d5c298d56b34a455f781692b6221bbbcdc371424c50b7e1e079118842e"
+  }
+]

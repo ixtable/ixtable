@@ -44,7 +44,10 @@ report) is dropped on save, so a build that adds nested fields must bump the
 config version; older builds then refuse the document instead of losing data.
 
 Ordinary tables that this build does not know are copied, with rows and
-indexes, from the previous archive of the same document. Views, triggers,
+indexes, from the previous archive of the same document. Extra columns that a
+newer build adds to a known archive table (`archive_metadata`, `attachments`,
+and the rest) are ignored on read and dropped on save, so a newer build that
+needs such a column kept must bump `FORMAT_VERSION`. Views, triggers,
 virtual tables, and tables from a different document are never copied. The
 one exception is Restore as copy: the new archive gets a new document id but
 deliberately copies the checkpoint, so it keeps the checkpoint's unknown
@@ -149,6 +152,17 @@ checkpoints are validated archive copies under
   `application_id`, no `payload_chunks`, config version 2), derived by
   `node scripts/ci/write-archive-fixtures.mjs --format-1`. `.gitattributes`
   marks `*.ixt` binary.
+- Archives from a newer build are fixtures too. `tests/fixtures/archives/newer-build/`
+  holds three variants of `format-2/crm.ixt`, written once by
+  `node scripts/ci/write-archive-fixtures.mjs --newer-build` and listed with
+  their sha256 and expected outcome in `expectations.json`: format 99 and
+  config version 99 are refused with `UNSUPPORTED_VERSION` and leave the file
+  unchanged; `unknown-entries.ixt` (current versions plus an unknown table,
+  index and view, extra columns in `archive_metadata` and `attachments`, and
+  unknown top-level config fields) opens, and a save keeps the table, its rows
+  and index, and the config fields while it drops the view and the extra
+  columns. The fixture-change check covers every directory under
+  `tests/fixtures/archives/`, this one included.
 
 ## Evidence
 
@@ -194,11 +208,18 @@ checkpoints are validated archive copies under
   back: not dirty, no error, archive rows equal the workspace's; at least one
   run must grow the archive) or refused with `RECOVERY_FAILED`. The writer is
   killed on drop and stops itself after 512 MB or two minutes.
-- `src-tauri/src/durability_tests/heavy.rs` (opt-in): an archive just over
+- `src-tauri/src/durability_tests/newer_build.rs` and
+  `tests/integration/newer-build-archives.test.tsx`: the newer-build fixtures
+  match their checksums and behave as described above, through the manager
+  and through the start screen (the refusal shows the update hint).
+- `src-tauri/src/durability_tests/heavy.rs`: an archive just over
   500,000,000 bytes saves and reopens, the size report flags it, and the
-  publish preflight blocks it. Run with
-  `IXTABLE_HEAVY_TESTS=1 cargo test --lib durability_tests::heavy` (about a
-  minute and 1.5 GB of temporary disk). Default CI does not run it.
+  publish preflight blocks it. It is opt-in locally:
+  `IXTABLE_HEAVY_TESTS=1 cargo test --lib durability_tests::heavy` in
+  `src-tauri` (about a minute in a debug build on four cores, and 1.5 GB of
+  temporary disk). The Desktop workflow's `test` job sets the variable, so it
+  runs on every pull request and push on Windows, macOS and Linux, and the step
+  fails unless the test actually ran.
 
 ## Audit log
 

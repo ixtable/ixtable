@@ -99,10 +99,12 @@ afterEach(async () => {
 });
 // Windows cannot delete files this process still holds open, such as the DuckDB extension
 // DLLs unpacked into the state directory (DuckDB never unloads them), so cleanup there is
-// best-effort. Elsewhere a failure to clean up still fails the run.
+// best-effort. Elsewhere a failure to clean up still fails the run. Background writers (the
+// job worker, DuckDB) can still be finishing a file as the directory goes, so rmSync retries
+// EBUSY/ENOTEMPTY/EPERM a few times before giving up.
 afterAll(() => {
   try {
-    rmSync(stateDirectory, { recursive: true, force: true });
+    rmSync(stateDirectory, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
   } catch (error) {
     if (process.platform !== "win32") throw error;
   }

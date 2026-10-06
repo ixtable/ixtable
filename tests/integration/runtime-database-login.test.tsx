@@ -1,6 +1,6 @@
 import { readdirSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
-import { render, screen, within } from "@testing-library/react";
+import { cleanup, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { invoke } from "@tauri-apps/api/core";
 import { expect, it } from "vitest";
@@ -107,6 +107,8 @@ it("asks for a database login when a shared bundle carries none and stores nothi
   expect(screen.queryByRole("dialog", { name: "Database login" })).toBeNull();
   await user.click(within(bar).getByRole("button", { name: "Database login…" }));
   await screen.findByRole("dialog", { name: "Database login" }, LONG);
+  cleanup();
+  await invoke("close_document", { windowLabel, force: true });
   for (const file of files(join(state, "data")))
     expect(readFileSync(file).includes("typed-secret-1"), file).toBe(false);
 }, 120_000);

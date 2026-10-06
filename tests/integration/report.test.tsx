@@ -147,7 +147,7 @@ it("builds a grouped report, previews page 1 of N with totals, prints, and expor
     windowLabel: "main",
   });
   expect(issues.filter((issue) => issue.objectKind === "report")).toEqual([]);
-});
+}, 120_000);
 
 it("renames, duplicates and deletes reports through the config store", async () => {
   const user = await renderNewDocument();

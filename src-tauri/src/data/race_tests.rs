@@ -158,3 +158,81 @@ fn a_session_serves_concurrent_writes_and_reads_with_read_your_writes() {
     m.close("w", true).unwrap();
     let _ = std::fs::remove_dir_all(base);
 }
+
+/// A PostgreSQL refresh (`pg_clear_cache()` on the live database) against queries on
+/// connections cloned from it, each under the shared gate as `read_connection` takes
+/// it. Every clone shares the attached catalog; the gate keeps a catalog load on a
+/// clone from racing the clear, so each refresh sees the DDL before it.
+#[test]
+#[ignore = "needs IXTABLE_TEST_POSTGRES_URL; CI runs it with --include-ignored"]
+fn postgres_refresh_never_races_reads_on_cloned_connections() {
+    use crate::data::{CreateColumn, CreateTable};
+    use crate::recordstore::conformance::{col, nv, people, postgres_harness, text};
+    let Some(mut h) = postgres_harness() else {
+        return;
+    };
+    people(&mut h);
+    let db = h.reader.workspace.join("data.db");
+    let schema = match h.reader.target() {
+        super::ReadTarget::Postgres { schema, .. } => schema.clone(),
+        other => panic!("target {other:?}"),
+    };
+    const REFRESHES: usize = 60;
+    let done = Arc::new(AtomicBool::new(false));
+    let readers: Vec<_> = (0..4)
+        .map(|_| {
+            let connection = h.reader.connection().try_clone().unwrap();
+            let (db, done, schema) = (db.clone(), done.clone(), schema.clone());
+            std::thread::spawn(move || {
+                let mut reads = 0u64;
+                while !done.load(Ordering::SeqCst) || reads < 5 {
+                    let _gate = super::gate::shared(&db).unwrap();
+                    connection
+                        .query_row(
+                            &format!("SELECT count(*), max(name) FROM data.\"{schema}\".people"),
+                            [],
+                            |r| r.get::<_, i64>(0),
+                        )
+                        .unwrap_or_else(|e| panic!("read {reads}: {e}"));
+                    connection
+                        .query_row(
+                            "SELECT count(*) FROM information_schema.columns \
+                             WHERE table_catalog = 'data' AND table_schema = ?",
+                            [&schema],
+                            |r| r.get::<_, i64>(0),
+                        )
+                        .unwrap_or_else(|e| panic!("catalog read {reads}: {e}"));
+                    reads += 1;
+                }
+                reads
+            })
+        })
+        .collect();
+    for i in 0..REFRESHES {
+        // New tables and rows give every clear a catalog that changed.
+        h.store
+            .create_table(&CreateTable {
+                name: format!("t{i}"),
+                columns: vec![CreateColumn {
+                    primary_key_position: 1,
+                    nullable: false,
+                    ..col("id", "integer")
+                }],
+                ..Default::default()
+            })
+            .unwrap();
+        h.store
+            .insert("people", &[nv("name", text(&format!("p{i}")))])
+            .unwrap();
+        h.reader
+            .refresh()
+            .unwrap_or_else(|e| panic!("refresh {i}: {e}"));
+    }
+    done.store(true, Ordering::SeqCst);
+    for r in readers {
+        assert!(r.join().unwrap() >= 5);
+    }
+    let objects = h.reader.objects().unwrap();
+    assert_eq!(objects.len(), REFRESHES + 1, "every new table is visible");
+    assert_eq!(h.reader.row_count("people").unwrap(), REFRESHES as u64);
+}

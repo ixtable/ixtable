@@ -214,12 +214,13 @@ checkpoints are validated archive copies under
   and through the start screen (the refusal shows the update hint).
 - `src-tauri/src/durability_tests/heavy.rs`: an archive just over
   500,000,000 bytes saves and reopens, the size report flags it, and the
-  publish preflight blocks it. It is opt-in locally:
-  `IXTABLE_HEAVY_TESTS=1 cargo test --lib durability_tests::heavy` in
-  `src-tauri` (about a minute in a debug build on four cores, and 1.5 GB of
-  temporary disk). The Desktop workflow's `test` job sets the variable, so it
-  runs on every pull request and push on Windows, macOS and Linux, and the step
-  fails unless the test actually ran.
+  publish preflight blocks it. It is `#[ignore]`d, so run it explicitly:
+  `IXTABLE_HEAVY_TESTS=1 cargo test --lib durability_tests::heavy -- --include-ignored`
+  in `src-tauri` (about a minute in a debug build on four cores, and 1.5 GB of
+  temporary disk). The Desktop workflow's `test` job runs it on every pull
+  request and push on Windows, macOS and Linux through
+  `scripts/ci/run-ignored-rust-tests.mjs`, which fails unless it ran and
+  passed; under CI a missing `IXTABLE_HEAVY_TESTS` fails the test.
 
 ## Audit log
 

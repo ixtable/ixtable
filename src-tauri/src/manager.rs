@@ -456,7 +456,7 @@ impl DocumentManager {
             .map_err(|e| read_error(sql, e))
     }
     /// A fresh DuckDB connection to the session's read database (queries.rs runs long, cancellable reads on it without holding the session lock).
-    /// It holds the embedded file's shared gate until dropped, so a RecordStore write never overlaps the read (see `data::gate`).
+    /// It holds the shared gate of the reader's `data` catalog until dropped, so neither a RecordStore write to the embedded file nor a reader refresh (SQLite or PostgreSQL) overlaps the read (see `data::gate`).
     pub fn read_connection(
         &self,
         window: &str,
@@ -470,15 +470,11 @@ impl DocumentManager {
             .connection()
             .try_clone()
             .map_err(|e| AppError::new("DATABASE_ERROR", e.to_string()))?;
-        let embedded = (*reader.target() == data::ReadTarget::Sqlite)
-            .then(|| reader.workspace.join("data.db"));
+        let db = reader.workspace.join("data.db");
         drop(all);
-        let gate = embedded
-            .map(|db| data::gate::shared(&db))
-            .transpose()
-            .map_err(|e| AppError::new("BUSY", e))?;
+        let gate = data::gate::shared(&db).map_err(|e| AppError::new("BUSY", e))?;
         let _ = connection.execute_batch("USE data");
-        Ok(data::gate::Gated::new(connection, gate))
+        Ok(data::gate::Gated::new(connection, Some(gate)))
     }
     pub fn save_query(
         &self,

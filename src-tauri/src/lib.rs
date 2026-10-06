@@ -495,6 +495,8 @@ pub fn run() {
 mod durability_tests;
 #[cfg(test)]
 mod perf_tests;
+#[cfg(test)]
+mod test_env;
 
 #[cfg(test)]
 mod launch_args_tests {

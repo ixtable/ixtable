@@ -51,9 +51,9 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "needs IXTABLE_TEST_POSTGRES_URL; CI runs it with --include-ignored"]
     fn auto_increment_covers_identity_and_serial_but_not_plain_keys() {
-        let Ok(url) = std::env::var("IXTABLE_TEST_POSTGRES_URL") else {
-            eprintln!("skipping: set IXTABLE_TEST_POSTGRES_URL");
+        let Some(url) = crate::test_env::postgres_url() else {
             return;
         };
         let schema = format!("ixt_{}", uuid::Uuid::new_v4().simple());

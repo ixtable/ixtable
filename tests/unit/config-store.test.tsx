@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from "@testing-library/react";
+import { act, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, expect, it, vi } from "vitest";
 
@@ -7,7 +7,7 @@ import type { DocumentConfig, SessionState } from "../../src/lib/types";
 
 let backend: DocumentConfig;
 let configRevision = 0;
-const updateDocumentConfig = vi.fn(async (config: DocumentConfig) => {
+const write = async (config: DocumentConfig) => {
   backend = config;
   configRevision += 1;
   return {
@@ -16,7 +16,8 @@ const updateDocumentConfig = vi.fn(async (config: DocumentConfig) => {
     dirty: true,
     configRevision,
   } as SessionState;
-});
+};
+const updateDocumentConfig = vi.fn(write);
 const backendEdit = (change: Partial<DocumentConfig>) => {
   backend = { ...backend, ...change };
   configRevision += 1;
@@ -86,6 +87,7 @@ beforeEach(() => {
   backend = { name: "Untitled", activeMode: "data" } as DocumentConfig;
   configRevision = 0;
   updateDocumentConfig.mockClear();
+  updateDocumentConfig.mockImplementation(write);
   readDocumentConfig.mockClear();
 });
 
@@ -179,4 +181,111 @@ it("reloads before editing when a session state shows a newer config revision", 
   await waitFor(() => expect(readDocumentConfig).toHaveBeenCalledTimes(3));
   await waitFor(() => expect(backend.name).toBe("Beta"));
   expect(backend.savedQueries).toEqual([{ id: "q2" }]);
+});
+
+function Capture({ into }: { into: (store: ReturnType<typeof useDocumentConfig>) => void }) {
+  into(useDocumentConfig());
+  return null;
+}
+
+async function renderCapture() {
+  let store!: ReturnType<typeof useDocumentConfig>;
+  const onState = vi.fn();
+  render(
+    <DocumentConfigProvider onState={onState} fallback={<p>Loading config</p>}>
+      <Capture into={(value) => (store = value)} />
+      <Probe />
+    </DocumentConfigProvider>,
+  );
+  await screen.findByText("Untitled");
+  return { store: () => store, onState };
+}
+
+function start<T>(run: () => T): T {
+  let out!: T;
+  act(() => {
+    out = run();
+  });
+  return out;
+}
+
+function slowWrites() {
+  const gates: Array<() => void> = [];
+  const failures = new Set<number>();
+  updateDocumentConfig.mockImplementation(async (config: DocumentConfig) => {
+    const call = updateDocumentConfig.mock.calls.length;
+    await new Promise<void>((resolve) => gates.push(resolve));
+    if (failures.has(call)) throw new Error(`write ${call} failed`);
+    return write(config);
+  });
+  return {
+    failWrite: (call: number) => failures.add(call),
+    release: async () => {
+      await waitFor(() => expect(gates.length).toBeGreaterThan(0));
+      gates.shift()?.();
+    },
+  };
+}
+
+it("coalesces rapid updates into the in-flight write plus one write of the latest config", async () => {
+  const writes = slowWrites();
+  const { store, onState } = await renderCapture();
+  const names = Array.from({ length: 10 }, (_, i) => `I${i}`);
+  const done = start(() =>
+    names.map((name) => store().update((draft) => ({ ...draft, name }), "Rename report")),
+  );
+  expect(updateDocumentConfig).toHaveBeenCalledTimes(1);
+  let flushed = false;
+  void store()
+    .settled()
+    .then(() => (flushed = true));
+  await act(writes.release);
+  await act(writes.release);
+  const states = await Promise.all(done);
+  expect(updateDocumentConfig).toHaveBeenCalledTimes(2);
+  expect(updateDocumentConfig.mock.calls.map(([config]) => config.name)).toEqual(["I0", "I9"]);
+  expect(backend.name).toBe("I9");
+  expect(states[0]).toMatchObject({ name: "I0", configRevision: 1 });
+  expect(states.slice(1).every((state) => state.name === "I9")).toBe(true);
+  expect(onState.mock.calls.map(([state]) => state.name)).toEqual(["I0", "I9"]);
+  await waitFor(() => expect(flushed).toBe(true));
+  expect(await screen.findByText("Rename report")).toBeInTheDocument();
+});
+
+it("rejects only the updates whose state was in a failed write", async () => {
+  const writes = slowWrites();
+  writes.failWrite(2);
+  const { store } = await renderCapture();
+  const results = start(() =>
+    ["A", "B", "C"].map((name) =>
+      store()
+        .update((draft) => ({ ...draft, name }))
+        .then(
+          (state) => state.name,
+          (reason: Error) => reason.message,
+        ),
+    ),
+  );
+  await act(writes.release);
+  await act(writes.release);
+  expect(await Promise.all(results)).toEqual(["A", "write 2 failed", "write 2 failed"]);
+  expect(backend.name).toBe("A");
+  const retry = start(() => store().update((draft) => ({ ...draft, name: "D" })));
+  await act(writes.release);
+  await expect(retry).resolves.toMatchObject({ name: "D" });
+  expect(backend.name).toBe("D");
+});
+
+it("waits for queued writes before reloading", async () => {
+  const writes = slowWrites();
+  const { store } = await renderCapture();
+  const reloaded = start(() => {
+    void store().update((draft) => ({ ...draft, name: "A" }));
+    void store().update((draft) => ({ ...draft, name: "B" }));
+    return store().reload();
+  });
+  await act(writes.release);
+  await act(writes.release);
+  await expect(reloaded).resolves.toMatchObject({ name: "B" });
+  expect(readDocumentConfig).toHaveBeenCalledTimes(2);
 });

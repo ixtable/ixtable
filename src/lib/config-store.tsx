@@ -12,6 +12,7 @@ import { asTauriError, readDocumentConfig, type TauriError, updateDocumentConfig
 import type { DocumentConfig, SessionState } from "./types";
 
 type Entry = { config: DocumentConfig; label: string };
+type Waiter = { resolve: (state: SessionState) => void; reject: (reason: unknown) => void };
 export interface UpdateOptions {
   /** false for navigation-only changes (mode switches) that should not enter undo history. */
   undoable?: boolean;
@@ -104,7 +105,12 @@ export function DocumentConfigProvider({
   const [error, setError] = useState<TauriError | null>(null);
   const current = useRef<DocumentConfig | null>(null);
   const lastEdit = useRef<{ label: string; at: number } | null>(null);
+  // Settles once every queued write has reached Rust; never rejects.
   const queue = useRef<Promise<unknown>>(Promise.resolve());
+  // At most one write is in flight. Updates made meanwhile replace `pending`,
+  // which the writer sends once the in-flight write finishes.
+  const pending = useRef<{ config: DocumentConfig; waiters: Waiter[] } | null>(null);
+  const writing = useRef(false);
   // configRevision the store last wrote or loaded, and the newest one seen anywhere.
   const revision = useRef(0);
   const seen = useRef(0);
@@ -113,27 +119,43 @@ export function DocumentConfigProvider({
     onStateRef.current = onState;
   });
 
-  const persist = useCallback((next: DocumentConfig) => {
-    current.current = next;
-    setConfig(next);
-    const pending = queue.current.then(() => updateDocumentConfig(next));
-    queue.current = pending.catch(() => undefined);
-    return pending.then(
-      (state) => {
+  const drain = useCallback(async () => {
+    for (let batch = pending.current; batch; batch = pending.current) {
+      pending.current = null;
+      try {
+        const state = await updateDocumentConfig(batch.config);
         setError(null);
         if (typeof state.configRevision === "number") {
           revision.current = state.configRevision;
           seen.current = Math.max(seen.current, state.configRevision);
         }
         onStateRef.current?.(state);
-        return state;
-      },
-      (reason: unknown) => {
+        for (const waiter of batch.waiters) waiter.resolve(state);
+      } catch (reason) {
         setError(asTauriError(reason));
-        throw reason;
-      },
-    );
+        for (const waiter of batch.waiters) waiter.reject(reason);
+      }
+    }
+    writing.current = false;
   }, []);
+
+  const persist = useCallback(
+    (next: DocumentConfig) => {
+      current.current = next;
+      setConfig(next);
+      const done = new Promise<SessionState>((resolve, reject) => {
+        const waiters = pending.current?.waiters ?? [];
+        waiters.push({ resolve, reject });
+        pending.current = { config: next, waiters };
+      });
+      if (!writing.current) {
+        writing.current = true;
+        queue.current = drain();
+      }
+      return done;
+    },
+    [drain],
+  );
 
   const reload = useCallback(async (label?: string) => {
     await queue.current;

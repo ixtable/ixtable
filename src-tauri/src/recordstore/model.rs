@@ -35,9 +35,12 @@ pub struct DatasourceConfig {
     pub insecure_transport_confirmed: bool,
     #[serde(default)]
     pub insecure_transport_confirmed_at: Option<String>,
-    /// Runtime-only installation (bundle id) whose entered login applies; never serialized.
+    /// Manual runtime install (bundle id) whose entered login applies; never serialized.
     #[serde(skip)]
     pub installation: Option<String>,
+    /// Cloud session (window label) whose key grants apply; never serialized.
+    #[serde(skip)]
+    pub grant_scope: Option<String>,
 }
 fn default_kind() -> String {
     "sqlite".into()
@@ -70,6 +73,7 @@ impl Default for DatasourceConfig {
             insecure_transport_confirmed: false,
             insecure_transport_confirmed_at: None,
             installation: None,
+            grant_scope: None,
         }
     }
 }
@@ -80,6 +84,10 @@ impl DatasourceConfig {
     /// True when the connection may travel without TLS.
     pub fn allows_plaintext(&self) -> bool {
         matches!(self.sslmode.as_str(), "disable" | "allow" | "prefer")
+    }
+    /// True only for `verify-full`, which checks the server's certificate and name.
+    pub fn verifies_server(&self) -> bool {
+        self.sslmode == "verify-full"
     }
 }
 

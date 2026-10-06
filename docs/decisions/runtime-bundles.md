@@ -149,18 +149,50 @@ the username, requires a confirmed transport, and connects (`postgres::probe`)
 before storing anything; a refusal comes back as `AUTH_FAILED` (SQLSTATE class
 28) with a redacted message. A verified login goes to the local secret store
 under `installation:<bundleId>:datasource:<datasourceId>`, sealed and bound to
-the datasource target. The reader then re-attaches. "Database login…" in the
-runtime sidebar re-enters the login or forgets it
+`login::installation_target`: the datasource target plus its sslmode and
+`insecureTransportConfirmed`. The reader then re-attaches. "Database login…"
+in the runtime sidebar re-enters the login or forgets it
 (`clear_runtime_datasource_login`).
 
+The recipient owns this password, so the bundle author's transport choices
+cannot decide alone where it is sent. Only `verify-full` checks the server's
+certificate and name (`DatasourceConfig::verifies_server`); `require` and
+`verify-ca` accept a server that anyone on the network can impersonate, and
+the plaintext modes send the password in the clear. The dialog shows the
+effective sslmode. For any mode but `verify-full` it shows a warning and a
+checkbox, "I accept sending my password over a connection that does not verify
+the server", and Connect stays disabled until the recipient ticks it. The
+command refuses with `UNVERIFIED_TRANSPORT` before connecting unless
+`acceptUnverified` is true (`login::ensure_recipient_transport`). The
+author's `insecureTransportConfirmed` is still required for plaintext modes
+but never stands in for the recipient's acceptance. The acceptance is stored
+with the login (`unverified_accepted`), and because the sslmode and insecure
+flag are part of the login's target, an update that changes the transport
+reads the stored login as none and Runtime asks again.
+
+We chose this over requiring `verify-full` for every Runtime login. Many
+PostgreSQL servers on office networks run with self-signed certificates or
+none, and refusing them would push developers to share one application
+password instead, which is worse. The acceptance keeps those setups possible
+while making the risk the recipient's informed choice. It also keeps the
+PostgreSQL integration tests meaningful: CI servers run without TLS, and the
+tests now tick the acceptance as a recipient would.
+
 The installation id reaches the credential lookup through
-`DatasourceConfig.installation`, a `serde(skip)` field set only by
-`open_runtime_session`, so Studio and other installations never see the
-login. `secrets::datasource_login` picks a login in this order: a cloud key
-grant, the installation's login, then the developer's `passwordRef`. An update
-that moves the datasource to another host, port, database, or user changes the
-target, so the stored login no longer matches and Runtime asks again. Cloud
-installations get their login from key grants and never show the dialog.
+`DatasourceConfig.installation`, a `serde(skip)` field set by
+`open_runtime_session` only for a manual install, so Studio, other
+installations, and cloud sessions never see the login. A cloud installation
+reuses the document id as its bundle id, so it would otherwise share the
+manual install's key; `open_runtime_session` recognizes a directory under the
+cloud root (`cloud::install::is_cloud_dir`) and sets `grantScope` (the
+window label) instead. `secrets::datasource_login` picks a login in this
+order: a key grant held by the datasource's cloud session, the manual
+installation's login, then the developer's `passwordRef`. Grants are consulted
+only when `grantScope` is set (see `cloud-architecture.md`). An update that
+moves the datasource to another host, port, database, or user, or changes its
+transport, changes the target, so the stored login no longer matches and
+Runtime asks again. Cloud installations get their login from key grants and
+never show the dialog; a cloud user whose grant is revoked gets no login.
 
 The runtime sidebar has a "Diagnostics…" button for the background job queue
 (status, attempts, retry, cancel; the Studio `JobsPanel`) and the local log
@@ -220,11 +252,17 @@ check in TypeScript before calling `export_runtime_bundle`; see
   bundle ids, a corrupt `bundle.json` failing closed, and a folder without one
   moved aside.
 - `src-tauri/src/recordstore/runtime_login_tests.rs`: logins sealed per
-  installation and target, precedence (grant, installation, Studio), a moved
+  installation and target, an unverified transport needs the recipient's
+  acceptance, a transport downgrade asks again, a manual install never uses a
+  cloud grant, the `missing`/`rejected`/lookup-error reasons, a moved
   datasource asks again, username validation, auth failures told apart from
   unreachable servers, and `AUTH_FAILED` from a real PostgreSQL server.
+- `src-tauri/src/manager_config_tests.rs`: a cloud session of the same app
+  ignores a manual installation's login.
 - `tests/integration/runtime-database-login.test.tsx`: the prompt opens for a
-  PostgreSQL bundle with no login; an unverifiable login is not stored; with
+  PostgreSQL bundle with no login and shows its sslmode; Connect stays
+  disabled and the command refuses (`UNVERIFIED_TRANSPORT`) until the
+  recipient accepts an unverified server; an unverifiable login is not stored; with
   `IXTABLE_TEST_POSTGRES_URL` a wrong password is refused, the right one
   connects and reads, and "Forget saved login" asks again.
 - `src-tauri/src/installation_commands.rs` (unit test): oversized bundles fail

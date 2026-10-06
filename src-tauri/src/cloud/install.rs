@@ -348,12 +348,18 @@ pub fn open_installed(window: &str, app_id: &str) -> Result<SessionState, AppErr
     open_with_role(crate::manager()?, window, &dir)
 }
 
+/// True for a directory under the cloud root: never a manual installation,
+/// even before its cloud record is written.
+pub fn is_cloud_dir(dir: &Path) -> bool {
+    dir.starts_with(cloud_root())
+}
+
 /// The cloud installation directory of the window's runtime session.
 pub fn session_dir(window: &str) -> Result<PathBuf, AppError> {
     let state = crate::manager()?.state(window)?;
     let rt = runtime_session(&state.session_id)
         .ok_or_else(|| err("NOT_CLOUD", "No cloud application is open in this window"))?;
-    if !rt.dir.starts_with(cloud_root()) || !rt.dir.join(CLOUD_JSON).exists() {
+    if !is_cloud_dir(&rt.dir) || !rt.dir.join(CLOUD_JSON).exists() {
         return Err(err(
             "NOT_CLOUD",
             "The open application is not a cloud installation",

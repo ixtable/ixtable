@@ -434,10 +434,17 @@ fn granted_credentials_are_released_only_to_their_target_until_expiry() {
         host: "db.example".into(),
         database: "app".into(),
         user: "u".into(),
+        grant_scope: Some("cloud-w".into()),
         ..Default::default()
     };
     let target = crate::recordstore::secrets::datasource_target(&ds);
-    grants::put(&target, None, "pw".into(), Utc::now() + Duration::hours(1));
+    grants::put(
+        "cloud-w",
+        &target,
+        None,
+        "pw".into(),
+        Utc::now() + Duration::hours(1),
+    );
     assert_eq!(grants::granted_password(&ds).as_deref(), Some("pw"));
     assert_eq!(
         crate::recordstore::secrets::datasource_credential(&ds)
@@ -449,9 +456,10 @@ fn granted_credentials_are_released_only_to_their_target_until_expiry() {
     let mut other = ds.clone();
     other.host = "evil.example".into();
     assert_eq!(grants::granted_password(&other), None);
-    grants::clear(&target);
+    grants::clear("cloud-w", &target);
     assert_eq!(grants::granted_password(&ds), None);
     grants::put(
+        "cloud-w",
         &target,
         None,
         "old".into(),
@@ -464,6 +472,113 @@ fn granted_credentials_are_released_only_to_their_target_until_expiry() {
     );
     ds.id = "grant-ds-2".into();
     assert_eq!(grants::expires_at(&ds), None);
+}
+
+#[test]
+fn a_grant_held_for_one_cloud_window_changes_no_other_session() {
+    use crate::recordstore::secrets::{datasource_login, datasource_target, LoginSource};
+    let cloud = crate::recordstore::DatasourceConfig {
+        kind: "postgres".into(),
+        id: format!("scoped-{}", uuid::Uuid::new_v4()),
+        host: "db.example".into(),
+        database: "app".into(),
+        user: "app_owner".into(),
+        grant_scope: Some("cloud-a".into()),
+        ..Default::default()
+    };
+    let target = datasource_target(&cloud);
+    grants::put(
+        "cloud-a",
+        &target,
+        Some("alice".into()),
+        "alice-pw".into(),
+        Utc::now() + Duration::hours(1),
+    );
+    let login = datasource_login(&cloud).unwrap();
+    assert_eq!(login.source, LoginSource::Grant);
+    assert_eq!(login.user, "alice");
+    assert!(grants::expires_at(&cloud).is_some());
+    // Another cloud window, Studio, and a manual install keep their identity.
+    let other_window = crate::recordstore::DatasourceConfig {
+        grant_scope: Some("cloud-b".into()),
+        ..cloud.clone()
+    };
+    let studio = crate::recordstore::DatasourceConfig {
+        grant_scope: None,
+        ..cloud.clone()
+    };
+    let manual = crate::recordstore::DatasourceConfig {
+        grant_scope: None,
+        installation: Some("bundle".into()),
+        ..cloud.clone()
+    };
+    for ds in [&other_window, &studio, &manual] {
+        let login = datasource_login(ds).unwrap();
+        assert_eq!(login.source, LoginSource::None, "{:?}", ds.grant_scope);
+        assert_eq!(login.user, "app_owner");
+        assert_eq!(login.password, None);
+        assert_eq!(grants::expires_at(ds), None);
+    }
+    // Closing the cloud session drops its grant.
+    grants::release(&cloud);
+    assert_eq!(grants::granted_password(&cloud), None);
+}
+
+#[test]
+fn a_v2_grant_connects_as_its_per_user_database_user() {
+    use crate::cloud::contract::{GrantEnvelope, GrantReply};
+    let ds = crate::recordstore::DatasourceConfig {
+        kind: "postgres".into(),
+        id: "ds-v2".into(),
+        host: "db.example".into(),
+        database: "app".into(),
+        user: "app_owner".into(),
+        ..Default::default()
+    };
+    let target = crate::recordstore::secrets::datasource_target(&ds);
+    let reply = |user: Option<&str>, target: &str| {
+        let cred = envelope::Credential {
+            v: if user.is_some() { 2 } else { 1 },
+            kind: "postgres".into(),
+            user: user.map(str::to_string),
+            password: "pw-v2".into(),
+            target: target.into(),
+        };
+        let aad = envelope::aad_for("app", "ds-v2", "user", Some("u1"));
+        let s = envelope::seal(&serde_json::to_vec(&cred).unwrap(), &aad).unwrap();
+        GrantReply {
+            dek: s.dek,
+            envelope: GrantEnvelope {
+                ciphertext: s.ciphertext,
+                nonce: s.nonce,
+                aad,
+            },
+            expires_at: None,
+        }
+    };
+    let open = |r: &GrantReply| super::runtime_commands::open_credential("app", &ds, r);
+    assert_eq!(
+        open(&reply(Some("alice"), &target)).unwrap(),
+        (Some("alice".into()), "pw-v2".into())
+    );
+    assert_eq!(open(&reply(None, &target)).unwrap(), (None, "pw-v2".into()));
+    assert_eq!(open(&reply(Some(""), &target)).unwrap().0, None);
+    assert_eq!(
+        open(&reply(Some("bad\nuser"), &target)).unwrap_err().code,
+        "CREDENTIAL_DECRYPT"
+    );
+    assert_eq!(
+        open(&reply(Some("alice"), "other-target"))
+            .unwrap_err()
+            .code,
+        "CREDENTIAL_TARGET_MISMATCH"
+    );
+    assert_eq!(
+        super::runtime_commands::open_credential("other-app", &ds, &reply(Some("alice"), &target))
+            .unwrap_err()
+            .code,
+        "CREDENTIAL_DECRYPT"
+    );
 }
 
 #[test]

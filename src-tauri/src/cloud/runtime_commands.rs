@@ -175,6 +175,39 @@ fn reattach(window: &str) -> Result<crate::recordstore::commands::DatasourceStat
     crate::recordstore::commands::connect_datasource(window.to_string())
 }
 
+/// Opens a key grant's credential envelope for `ds` and returns the
+/// (per-user username, password) it carries. The envelope must be sealed for
+/// this application, datasource, and datasource target; a v2 per-user
+/// username must be a valid PostgreSQL user.
+pub(crate) fn open_credential(
+    app_id: &str,
+    ds: &crate::recordstore::DatasourceConfig,
+    reply: &super::contract::GrantReply,
+) -> Result<(Option<String>, String), AppError> {
+    let aad = reply.envelope.aad.clone();
+    let prefix = format!("ixtable-credential/1|{}|{}|", app_id, ds.id);
+    if !aad.starts_with(&prefix) {
+        return Err(err("CREDENTIAL_DECRYPT", "The credential envelope is for another application or datasource"));
+    }
+    let plain = envelope::open(&reply.envelope.ciphertext, &reply.envelope.nonce, &aad, &reply.dek)?;
+    let cred: envelope::Credential = serde_json::from_slice(&plain)
+        .map_err(|_| err("CREDENTIAL_DECRYPT", "The decrypted credential is unreadable"))?;
+    drop(plain);
+    if cred.target != datasource_target(ds) {
+        return Err(err(
+            "CREDENTIAL_TARGET_MISMATCH",
+            "The delivered credential was sealed for another database server or user; ask the developer to upload it again",
+        ));
+    }
+    let user = cred.user.filter(|u| !u.is_empty());
+    if let Some(u) = &user {
+        crate::recordstore::secrets::validate_login_user(u).map_err(|_| {
+            err("CREDENTIAL_DECRYPT", "The delivered credential names an invalid database user")
+        })?;
+    }
+    Ok((user, cred.password))
+}
+
 /// Requests a key grant for the open cloud installation's PostgreSQL
 /// datasource, decrypts the credential envelope in memory, and connects.
 /// A REVOKED/FORBIDDEN answer drops any held credential and disconnects.
@@ -203,7 +236,7 @@ pub async fn cloud_key_grant(
             Ok(r) => r,
             Err(e) => {
                 if matches!(e.code.as_str(), "REVOKED" | "FORBIDDEN" | "ENTITLEMENT_REQUIRED" | "NOT_FOUND") {
-                    grants::clear(&target);
+                    grants::clear(&window_label, &target);
                     let _ = reattach(&window_label);
                     crate::logging::warn("cloud", &format!("key grant refused: {}", e.code));
                 }
@@ -211,21 +244,7 @@ pub async fn cloud_key_grant(
             }
         };
         let reply: super::contract::GrantReply = super::contract::decode("key-grant", reply)?;
-        let aad = reply.envelope.aad.clone();
-        let prefix = format!("ixtable-credential/1|{}|{}|", m.app_id, ds.id);
-        if !aad.starts_with(&prefix) {
-            return Err(err("CREDENTIAL_DECRYPT", "The credential envelope is for another application or datasource"));
-        }
-        let plain = envelope::open(&reply.envelope.ciphertext, &reply.envelope.nonce, &aad, &reply.dek)?;
-        let cred: envelope::Credential = serde_json::from_slice(&plain)
-            .map_err(|_| err("CREDENTIAL_DECRYPT", "The decrypted credential is unreadable"))?;
-        drop(plain);
-        if cred.target != target {
-            return Err(err(
-                "CREDENTIAL_TARGET_MISMATCH",
-                "The delivered credential was sealed for another database server or user; ask the developer to upload it again",
-            ));
-        }
+        let (user, password) = open_credential(&m.app_id, &ds, &reply)?;
         // Never trust a grant longer than the 24-hour renewal interval.
         let max = Utc::now() + Duration::hours(24);
         let expires = reply
@@ -235,13 +254,7 @@ pub async fn cloud_key_grant(
             .map(|t| t.with_timezone(&Utc))
             .unwrap_or(max)
             .min(max);
-        let user = cred.user.filter(|u| !u.is_empty());
-        if let Some(u) = &user {
-            crate::recordstore::secrets::validate_login_user(u).map_err(|_| {
-                err("CREDENTIAL_DECRYPT", "The delivered credential names an invalid database user")
-            })?;
-        }
-        grants::put(&target, user, cred.password, expires);
+        grants::put(&window_label, &target, user, password, expires);
         let status = reattach(&window_label)?;
         Ok(GrantResult {
             needed: true,
@@ -257,7 +270,7 @@ pub async fn cloud_key_grant(
 #[tauri::command]
 pub fn cloud_release_credentials(window_label: String) -> Result<(), AppError> {
     if let Ok(config) = crate::manager()?.config(&window_label) {
-        grants::clear(&datasource_target(&config.datasource));
+        grants::clear(&window_label, &datasource_target(&config.datasource));
         if config.datasource.is_postgres() {
             let _ = reattach(&window_label);
         }

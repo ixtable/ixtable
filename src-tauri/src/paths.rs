@@ -5,7 +5,8 @@
 //! `IXTABLE_STATE_DIR` when set (tests), else the directory the Tauri app passes
 //! to [`init_app_dir`] (its app-local-data dir), else the platform data dir plus
 //! `ixtable`. It is never the OS temp dir, which other users can read and the OS
-//! may purge.
+//! may purge, except in unit tests without `IXTABLE_STATE_DIR`, which get a
+//! private per-process temp dir instead of the developer's real state.
 use std::{
     ffi::OsString,
     fs, io,
@@ -25,9 +26,18 @@ pub fn init_app_dir(dir: PathBuf) {
 
 /// Root of all durable local state (`<state>/data`, `<state>/cache`, `<state>/logs`).
 pub fn state_dir() -> PathBuf {
-    STATE
-        .get_or_init(|| prepare(resolve(|k| std::env::var_os(k))))
-        .clone()
+    STATE.get_or_init(|| prepare(default_dir())).clone()
+}
+
+#[cfg(not(test))]
+fn default_dir() -> PathBuf {
+    resolve(|k| std::env::var_os(k))
+}
+#[cfg(test)]
+fn default_dir() -> PathBuf {
+    env_dir(|k| std::env::var_os(k)).unwrap_or_else(|| {
+        std::env::temp_dir().join(format!("ixtable-test-state-{}", uuid::Uuid::new_v4()))
+    })
 }
 
 fn prepare(dir: PathBuf) -> PathBuf {

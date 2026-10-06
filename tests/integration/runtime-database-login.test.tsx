@@ -71,8 +71,24 @@ it("asks for a database login when a shared bundle carries none and stores nothi
   const dialog = await screen.findByRole("dialog", { name: "Database login" }, LONG);
   expect(dialog).toHaveTextContent("“orders” on 127.0.0.1");
   expect(within(dialog).getByRole("textbox", { name: "Database user" })).toHaveValue("app_reader");
+  expect(dialog).toHaveTextContent("Connection security: sslmode require.");
+  expect(within(dialog).getByRole("note")).toHaveTextContent(/does not verify the database server/);
   await user.type(within(dialog).getByLabelText("Database password"), "typed-secret-1");
-  await user.click(within(dialog).getByRole("button", { name: "Connect" }));
+  const connect = within(dialog).getByRole("button", { name: "Connect" });
+  expect(connect).toBeDisabled();
+  await expect(
+    invoke("set_runtime_datasource_login", {
+      windowLabel,
+      user: "app_reader",
+      password: "typed-secret-1",
+    }).then(
+      () => "sent",
+      (e: unknown) => String((e as Error).message ?? e),
+    ),
+  ).resolves.toMatch(/UNVERIFIED_TRANSPORT/);
+  await user.click(within(dialog).getByRole("checkbox", { name: /I accept sending my password/ }));
+  expect(connect).toBeEnabled();
+  await user.click(connect);
   expect(await within(dialog).findByRole("alert", {}, LONG)).toHaveTextContent(/Could not connect/);
   expect(within(dialog).getByLabelText("Database password")).toHaveValue("");
   expect(within(dialog).queryByRole("button", { name: "Forget saved login" })).toBeNull();
@@ -82,6 +98,8 @@ it("asks for a database login when a shared bundle carries none and stores nothi
     source: "none",
     needsLogin: true,
     reason: "missing",
+    sslmode: "require",
+    serverVerified: false,
   });
   expect(JSON.stringify(status)).not.toContain("typed-secret-1");
 
@@ -145,6 +163,8 @@ it.skipIf(!postgresUrl)(
     const { user, bar } = await openBundle(bundle);
 
     const dialog = await screen.findByRole("dialog", { name: "Database login" }, LONG);
+    expect(dialog).toHaveTextContent("Connection security: sslmode disable.");
+    await user.click(within(dialog).getByRole("checkbox", { name: /I accept sending my password/ }));
     await user.type(within(dialog).getByLabelText("Database password"), "wrong-password-9");
     await user.click(within(dialog).getByRole("button", { name: "Connect" }));
     expect(await within(dialog).findByRole("alert", {}, LONG)).toHaveTextContent(

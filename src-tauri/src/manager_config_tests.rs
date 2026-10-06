@@ -185,3 +185,60 @@ fn runtime_sessions_read_bundled_file_sources() {
     crate::installation::forget_runtime(&state.session_id);
     let _ = std::fs::remove_dir_all(base);
 }
+
+#[test]
+fn cloud_sessions_ignore_a_manual_installation_login_for_the_same_app() {
+    use crate::recordstore::secrets::{
+        clear_installation_login, datasource_login, store_installation_login, LoginSource,
+    };
+    let (m, base) = manager();
+    let bundle_id = Uuid::new_v4().to_string();
+    let ds_id = Uuid::new_v4().to_string();
+    let doc = || {
+        let mut doc = archive::create_document("Runtime").unwrap();
+        unreachable_postgres(&mut doc.config);
+        doc.config.datasource.id = ds_id.clone();
+        doc
+    };
+    // The recipient typed a login for a manual install of this app.
+    let mut manual = doc().config.datasource;
+    manual.installation = Some(bundle_id.clone());
+    store_installation_login(&manual, "manual_user", "manual-pw", true).unwrap();
+    let open = |window: &str, dir: PathBuf| {
+        fs::create_dir_all(&dir).unwrap();
+        rusqlite::Connection::open(dir.join("data.db")).unwrap();
+        let state = m
+            .open_runtime_session(
+                window,
+                &dir,
+                doc(),
+                crate::installation::RuntimeSession {
+                    bundle_id: bundle_id.clone(),
+                    version: "1.0.0".into(),
+                    dir: dir.clone(),
+                },
+            )
+            .unwrap();
+        (state, m.config(window).unwrap().datasource)
+    };
+    // A cloud install uses the same bundle id (document id) in the cloud root.
+    let cloud_dir = crate::cloud::install::cloud_root()
+        .join(Uuid::new_v4().to_string())
+        .join(&bundle_id);
+    let (cloud_state, cloud) = open("rt-cloud", cloud_dir.clone());
+    assert_eq!(cloud.installation, None);
+    assert_eq!(cloud.grant_scope.as_deref(), Some("rt-cloud"));
+    let login = datasource_login(&cloud).unwrap();
+    assert_eq!(login.source, LoginSource::None, "no grant: the cloud user gets nothing");
+    assert_eq!(login.password, None);
+    // The manual install itself still finds its login.
+    let (manual_state, ds) = open("rt-manual", base.join("installation"));
+    assert_eq!(ds.installation.as_deref(), Some(bundle_id.as_str()));
+    assert_eq!(ds.grant_scope, None);
+    assert_eq!(datasource_login(&ds).unwrap().source, LoginSource::Installation);
+    clear_installation_login(&manual).unwrap();
+    crate::installation::forget_runtime(&cloud_state.session_id);
+    crate::installation::forget_runtime(&manual_state.session_id);
+    let _ = fs::remove_dir_all(cloud_dir.parent().unwrap());
+    let _ = std::fs::remove_dir_all(base);
+}

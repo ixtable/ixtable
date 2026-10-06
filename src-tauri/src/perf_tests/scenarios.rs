@@ -15,6 +15,7 @@ fn first_page(m: &crate::manager::DocumentManager) {
 }
 
 #[test]
+#[ignore = "timing harness; needs IXTABLE_PERF=1 and --include-ignored"]
 fn application_open_after_warm_start() {
     if !enabled() {
         return;
@@ -72,6 +73,7 @@ fn autosave_after(
 }
 
 #[test]
+#[ignore = "timing harness; needs IXTABLE_PERF=1 and --include-ignored"]
 fn autosave_after_a_definition_edit() {
     if !enabled() {
         return;
@@ -102,6 +104,7 @@ fn update_deal(m: &crate::manager::DocumentManager, i: usize) {
 }
 
 #[test]
+#[ignore = "timing harness; needs IXTABLE_PERF=1 and --include-ignored"]
 fn autosave_after_a_record_edit() {
     if !enabled() {
         return;
@@ -115,6 +118,7 @@ fn autosave_after_a_record_edit() {
 }
 
 #[test]
+#[ignore = "timing harness; needs IXTABLE_PERF=1 and --include-ignored"]
 fn sqlite_write_then_read() {
     if !enabled() {
         return;
@@ -142,6 +146,7 @@ fn sqlite_write_then_read() {
 }
 
 #[test]
+#[ignore = "timing harness; needs IXTABLE_PERF=1 and --include-ignored"]
 fn postgres_write_then_read() {
     if !enabled() {
         return;
@@ -185,6 +190,7 @@ fn postgres_write_then_read() {
 }
 
 #[test]
+#[ignore = "timing harness; needs IXTABLE_PERF=1 and --include-ignored"]
 fn report_query_cancellation() {
     if !enabled() {
         return;
@@ -237,6 +243,7 @@ fn report_query_cancellation() {
 }
 
 #[test]
+#[ignore = "timing harness; needs IXTABLE_PERF=1 and --include-ignored"]
 fn fixture_matches_its_description() {
     if !enabled() {
         return;

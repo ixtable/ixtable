@@ -1,7 +1,8 @@
-//! RecordStore conformance suite (PRD §9.4, §10.1). Every scenario runs
-//! against SQLite and, when `IXTABLE_TEST_POSTGRES_URL` is set, PostgreSQL;
-//! reads always go through DuckDB, so this also proves read-after-write and
-//! logical-type equivalence across engines.
+//! RecordStore conformance suite (PRD §9.4, §10.1). Every scenario runs as
+//! `sqlite::<scenario>` and as `postgres::<scenario>`, which is `#[ignore]`d and
+//! needs `IXTABLE_TEST_POSTGRES_URL` (see `crate::test_env`); reads always go
+//! through DuckDB, so this also proves read-after-write and logical-type
+//! equivalence across engines.
 use super::{sqlite::SqliteRecordStore, RecordStore, StoreError, WriteOp};
 use crate::data::{
     CreateColumn, CreateForeignKey, CreateTable, DataValue, NamedValue, ReadRuntime, ReadTarget,
@@ -37,14 +38,12 @@ pub(crate) fn sqlite_harness() -> Harness {
     }
 }
 
+/// `None` (or a panic under CI) when `IXTABLE_TEST_POSTGRES_URL` is missing.
 pub(crate) fn postgres_harness() -> Option<Harness> {
-    let Ok(url) = std::env::var("IXTABLE_TEST_POSTGRES_URL") else {
-        eprintln!("skipping PostgreSQL conformance: set IXTABLE_TEST_POSTGRES_URL=postgres://user@host:port/db");
-        return None;
-    };
+    let url = crate::test_env::postgres_url()?;
     let schema = format!("ixt_{}", uuid::Uuid::new_v4().simple());
     let mut admin =
-        postgres::Client::connect(&url, postgres::NoTls).expect("PostgreSQL test server");
+        ::postgres::Client::connect(&url, ::postgres::NoTls).expect("PostgreSQL test server");
     admin
         .batch_execute(&format!("CREATE SCHEMA {schema}"))
         .unwrap();
@@ -70,19 +69,49 @@ pub(crate) fn postgres_harness() -> Option<Harness> {
     })
 }
 
-/// Runs a scenario on every available store.
-pub(crate) fn each_store(scenario: impl Fn(&mut Harness)) {
-    let mut ran = vec![];
-    for h in [Some(sqlite_harness()), postgres_harness()]
-        .into_iter()
-        .flatten()
-    {
-        let mut h = h;
-        scenario(&mut h);
-        ran.push(h.name);
-    }
-    assert!(ran.contains(&"sqlite"));
+#[derive(Clone, Copy)]
+pub(crate) enum Store {
+    Sqlite,
+    Postgres,
 }
+
+/// Runs a scenario on one store.
+pub(crate) fn each_store(store: Store, scenario: impl Fn(&mut Harness)) {
+    let harness = match store {
+        Store::Sqlite => Some(sqlite_harness()),
+        Store::Postgres => postgres_harness(),
+    };
+    if let Some(mut h) = harness {
+        scenario(&mut h);
+    }
+}
+
+/// Declares `sqlite::<scenario>` and the ignored `postgres::<scenario>` tests.
+macro_rules! per_store {
+    ($($scenario:ident),* $(,)?) => {
+        mod sqlite {
+            $(#[test]
+            fn $scenario() {
+                super::$scenario(super::Store::Sqlite)
+            })*
+        }
+        mod postgres {
+            $(#[test]
+            #[ignore = "needs IXTABLE_TEST_POSTGRES_URL; CI runs it with --include-ignored"]
+            fn $scenario() {
+                super::$scenario(super::Store::Postgres)
+            })*
+        }
+    };
+}
+pub(crate) use per_store;
+
+per_store!(
+    crud_is_visible_to_duckdb_reads_after_each_commit,
+    constraints_map_to_stable_codes_and_cascade,
+    batches_are_atomic_and_values_are_bound_not_interpolated,
+    logical_types_round_trip_identically_through_duckdb,
+);
 
 pub(crate) fn col(name: &str, t: &str) -> CreateColumn {
     CreateColumn {
@@ -137,9 +166,8 @@ pub(crate) fn people(h: &mut Harness) {
         .unwrap();
 }
 
-#[test]
-fn crud_is_visible_to_duckdb_reads_after_each_commit() {
-    each_store(|h| {
+fn crud_is_visible_to_duckdb_reads_after_each_commit(store: Store) {
+    each_store(store, |h| {
         people(h);
         let id = h
             .store
@@ -175,9 +203,8 @@ fn crud_is_visible_to_duckdb_reads_after_each_commit() {
     });
 }
 
-#[test]
-fn constraints_map_to_stable_codes_and_cascade() {
-    each_store(|h| {
+fn constraints_map_to_stable_codes_and_cascade(store: Store) {
+    each_store(store, |h| {
         h.store
             .create_table(&CreateTable {
                 name: "parent".into(),
@@ -302,9 +329,8 @@ fn constraints_map_to_stable_codes_and_cascade() {
     });
 }
 
-#[test]
-fn batches_are_atomic_and_values_are_bound_not_interpolated() {
-    each_store(|h| {
+fn batches_are_atomic_and_values_are_bound_not_interpolated(store: Store) {
+    each_store(store, |h| {
         people(h);
         let hostile = "Robert'); DROP TABLE people; --";
         let err = h
@@ -354,8 +380,7 @@ fn batches_are_atomic_and_values_are_bound_not_interpolated() {
     });
 }
 
-#[test]
-fn logical_types_round_trip_identically_through_duckdb() {
+fn logical_types_round_trip_identically_through_duckdb(store: Store) {
     let types = [
         ("d", "decimal(10,2)"),
         ("dt", "date"),
@@ -368,7 +393,7 @@ fn logical_types_round_trip_identically_through_duckdb() {
         ("r", "real"),
         ("tx", "text"),
     ];
-    each_store(|h| {
+    each_store(store, |h| {
         let mut columns = vec![CreateColumn {
             primary_key_position: 1,
             nullable: false,
@@ -469,6 +494,7 @@ fn logical_types_round_trip_identically_through_duckdb() {
 /// A PostgreSQL refresh keeps the attached database (it only clears postgres_scanner's
 /// catalog cache), and the next read still sees new rows and new tables.
 #[test]
+#[ignore = "needs IXTABLE_TEST_POSTGRES_URL; CI runs it with --include-ignored"]
 fn postgres_refresh_keeps_the_attachment_and_sees_writes_and_ddl() {
     let Some(mut h) = postgres_harness() else {
         return;

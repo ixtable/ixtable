@@ -1,12 +1,19 @@
 //! Conformance scenarios (continued): optimistic concurrency, schema changes, migrations.
-use super::conformance::{col, each_store, int, nv, people, rows, text, Harness};
+use super::conformance::{col, each_store, int, nv, people, per_store, rows, text, Harness, Store};
 use super::{ChangeMode, CreateIndex};
 use crate::data::{AlterTable, CreateColumn, DataValue, LogicalType};
 use crate::migrations::{self, Migration};
 
-#[test]
-fn optimistic_updates_reject_stale_original_values() {
-    each_store(|h| {
+per_store!(
+    optimistic_updates_reject_stale_original_values,
+    concurrency_policies_apply_at_write_time,
+    schema_changes_publish_store_specific_modes_and_keep_data,
+    migrations_apply_record_and_roll_back_transactionally,
+    altering_a_column_keeps_replaces_or_removes_its_check,
+);
+
+fn optimistic_updates_reject_stale_original_values(store: Store) {
+    each_store(store, |h| {
         people(h);
         h.store
             .insert(
@@ -54,10 +61,9 @@ fn optimistic_updates_reject_stale_original_values() {
 
 /// The write-time policy check (`resolve_expected`) in front of each store, as
 /// `update_row`, `delete_row`, and `execute_write_batch` apply it.
-#[test]
-fn concurrency_policies_apply_at_write_time() {
+fn concurrency_policies_apply_at_write_time(store: Store) {
     use super::commands::resolve_expected;
-    each_store(|h| {
+    each_store(store, |h| {
         people(h);
         h.store
             .insert("people", &[nv("id", int(1)), nv("name", text("Ada"))])
@@ -120,9 +126,8 @@ fn concurrency_policies_apply_at_write_time() {
     });
 }
 
-#[test]
-fn schema_changes_publish_store_specific_modes_and_keep_data() {
-    each_store(|h| {
+fn schema_changes_publish_store_specific_modes_and_keep_data(store: Store) {
+    each_store(store, |h| {
         people(h);
         h.store
             .insert(
@@ -228,9 +233,8 @@ fn schema_changes_publish_store_specific_modes_and_keep_data() {
     });
 }
 
-#[test]
-fn migrations_apply_record_and_roll_back_transactionally() {
-    each_store(|h| {
+fn migrations_apply_record_and_roll_back_transactionally(store: Store) {
+    each_store(store, |h| {
         let m1 = Migration { id: "m1".into(), name: "Create items".into(), order: 1, up: "CREATE TABLE items (id INTEGER PRIMARY KEY, label TEXT NOT NULL); INSERT INTO items (id, label) VALUES (1, 'one');".into(), down: Some("DROP TABLE items;".into()), reversible: true, ..Default::default() };
         let bad = Migration { id: "m2".into(), name: "Broken".into(), order: 2, up: "INSERT INTO items (id, label) VALUES (2, 'two'); INSERT INTO items (id, label) VALUES (3, NULL);".into(), ..Default::default() };
         let all = [m1.clone(), bad.clone()];
@@ -284,9 +288,8 @@ fn migrations_apply_record_and_roll_back_transactionally() {
     });
 }
 
-#[test]
-fn altering_a_column_keeps_replaces_or_removes_its_check() {
-    each_store(|h| {
+fn altering_a_column_keeps_replaces_or_removes_its_check(store: Store) {
+    each_store(store, |h| {
         h.store
             .create_table(&crate::data::CreateTable {
                 name: "stock".into(),

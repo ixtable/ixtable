@@ -254,9 +254,9 @@ fn status_reasons_tell_missing_rejected_and_lookup_errors_apart() {
 /// Against a real server (`IXTABLE_TEST_POSTGRES_URL`): a wrong password maps
 /// to AUTH_FAILED without echoing it, and a stored login connects.
 #[test]
+#[ignore = "needs IXTABLE_TEST_POSTGRES_URL; CI runs it with --include-ignored"]
 fn postgres_refuses_a_wrong_login_with_auth_failed() {
-    let Ok(url) = std::env::var("IXTABLE_TEST_POSTGRES_URL") else {
-        eprintln!("skipping: set IXTABLE_TEST_POSTGRES_URL");
+    let Some(url) = crate::test_env::postgres_url() else {
         return;
     };
     let cfg: postgres::Config = url.parse().unwrap();

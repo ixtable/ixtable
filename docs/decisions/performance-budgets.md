@@ -53,7 +53,10 @@ cancel stops the query.
 
 ### Harness
 
-- Rust: `src-tauri/src/perf_tests/` runs only with `IXTABLE_PERF=1`. Each
+- Rust: `src-tauri/src/perf_tests/` tests are `#[ignore]`d and run only with
+  `--include-ignored` and `IXTABLE_PERF=1` (under CI a missing variable fails
+  the test; the `perf` job runs them through
+  `scripts/ci/run-ignored-rust-tests.mjs`, which checks each one passed). Each
   scenario runs once untimed, then seven timed samples, and records median,
   p95, and samples in `reports/perf/rust.json` (`IXTABLE_PERF_OUT` moves it).
   It also writes `reports/perf/perf-fixture.ixt`. The PostgreSQL row needs
@@ -69,7 +72,7 @@ cancel stops the query.
 Run it locally:
 
 ```bash
-cd src-tauri && IXTABLE_PERF=1 cargo test --release --lib perf_tests -- --test-threads=1
+cd src-tauri && IXTABLE_PERF=1 cargo test --release --lib perf_tests -- --include-ignored --test-threads=1
 cd .. && node scripts/ci/build-test-bridge.mjs --release
 npx vitest run --config vitest.perf.config.ts
 node scripts/ci/perf-report.mjs

@@ -25,10 +25,13 @@ npm run tauri:dev                                    # run the app
 | Typecheck / lint / format | `npx tsc --noEmit`, `npm run lint`, `npx biome format --write <files>` |
 | Screenshots | `npm run screenshot` (see `.claude/skills/app-qa/SKILL.md`) |
 
-PostgreSQL tests (Rust conformance in `recordstore/conformance.rs`,
-`tests/integration/datasource.test.tsx`) skip unless
-`IXTABLE_TEST_POSTGRES_URL=postgresql://user:pass@host:5432/db?sslmode=disable`
-is set. `IXTABLE_DUCKDB_SQLITE_EXTENSION` / `IXTABLE_DUCKDB_POSTGRES_EXTENSION`
+PostgreSQL tests need
+`IXTABLE_TEST_POSTGRES_URL=postgresql://user:pass@host:5432/db?sslmode=disable`:
+`tests/integration/datasource.test.tsx` skips without it, and the Rust ones
+(and the heavy and perf tests) are `#[ignore]`d. Run those with
+`cargo test --lib -- --include-ignored <filter>`; under `CI` a missing variable
+panics (`src-tauri/src/test_env.rs`), and CI runs them through
+`scripts/ci/run-ignored-rust-tests.mjs`, which checks each one ran and passed. `IXTABLE_DUCKDB_SQLITE_EXTENSION` / `IXTABLE_DUCKDB_POSTGRES_EXTENSION`
 override extension paths (hashes still checked). `IXTABLE_STATE_DIR` moves
 the state directory (tests set it to a temp dir).
 

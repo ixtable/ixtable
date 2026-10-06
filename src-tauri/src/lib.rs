@@ -500,6 +500,8 @@ mod durability_tests;
 mod perf_tests;
 #[cfg(test)]
 mod release_keys;
+#[cfg(test)]
+mod test_env;
 
 #[cfg(test)]
 mod launch_args_tests {

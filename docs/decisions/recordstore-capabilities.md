@@ -195,9 +195,14 @@ failures (SQLSTATE class 28) map to `AUTH_FAILED`.
   so users see the real cost of a change.
 - New stores must implement the trait, publish capabilities, and pass the
   conformance suite before they ship.
-- PostgreSQL tests need a server. Locally they skip unless
-  `IXTABLE_TEST_POSTGRES_URL` is set. In CI they run against a `postgres:16`
-  service container on Linux.
+- PostgreSQL tests need a server, so the Rust ones are `#[ignore]`d with that
+  reason and a plain `cargo test` lists them as ignored. Run them with
+  `IXTABLE_TEST_POSTGRES_URL=... cargo test --lib -- --include-ignored recordstore postgres migrations data --skip perf_tests`.
+  Without the variable they return early with a message, or panic when `CI` is
+  set (`src-tauri/src/test_env.rs`). In CI the PostgreSQL jobs (a `postgres:16`
+  service container on Linux, a native server on macOS and Windows) run them
+  through `scripts/ci/run-ignored-rust-tests.mjs`, which fails unless every
+  ignored test the filter selects ran and passed.
 - PostgreSQL data is not part of the `.ixt` archive and is not backed up by
   ixtable. The datasource tab says so.
 

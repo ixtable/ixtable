@@ -119,15 +119,17 @@ impl ReadRuntime {
         if self.attach_error.is_some() {
             return self.rebuild();
         }
+        // Exclusive: connections cloned from this database (`read_connection`) share
+        // the attached catalog, so none may run while `data` is re-attached, or load
+        // postgres_scanner's catalog while it is cleared (a load racing the clear can
+        // cache the pre-DDL catalog again).
+        let _gate = super::gate::exclusive(&self.workspace.join("data.db"))?;
         if let ReadTarget::Postgres { .. } = self.target {
             return match self.connection.execute_batch("CALL pg_clear_cache()") {
                 Ok(()) => Ok(()),
                 Err(_) => self.rebuild(),
             };
         }
-        // Exclusive: connections cloned from this database (`read_connection`)
-        // must not run while `data` is detached and re-attached.
-        let _gate = super::gate::exclusive(&self.workspace.join("data.db"))?;
         let _ = self.connection.execute_batch("USE memory; DETACH data");
         let result = attach(&self.connection, &self.workspace, &self.target);
         self.attach_error = result.as_ref().err().cloned();
@@ -136,13 +138,10 @@ impl ReadRuntime {
     pub fn connection(&self) -> &duckdb::Connection {
         &self.connection
     }
-    /// Shared access to the embedded file for one read (see `data::gate`); a
-    /// PostgreSQL target needs none.
+    /// Shared access to the `data` catalog for one read (see `data::gate`): it
+    /// excludes RecordStore writes to the embedded file and every `refresh`.
     pub fn read_gate(&self) -> Result<Option<super::gate::GateGuard>, String> {
-        match self.target {
-            ReadTarget::Sqlite => super::gate::shared(&self.workspace.join("data.db")).map(Some),
-            ReadTarget::Postgres { .. } => Ok(None),
-        }
+        super::gate::shared(&self.workspace.join("data.db")).map(Some)
     }
     fn ready(&self) -> Result<(), String> {
         match &self.attach_error {

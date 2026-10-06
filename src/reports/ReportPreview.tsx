@@ -147,12 +147,15 @@ function LoadedPreview({
     try {
       const path = await choosePdfDestination(report.name);
       if (!path) return;
-      const bytes = await reportPdfBytes(result.doc, result.data.assets, {
+      const { bytes, warnings } = await reportPdfBytes(result.doc, result.data.assets, {
         title: report.name,
         creationDate: result.generatedAt,
       });
       await writeReportPdf(path, bytes, report.id);
-      setNotice(`Exported PDF to ${path}`);
+      const placeholders = warnings.length
+        ? `. Printed as placeholders: ${warnings.join("; ")}`
+        : "";
+      setNotice(`Exported PDF to ${path}${placeholders}`);
     } catch (reason) {
       setError(asTauriError(reason).message);
     }

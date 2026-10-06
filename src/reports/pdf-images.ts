@@ -2,7 +2,8 @@
  * Image XObjects for the PDF writer without decoding pixels:
  * JPEG passes through as DCTDecode; PNG IDAT data passes through as
  * FlateDecode with the PNG predictor (non-interlaced gray, RGB and palette
- * images). Other PNGs (alpha, tRNS transparency, interlacing) are decoded by
+ * images, at most 8 bits per sample, as PDF 1.4 allows). Other PNGs (alpha,
+ * tRNS transparency, interlacing, 16-bit samples) are decoded by
  * Rust (`prepare_report_pdf`) into color samples plus a soft mask.
  */
 
@@ -77,7 +78,7 @@ export function jpegImage(data: Uint8Array): PdfImage | null {
 
 const PNG_SIGNATURE = [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a];
 
-/** PNG passthrough for opaque non-interlaced grayscale, RGB and palette images. */
+/** PNG passthrough for opaque non-interlaced 8-bit-or-less grayscale, RGB and palette images. */
 export function pngImage(data: Uint8Array): PdfImage | null {
   if (!PNG_SIGNATURE.every((b, i) => data[i] === b)) return null;
   let i = 8;
@@ -104,13 +105,14 @@ export function pngImage(data: Uint8Array): PdfImage | null {
     else if (type === "IEND") break;
     i += 12 + length;
   }
-  if (!width || !height || interlace !== 0 || !idat.length) return null;
+  // 16-bit samples need PDF 1.5; Rust strips them to 8 bits instead.
+  if (!width || !height || interlace !== 0 || depth > 8 || !idat.length) return null;
   let colors: number;
   let space: string;
   if (colorType === 0) {
     colors = 1;
     space = "/DeviceGray";
-  } else if (colorType === 2 && (depth === 8 || depth === 16)) {
+  } else if (colorType === 2 && depth === 8) {
     colors = 3;
     space = "/DeviceRGB";
   } else if (colorType === 3 && palette && depth <= 8) {

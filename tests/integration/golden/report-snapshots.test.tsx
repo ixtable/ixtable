@@ -55,10 +55,11 @@ async function snapshotReports(template: string, expectedReports: string[]) {
       assets,
     });
     expect(doc.diagnostics, `${report.name} lays out without problems`).toEqual([]);
-    const pdf = await reportPdfBytes(doc, data.assets, {
+    const { bytes: pdf, warnings } = await reportPdfBytes(doc, data.assets, {
       title: report.name,
       creationDate: NOW.toISOString(),
     });
+    expect(warnings, `${report.name} images all print`).toEqual([]);
     const name = `${slug(template)}-${slug(report.name)}`;
     let json = JSON.stringify(doc, null, 1);
     const ids = [

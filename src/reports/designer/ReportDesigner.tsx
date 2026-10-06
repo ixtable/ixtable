@@ -173,6 +173,7 @@ export function ReportDesigner({
         {selected ? (
           <ComponentProperties
             component={selected.component}
+            pageBand={isPageBand(selected.key)}
             columns={columns}
             queries={queries}
             assets={assets}

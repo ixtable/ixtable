@@ -177,7 +177,7 @@ describe("pdf alpha images", () => {
     expect(opaque.dict).toContain("/DeviceGray");
   });
 
-  it("sends PNGs with tRNS transparency to Rust instead of passing them through", () => {
+  it("sends PNGs with tRNS transparency or 16-bit samples to Rust instead of passing them through", () => {
     const chunk = (type: string, body: number[]) => [
       0,
       0,
@@ -208,5 +208,24 @@ describe("pdf alpha images", () => {
       ]);
     expect(pngImage(png([]))).not.toBeNull();
     expect(pngImage(png(chunk("tRNS", [0])))).toBeNull();
+    const rgb = (depth: number) =>
+      new Uint8Array([
+        0x89,
+        0x50,
+        0x4e,
+        0x47,
+        0x0d,
+        0x0a,
+        0x1a,
+        0x0a,
+        ...chunk("IHDR", [0, 0, 0, 1, 0, 0, 0, 1, depth, 2, 0, 0, 0]),
+        ...chunk("IDAT", [1]),
+        ...chunk("IEND", []),
+      ]);
+    expect(pngImage(rgb(8))?.dict).toContain("/BitsPerComponent 8");
+    expect(pngImage(rgb(16))).toBeNull();
+    const gray16 = rgb(16);
+    gray16[8 + 8 + 9] = 0;
+    expect(pngImage(gray16)).toBeNull();
   });
 });

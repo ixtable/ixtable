@@ -193,7 +193,7 @@ fn rgba_png_splits_into_color_and_soft_mask() {
         inflate(img.alpha_base64.as_deref().unwrap()),
         vec![255, 128, 0, 255]
     );
-    assert_eq!(decode_png(&bytes), Some(img), "deterministic");
+    assert_eq!(decode_png(&bytes), Ok(img), "deterministic");
 }
 
 #[test]
@@ -243,5 +243,86 @@ fn palette_png_with_transparency_expands_to_rgb_and_mask() {
     assert_eq!(img.colors, 3);
     assert_eq!(inflate(&img.color_base64), vec![10, 20, 30, 40, 50, 60]);
     assert_eq!(inflate(img.alpha_base64.as_deref().unwrap()), vec![0, 255]);
-    assert_eq!(decode_png(b"not a png"), None);
+    assert!(decode_png(b"not a png")
+        .unwrap_err()
+        .starts_with("unreadable PNG"));
+}
+
+/// A PNG written chunk by chunk, for headers the encoder won't produce.
+fn raw_png(ihdr: [u8; 13], scanlines: &[u8]) -> Vec<u8> {
+    let chunk = |out: &mut Vec<u8>, kind: &[u8; 4], data: &[u8]| {
+        out.extend_from_slice(&(data.len() as u32).to_be_bytes());
+        let mut crc = flate2::Crc::new();
+        crc.update(kind);
+        crc.update(data);
+        out.extend_from_slice(kind);
+        out.extend_from_slice(data);
+        out.extend_from_slice(&crc.sum().to_be_bytes());
+    };
+    let mut out = vec![0x89, b'P', b'N', b'G', 0x0d, 0x0a, 0x1a, 0x0a];
+    chunk(&mut out, b"IHDR", &ihdr);
+    chunk(&mut out, b"IDAT", &deflate(scanlines).unwrap());
+    chunk(&mut out, b"IEND", &[]);
+    out
+}
+
+fn ihdr(width: u32, height: u32, depth: u8, color: u8, interlace: u8) -> [u8; 13] {
+    let mut h = [0; 13];
+    h[..4].copy_from_slice(&width.to_be_bytes());
+    h[4..8].copy_from_slice(&height.to_be_bytes());
+    h[8] = depth;
+    h[9] = color;
+    h[12] = interlace;
+    h
+}
+
+#[test]
+fn huge_declared_png_is_rejected_before_allocating() {
+    // 40000×40000 RGBA would need 6.4 GB; the file itself is tiny.
+    let bytes = raw_png(ihdr(40_000, 40_000, 8, 6, 0), &[0]);
+    assert!(bytes.len() < 100);
+    let err = decode_png(&bytes).unwrap_err();
+    assert!(err.contains("40000×40000"), "{err}");
+    assert!(err.contains("50 megapixel"), "{err}");
+    let resources = pdf_resources(&[], &[b64(&bytes)]).unwrap();
+    assert_eq!(resources.images, vec![None]);
+    assert_eq!(resources.warnings.len(), 1);
+    assert!(resources.warnings[0].starts_with("Image 1: PNG is 40000×40000"));
+}
+
+#[test]
+fn truncated_png_is_rejected() {
+    let pixels = [7u8; 4 * 4 * 3];
+    let bytes = encode_png(png::ColorType::Rgb, png::BitDepth::Eight, 4, 4, &pixels);
+    let err = decode_png(&bytes[..bytes.len() / 2]).unwrap_err();
+    assert!(err.starts_with("unreadable PNG"), "{err}");
+    let resources = pdf_resources(&[], &["@@not base64".into()]).unwrap();
+    assert_eq!(resources.images, vec![None]);
+    assert!(resources.warnings[0].starts_with("Image 1: invalid image data"));
+}
+
+#[test]
+fn sixteen_bit_rgb_png_is_stripped_to_eight_bits() {
+    let pixels = [0x12, 0x34, 0x56, 0x78, 0x9a, 0xbc];
+    let bytes = encode_png(png::ColorType::Rgb, png::BitDepth::Sixteen, 1, 1, &pixels);
+    let img = decode_png(&bytes).unwrap();
+    assert_eq!((img.colors, img.alpha_base64.clone()), (3, None));
+    assert_eq!(inflate(&img.color_base64), vec![0x12, 0x56, 0x9a]);
+}
+
+#[test]
+fn interlaced_png_is_deinterlaced() {
+    // Adam7 on 2×2 RGB: pass 1 holds (0,0), pass 6 holds (1,0), pass 7 holds row 1.
+    let scanlines = [
+        0, 1, 2, 3, // pass 1
+        0, 4, 5, 6, // pass 6
+        0, 7, 8, 9, 10, 11, 12, // pass 7
+    ];
+    let bytes = raw_png(ihdr(2, 2, 8, 2, 1), &scanlines);
+    let img = decode_png(&bytes).unwrap();
+    assert_eq!((img.width, img.height, img.colors), (2, 2, 3));
+    assert_eq!(
+        inflate(&img.color_base64),
+        vec![1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]
+    );
 }

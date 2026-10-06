@@ -15,6 +15,8 @@ const FILLS: [string, number | null][] = [
 
 interface Props {
   component: ReportComponent;
+  /** Page header or footer: their height is fixed, so text can't grow there. */
+  pageBand?: boolean;
   columns: string[];
   queries: SavedQuery[];
   assets: AssetSummary[];
@@ -25,6 +27,7 @@ interface Props {
 /** Property editor for the selected report component. */
 export function ComponentProperties({
   component: c,
+  pageBand = false,
   columns,
   queries,
   assets,
@@ -167,7 +170,7 @@ export function ComponentProperties({
             Bold
           </label>
         )}
-        {isText && (
+        {isText && !pageBand && (
           <label className="inline">
             <input
               type="checkbox"

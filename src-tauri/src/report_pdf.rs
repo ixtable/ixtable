@@ -124,6 +124,8 @@ pub struct ReportPdfResources {
     pub fonts: Vec<PdfFontSubset>,
     /// One entry per input PNG, in order; null when it can't be decoded.
     pub images: Vec<Option<PdfPngImage>>,
+    /// Why images print as placeholders (one line per undecodable PNG, by input position).
+    pub warnings: Vec<String>,
 }
 
 fn deflate(data: &[u8]) -> Result<Vec<u8>, AppError> {
@@ -200,20 +202,46 @@ pub fn font_subsets(code_points: &[u32]) -> Result<Vec<PdfFontSubset>, AppError>
     Ok(out)
 }
 
+/// Largest PNG the writer decodes. A header can declare any size, so the
+/// output buffer is never allocated before this check.
+pub const MAX_PNG_PIXELS: u64 = 50_000_000;
+/// Allocation budget for the PNG decoder's own buffers.
+const PNG_DECODER_BYTES: usize = 64 << 20;
+
 /// Decodes any PNG (palette, low bit depth, 16-bit, interlaced, tRNS) to
 /// 8-bit gray or RGB samples plus an alpha mask when any pixel is translucent.
-pub fn decode_png(bytes: &[u8]) -> Option<PdfPngImage> {
-    let mut decoder = png::Decoder::new(std::io::Cursor::new(bytes));
+/// Errors say why the image prints as a placeholder instead.
+pub fn decode_png(bytes: &[u8]) -> Result<PdfPngImage, String> {
+    let mut decoder = png::Decoder::new_with_limits(
+        std::io::Cursor::new(bytes),
+        png::Limits {
+            bytes: PNG_DECODER_BYTES,
+        },
+    );
     decoder.set_transformations(png::Transformations::EXPAND | png::Transformations::STRIP_16);
-    let mut reader = decoder.read_info().ok()?;
-    let mut buf = vec![0; reader.output_buffer_size()?];
-    let info = reader.next_frame(&mut buf).ok()?;
+    let mut reader = decoder
+        .read_info()
+        .map_err(|e| format!("unreadable PNG: {e}"))?;
+    let (width, height) = (reader.info().width, reader.info().height);
+    if u64::from(width) * u64::from(height) > MAX_PNG_PIXELS {
+        return Err(format!(
+            "PNG is {width}×{height}, larger than the {} megapixel limit",
+            MAX_PNG_PIXELS / 1_000_000
+        ));
+    }
+    let size = reader
+        .output_buffer_size()
+        .ok_or_else(|| "PNG is too large to decode".to_string())?;
+    let mut buf = vec![0; size];
+    let info = reader
+        .next_frame(&mut buf)
+        .map_err(|e| format!("unreadable PNG: {e}"))?;
     let (colors, has_alpha) = match info.color_type {
         png::ColorType::Grayscale => (1, false),
         png::ColorType::GrayscaleAlpha => (1, true),
         png::ColorType::Rgb => (3, false),
         png::ColorType::Rgba => (3, true),
-        png::ColorType::Indexed => return None,
+        png::ColorType::Indexed => return Err("unsupported PNG color type".into()),
     };
     let channels = colors + usize::from(has_alpha);
     let pixels = info.width as usize * info.height as usize;
@@ -230,40 +258,56 @@ pub fn decode_png(bytes: &[u8]) -> Option<PdfPngImage> {
     } else {
         (samples.to_vec(), None)
     };
-    Some(PdfPngImage {
+    let compress = |data: &[u8]| deflate(data).map(|d| b64(&d)).map_err(|e| e.message);
+    Ok(PdfPngImage {
         width: info.width,
         height: info.height,
         colors: colors as u8,
-        color_base64: b64(&deflate(&color).ok()?),
-        alpha_base64: match alpha {
-            Some(a) => Some(b64(&deflate(&a).ok()?)),
-            None => None,
-        },
+        color_base64: compress(&color)?,
+        alpha_base64: alpha.as_deref().map(compress).transpose()?,
+    })
+}
+
+/// Font subsets and decoded PNGs for one export (see `prepare_report_pdf`).
+pub fn pdf_resources(
+    code_points: &[u32],
+    pngs_base64: &[String],
+) -> Result<ReportPdfResources, AppError> {
+    let mut warnings = vec![];
+    let images = pngs_base64
+        .iter()
+        .enumerate()
+        .map(|(i, data)| {
+            let decoded = base64::engine::general_purpose::STANDARD
+                .decode(data.as_bytes())
+                .map_err(|e| format!("invalid image data: {e}"))
+                .and_then(|bytes| decode_png(&bytes));
+            decoded
+                .map_err(|reason| {
+                    crate::logging::warn("reports", &format!("PDF image {}: {reason}", i + 1));
+                    warnings.push(format!("Image {}: {reason}", i + 1));
+                })
+                .ok()
+        })
+        .collect();
+    Ok(ReportPdfResources {
+        fonts: font_subsets(code_points)?,
+        images,
+        warnings,
     })
 }
 
 /// Font subsets for the characters Helvetica can't print and decoded PNGs
-/// (base64) that the writer can't pass through (alpha, tRNS, interlacing).
-#[tauri::command]
+/// (base64) that the writer can't pass through (alpha, tRNS, interlacing,
+/// 16-bit). Runs on a worker thread: subsetting and deflating take a while.
+#[tauri::command(async)]
 pub fn prepare_report_pdf(
     window_label: String,
     code_points: Vec<u32>,
     pngs_base64: Vec<String>,
 ) -> Result<ReportPdfResources, AppError> {
     crate::manager()?.state(&window_label)?;
-    let images = pngs_base64
-        .iter()
-        .map(|data| {
-            base64::engine::general_purpose::STANDARD
-                .decode(data.as_bytes())
-                .ok()
-                .and_then(|bytes| decode_png(&bytes))
-        })
-        .collect();
-    Ok(ReportPdfResources {
-        fonts: font_subsets(&code_points)?,
-        images,
-    })
+    pdf_resources(&code_points, &pngs_base64)
 }
 
 #[cfg(test)]

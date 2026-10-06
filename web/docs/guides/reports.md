@@ -12,7 +12,7 @@ A report reads rows from a saved query or a table. It places components on bands
 
 The **Dataset** picker in the toolbar chooses where rows come from: a saved [query](./queries), a table, or no dataset. A report without a dataset prints its bands once, which suits a cover page or a form letter.
 
-When the saved query declares parameters, a **Parameters** section shows one field per parameter. These are the report's default values. An action's Open report step and a dashboard's filters can pass other values when they open the report. Report expressions read the values as `params`.
+When the saved query declares parameters, a **Parameters** section shows one field per parameter. These are the report's default values. An action's Open report step and a dashboard's filters can pass other values when they open the report. Report expressions read the values as `params`. In the Runtime, a report that is missing a value asks for it first, as [Reports in the Runtime](#reports-in-the-runtime) describes.
 
 A report reads at most 100,000 rows from a query. Beyond that, the preview says that it shows only the first 100,000.
 
@@ -50,6 +50,10 @@ Drag a component to move it and drag its corner to resize it. With a component f
 
 Field and calculated components take an optional **Format**, such as `#,##0.00` or `MMM d, yyyy`. Text components can set the font size, alignment, and bold. Shapes can set the border width and a gray fill. A band holds at most one table, and page headers and footers cannot hold tables.
 
+**Can grow** on a text, field, or calculated component lets its box grow to fit its text. Without it, lines beyond the box's height are cut off. A growing box pushes the components below it down, and the band grows with it. Components beside the box stay where they are.
+
+Can grow has no effect in page headers and footers, which keep their height, or in a band that holds a table. In a band with a table, the preview lists a problem. Page numbers do not make a box grow, because the box is measured before pages are counted.
+
 ## Expressions in reports
 
 Report expressions read these names:
@@ -83,21 +87,41 @@ ixtable sorts rows by the group keys. Without groups, rows keep the order of the
 
 **Page setup** sets the page size, A4 or Letter, the orientation, and the four margins in points.
 
-- A band never splits across pages. When it does not fit, it moves to the next page.
+- A band that does not fit moves to the next page. Only bands with a table or with grown text split.
 - A table grows to fit its rows and pushes the components below it down. A long table splits between rows and repeats its header row on each page.
-- **Keep together** moves a band with a table to the next page whole. On a group header, it keeps the header on the same page as the group's first row.
+- A band with grown text splits between lines. The text continues at the top of the next page, below the page header, and the components under it follow. An image or line that would cross the page edge moves to the next page with the text below it.
+- **Keep together** moves a band with a table or grown text to the next page whole, as long as it fits on one page. On a group header, it keeps the header on the same page as the group's first row.
 - Page breaks never create an empty page.
-- Text does not grow. Lines beyond a text box's height are cut off, so size the box for its content.
 
 ## Preview, print, and PDF
 
 The **Preview** tab shows one page at a time, with page buttons and a zoom setting. It reloads when the report, its parameters, or its query change. When loading takes more than two seconds, it shows progress and a **Cancel** button.
 
-**Print** opens the system print dialog. **Export PDF…** asks where to save the file and writes a PDF of every page. The PDF uses Helvetica. It includes `.jpg` images and `.png` images without transparency, and shows a placeholder for other images. Characters outside Western European text print as `?`.
+**Print** opens the system print dialog. **Export PDF…** asks where to save the file and writes a PDF of every page. The same report always exports the same bytes, on every computer.
+
+The PDF prints Western European text in Helvetica. Other characters use two fonts that ship with ixtable, so the output never depends on the fonts installed on a computer. DejaVu Sans covers Greek, Cyrillic, Armenian, Georgian, extended Latin, and symbols. Droid Sans Fallback covers Chinese and Japanese characters.
+
+The PDF embeds only the characters the report uses. Bold text in these fonts prints with thickened outlines, because no bold version ships.
+
+Some text still prints as `?`:
+
+| Text | Why |
+| --- | --- |
+| Hebrew, Arabic, Syriac, Thaana, and N'Ko | Right-to-left scripts need shaping and reordering that reports do not do |
+| Korean Hangul syllables, Thai, and Devanagari and other Indic scripts | Neither bundled font has them |
+| Any other character that neither font has | No glyph to print |
+
+Lao text and combining accents print, but without shaping, so their marks can sit in the wrong place. The preview shows the same substitutions as the PDF.
+
+The PDF includes `.jpg` and `.png` images, including PNG images with transparency, interlacing, or 16-bit color. Other image formats print as a placeholder box. So does a PNG larger than 50 megapixels or one that cannot be read, and the export message names the image and the reason.
 
 ## Reports in the Runtime
 
 A navigation item can open a report in the Runtime, with the same preview, Print, and Export PDF… buttons. An action can open a report with parameter values, and a dashboard can show a report that follows its filters. A role needs read access to a report to open it or export it. [Roles and permissions](./roles) covers the grants a report needs.
+
+When a report's queries declare parameters and the navigation item or action does not pass a value for each one, a dialog asks for them before the report runs. Each field matches the parameter's type, such as a number, a date, or a checkbox. The fields start with the values that were passed, then the report's defaults.
+
+A required parameter needs a value, even when the action passes an empty one. **Cancel** leaves the report unrun with an **Enter parameters…** button, and **Change parameters…** above a finished report asks again. A dashboard passes its filter values and never asks.
 
 ## Next steps
 

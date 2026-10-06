@@ -83,9 +83,10 @@ the UI with `userEvent`, query by role/label, use `findBy*` with
 
 `.github/workflows/desktop.yml`: lint, then tests on ubuntu/macos/windows
 (with the 500 MB archive test, `IXTABLE_HEAVY_TESTS=1`), PostgreSQL
-conformance on all three (ubuntu service container, native server elsewhere
-via `scripts/ci/start-postgres.mjs`), golden suites
-(`tests/integration/golden/`), and a debug `tauri build` on ubuntu. Shared
+conformance (ubuntu service container; on `main` also macOS/Windows with a
+native server via `scripts/ci/start-postgres.mjs`), golden suites
+(`tests/integration/golden/`; PRs ubuntu only, `main` all three), perf
+budgets (`main` only), and a debug `tauri build` on ubuntu. Shared
 setup is `.github/actions/setup-desktop`. Keep commands cross-platform: use
 Node scripts under `scripts/ci/` instead of POSIX shell in `package.json`.
 

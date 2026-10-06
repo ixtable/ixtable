@@ -191,8 +191,10 @@ jobs:
 
   # Service containers are Linux-only, so macOS and Windows start PostgreSQL
   # natively (scripts/ci/start-postgres.mjs exports IXTABLE_TEST_POSTGRES_URL).
+  # Main only: PRs get PostgreSQL coverage from the ubuntu job, freeing macOS/Windows runners.
   postgres-native:
     name: PostgreSQL conformance (${{ matrix.os }})
+    if: github.event_name != 'pull_request'
     strategy:
       fail-fast: false
       matrix:
@@ -227,12 +229,13 @@ jobs:
           if-no-files-found: ignore
           retention-days: 7
 
+  # PRs run golden apps on ubuntu only to free macOS/Windows runners; main runs all three.
   golden:
     name: Golden apps (${{ matrix.os }})
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-latest, windows-latest]
+        os: ${{ fromJSON(github.event_name == 'pull_request' && '["ubuntu-latest"]' || '["ubuntu-latest","macos-latest","windows-latest"]') }}
     runs-on: ${{ matrix.os }}
     steps:
       # Keep LF endings so fixtures and snapshots match on Windows.
@@ -278,8 +281,10 @@ jobs:
 
   # Performance budgets (PRD §27.3, docs/decisions/performance-budgets.md). Report-only:
   # results go to the job summary and an artifact, and a budget miss never fails CI.
+  # Runs on main only: a report-only release build is not worth a PR runner.
   perf:
     name: Performance budgets (report-only)
+    if: github.event_name != 'pull_request'
     runs-on: ubuntu-latest
     continue-on-error: true
     services:

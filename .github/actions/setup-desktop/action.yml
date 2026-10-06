@@ -6,6 +6,9 @@ inputs:
   cache-key:
     description: Shared rust-cache key (jobs that build the same artifacts share one).
     default: desktop
+  npm-cache-paths:
+    description: Lockfiles that key the npm cache (add web/ or supabase/ ones when the job installs them).
+    default: package-lock.json
 runs:
   using: composite
   steps:
@@ -13,7 +16,7 @@ runs:
       with:
         node-version: lts/*
         cache: npm
-        cache-dependency-path: package-lock.json
+        cache-dependency-path: ${{ inputs.npm-cache-paths }}
 
     - uses: dtolnay/rust-toolchain@stable
 
@@ -21,6 +24,10 @@ runs:
       with:
         workspaces: src-tauri -> target
         shared-key: ${{ inputs.cache-key }}
+        # Only main writes Rust caches: PR saves (one per key per OS) evicted
+        # them from the 10 GB repo quota. PRs restore main's cache.
+        save-if: ${{ github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/') }}
+        cache-on-failure: true
 
     - name: Install Linux system dependencies
       if: runner.os == 'Linux'

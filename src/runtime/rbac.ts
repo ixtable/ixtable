@@ -1,3 +1,4 @@
+import type { Dashboard } from "../dashboards/types";
 import type { DocumentConfig } from "../lib/types";
 import type { ObjectKind, Operation, Permissions, Role } from "./types";
 
@@ -75,18 +76,28 @@ export function can(
   return entry[flag] === true;
 }
 
+/** Saved queries a dashboard shows: KPI, table and chart queries, and filter options. */
+export const dashboardQueryIds = (dashboard: Pick<Dashboard, "components" | "filters">) => [
+  ...dashboard.components
+    .filter((c) => ["kpi", "table", "chart"].includes(c.kind) && c.queryId)
+    .map((c) => c.queryId as string),
+  ...dashboard.filters.flatMap((f) => (f.optionsQueryId ? [f.optionsQueryId] : [])),
+];
+
 /**
- * Read access to a query a dashboard component runs: a dashboard grant implies
- * read on its own queries (authz.rs `dashboard_queries`), never writes or actions.
+ * Read access to a query a dashboard shows: a dashboard grant implies read on
+ * its own queries (authz.rs `dashboard_queries`), never on the queries of the
+ * forms or reports it embeds, writes, or actions.
  */
 export const canReadDashboardQuery = (
   config: Pick<DocumentConfig, "roles">,
   roleId: string | null,
-  dashboardId: string,
+  dashboard: Pick<Dashboard, "id" | "components" | "filters">,
   queryId: string,
 ) =>
   can(config, roleId, "query", queryId, "read") ||
-  can(config, roleId, "dashboard", dashboardId, "read");
+  (can(config, roleId, "dashboard", dashboard.id, "read") &&
+    dashboardQueryIds(dashboard).includes(queryId));
 
 /** Error thrown when a runtime write or action is attempted without permission. */
 export class PermissionError extends Error {

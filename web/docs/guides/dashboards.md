@@ -69,7 +69,9 @@ The dashboard runs each distinct query once when it opens, and components that s
 
 A navigation item can open a dashboard in the Runtime. An action's Open dashboard step can open one with parameter values, which become the initial filter values. An action button on a dashboard cannot set form state. In Studio's View tab, a button that navigates shows a note instead, because navigation happens only in the Runtime.
 
-A role needs read access to open a dashboard, and separate grants for what is on it. Each KPI, chart, and table needs read on its query. Each report needs read on that report, and each button needs the right to run its action. [Roles and permissions](./roles) explains the grants.
+A role needs read access to open a dashboard. That grant also lets the role read the queries behind the dashboard's KPIs, charts, tables, and filter choices. Each embedded form and report needs its own read grant, and each button needs the right to run its action. [Roles and permissions](./roles) explains the grants.
+
+Filters and table columns shape what the dashboard shows. They do not hide data from a role. A role that can read a query can read every row and column it returns, so grant a narrower query when a role must see less.
 
 ## Next steps
 

@@ -91,7 +91,7 @@ A run returns at most 10,000 rows and says so when it stops there. When a query 
 
 ## Permissions
 
-Each saved query is an object in the Roles tab. A role needs read access to a query to run it, directly or through a dashboard component or an action step. Ad hoc SQL in Query mode is available only to the developer, never to a role. See [Roles and permissions](./roles).
+Each saved query is an object in the Roles tab. A role can run a query when it has read on the query, or read on a form, report, or dashboard that shows the query. An action step still needs read on its query. Filters do not limit which rows a role can read, so grant a narrower query when a role must see less. Ad hoc SQL in Query mode is available only to the developer, never to a role. See [Roles and permissions](./roles).
 
 ## Next steps
 

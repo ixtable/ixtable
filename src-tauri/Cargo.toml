@@ -60,6 +60,10 @@ reqwest = { version = "0.13", default-features = false, features = ["rustls-no-p
 rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12"] }
 # Opens the browser for Google/Microsoft sign-in hand-off (PKCE).
 tauri-plugin-opener = "2"
+# Report PDFs (report_pdf.rs): embedded Unicode font subsets and PNG alpha masks.
+ttf-parser = "0.25"
+subsetter = { version = "0.2", default-features = false }
+png = "0.18"
 
 [target.'cfg(unix)'.dependencies]
 # geteuid() for the owner check on key and secret files (paths.rs).

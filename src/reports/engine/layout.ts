@@ -9,6 +9,7 @@ import type {
   ReportDocument,
   Row,
 } from "./document";
+import { type Growth, grown, growBand } from "./grow";
 import {
   componentItems,
   measureTable,
@@ -42,6 +43,8 @@ interface Block {
 
 interface Prepared extends Block {
   table?: { comp: TableComponent; geo: TableGeometry };
+  /** Can-grow text: moved and grown components (bands without a table). */
+  growth?: Growth | null;
   height: number;
   splittable: boolean;
   /** Smallest first piece: whole band, or everything above the table plus header and one row. */
@@ -199,17 +202,17 @@ export function layoutReport(
   const bodyTop = m.top + bands.pageHeader.height;
   const bodyBottom = height - m.bottom - bands.pageFooter.height;
   const bodyHeight = bodyBottom - bodyTop;
-  // Repeated headers print their non-table items at design height (see `newPage`).
-  const repeatHeight = (b: Block) => b.repeat.reduce((sum, h) => sum + h.band.height, 0);
+  // Repeated headers print their non-table items at design height, or grown height without a table.
+  const repeatedHeight = (p: Prepared) => (p.table ? p.band.height : p.height);
+  const repeatHeight = (b: Block) =>
+    b.repeat.reduce((sum, h) => sum + repeatedHeight(prepareOnce(h)), 0);
   const prepare = (block: Block): Prepared => {
     const comp = block.band.components.find((c): c is TableComponent => c.kind === "table");
-    if (!comp)
-      return {
-        ...block,
-        height: block.band.height,
-        splittable: false,
-        minFirst: block.band.height,
-      };
+    const growth = growBand(block.band, context(block.scope));
+    if (!comp) {
+      const h = block.band.height + (growth?.extra ?? 0);
+      return { ...block, growth, height: h, splittable: false, minFirst: h };
+    }
     const geo = measureTable(comp, context(block.scope));
     const h = block.band.height + Math.max(0, geo.height - comp.h);
     const splittable = !block.band.keepTogether || h > bodyHeight - repeatHeight(block) + EPS;
@@ -242,7 +245,7 @@ export function layoutReport(
       const r = prepareOnce(h);
       const oy = cursor;
       add((ctx) => bandItems(r, left, oy, ctx, context, "repeat"));
-      cursor += r.band.height;
+      cursor += repeatedHeight(r);
     }
     pageTop = cursor;
   };
@@ -394,6 +397,7 @@ function bandItems(
   const belowStart = table ? table.comp.y + table.comp.h : Number.POSITIVE_INFINITY;
   const growth = table ? Math.max(0, table.geo.height - table.comp.h) : 0;
   return p.band.components.flatMap((c) => {
+    if (c.kind !== "table" && p.growth) return componentItems(grown(c, p.growth), left, oy, ctx);
     if (part === "repeat") return c.kind === "table" ? [] : componentItems(c, left, oy, ctx);
     if (c.kind === "table") {
       if (part !== "all" || c !== table?.comp) return [];

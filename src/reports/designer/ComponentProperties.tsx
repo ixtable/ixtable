@@ -167,6 +167,18 @@ export function ComponentProperties({
             Bold
           </label>
         )}
+        {isText && (
+          <label className="inline">
+            <input
+              type="checkbox"
+              checked={!!c.canGrow}
+              onChange={(e) =>
+                onChange({ canGrow: e.target.checked || undefined } as Partial<ReportComponent>)
+              }
+            />
+            Can grow
+          </label>
+        )}
         <PointInput
           label={c.kind === "line" ? "Line width" : "Border width"}
           value={style.borderWidth ?? (c.kind === "line" || c.kind === "rectangle" ? 1 : 0)}

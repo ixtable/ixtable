@@ -1,3 +1,4 @@
+import { FALLBACK_RUNS } from "./fallback-metrics";
 import { HELVETICA_BOLD_WIDTHS, HELVETICA_WIDTHS } from "./metrics";
 
 /** Unicode code points outside Latin-1 that WinAnsiEncoding maps into 128..159. */
@@ -40,17 +41,65 @@ export function winAnsiCode(char: string): number {
   return WIN_ANSI_HIGH[cp] ?? QUESTION;
 }
 
+/** Parsed FALLBACK_RUNS: run i covers code points starts[i] .. ends[i] - 1. */
+let runTable: { starts: number[]; ends: number[]; fonts: number[]; widths: number[] } | null = null;
+
+function fallbackRuns() {
+  if (runTable) return runTable;
+  const table = {
+    starts: [] as number[],
+    ends: [] as number[],
+    fonts: [] as number[],
+    widths: [] as number[],
+  };
+  let end = 0;
+  for (const run of FALLBACK_RUNS.split(" ")) {
+    const [gap, length, font, width] = run.split(",").map((v) => Number.parseInt(v, 36));
+    table.starts.push(end + gap);
+    end += gap + length;
+    table.ends.push(end);
+    table.fonts.push(font);
+    table.widths.push(width);
+  }
+  runTable = table;
+  return table;
+}
+
+/**
+ * Bundled fallback font (index into FALLBACK_FONTS) and advance width in
+ * 1/1000 em for a character outside WinAnsi, or null when no bundled font
+ * draws it.
+ */
+export function fallbackGlyph(char: string): { font: number; width: number } | null {
+  const cp = char.codePointAt(0) ?? 0;
+  if (winAnsiCode(char) !== QUESTION || cp === QUESTION) return null;
+  const { starts, ends, fonts, widths } = fallbackRuns();
+  let lo = 0;
+  let hi = starts.length - 1;
+  while (lo <= hi) {
+    const mid = (lo + hi) >> 1;
+    if (cp < starts[mid]) hi = mid - 1;
+    else if (cp >= ends[mid]) lo = mid + 1;
+    else return { font: fonts[mid], width: widths[mid] };
+  }
+  return null;
+}
+
+/** Font a character prints in: -1 for Helvetica, else the fallback font index. */
+export const fontOf = (char: string) => fallbackGlyph(char)?.font ?? -1;
+
 /**
  * Text as the report engine prints it: tabs become spaces, line breaks become
- * `\n`, other control characters are dropped and characters the standard PDF
- * fonts can't show become `?`. On-screen preview and PDF use the same text.
+ * `\n`, other control characters are dropped and characters neither the
+ * standard PDF fonts nor the bundled fallback fonts can show become `?`.
+ * On-screen preview and PDF use the same text.
  */
 export function normalizeText(text: string): string {
   let out = "";
   for (const char of text.replace(/\r\n?/g, "\n").replace(/\t/g, " ")) {
     if (char === "\n") out += char;
     else if (char < " " || char === "\u007f") continue;
-    else out += winAnsiCode(char) === QUESTION ? "?" : char;
+    else out += winAnsiCode(char) === QUESTION && !fallbackGlyph(char) ? "?" : char;
   }
   return out;
 }
@@ -59,8 +108,35 @@ export function normalizeText(text: string): string {
 export function measureText(text: string, fontSize: number, bold = false): number {
   const table = bold ? HELVETICA_BOLD_WIDTHS : HELVETICA_WIDTHS;
   let units = 0;
-  for (const char of text) units += table[winAnsiCode(char) - 32] ?? 0;
+  for (const char of text)
+    units += fallbackGlyph(char)?.width ?? table[winAnsiCode(char) - 32] ?? 0;
   return (units * fontSize) / 1000;
+}
+
+export interface TextRun {
+  text: string;
+  /** -1 for Helvetica, else the fallback font index. */
+  font: number;
+  /** Offset from the start of the line in points. */
+  dx: number;
+  width: number;
+}
+
+/** Splits a laid-out line into runs of one font each, positioned with the fixed metrics. */
+export function textRuns(line: string, fontSize: number, bold = false): TextRun[] {
+  const runs: TextRun[] = [];
+  let dx = 0;
+  for (const char of line) {
+    const font = fontOf(char);
+    const width = measureText(char, fontSize, bold);
+    const last = runs[runs.length - 1];
+    if (last && last.font === font) {
+      last.text += char;
+      last.width += width;
+    } else runs.push({ text: char, font, dx, width });
+    dx += width;
+  }
+  return runs;
 }
 
 /** Line advance as a multiple of the font size. */

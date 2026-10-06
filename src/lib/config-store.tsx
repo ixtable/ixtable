@@ -9,10 +9,10 @@ import {
   useState,
 } from "react";
 import { asTauriError, readDocumentConfig, type TauriError, updateDocumentConfig } from "./api";
+import { ConfigWriter, type Mutator } from "./config-writer";
 import type { DocumentConfig, SessionState } from "./types";
 
 type Entry = { config: DocumentConfig; label: string };
-type Waiter = { resolve: (state: SessionState) => void; reject: (reason: unknown) => void };
 export interface UpdateOptions {
   /** false for navigation-only changes (mode switches) that should not enter undo history. */
   undoable?: boolean;
@@ -105,12 +105,6 @@ export function DocumentConfigProvider({
   const [error, setError] = useState<TauriError | null>(null);
   const current = useRef<DocumentConfig | null>(null);
   const lastEdit = useRef<{ label: string; at: number } | null>(null);
-  // Settles once every queued write has reached Rust; never rejects.
-  const queue = useRef<Promise<unknown>>(Promise.resolve());
-  // At most one write is in flight. Updates made meanwhile replace `pending`,
-  // which the writer sends once the in-flight write finishes.
-  const pending = useRef<{ config: DocumentConfig; waiters: Waiter[] } | null>(null);
-  const writing = useRef(false);
   // configRevision the store last wrote or loaded, and the newest one seen anywhere.
   const revision = useRef(0);
   const seen = useRef(0);
@@ -119,75 +113,96 @@ export function DocumentConfigProvider({
     onStateRef.current = onState;
   });
 
-  const drain = useCallback(async () => {
-    for (let batch = pending.current; batch; batch = pending.current) {
-      pending.current = null;
-      try {
-        const state = await updateDocumentConfig(batch.config);
-        setError(null);
-        if (typeof state.configRevision === "number") {
-          revision.current = state.configRevision;
-          seen.current = Math.max(seen.current, state.configRevision);
-        }
-        onStateRef.current?.(state);
-        for (const waiter of batch.waiters) waiter.resolve(state);
-      } catch (reason) {
-        setError(asTauriError(reason));
-        for (const waiter of batch.waiters) waiter.reject(reason);
-      }
-    }
-    writing.current = false;
+  const show = useCallback((next: DocumentConfig) => {
+    current.current = next;
+    setConfig(next);
   }, []);
 
-  const persist = useCallback(
-    (next: DocumentConfig) => {
-      current.current = next;
-      setConfig(next);
-      const done = new Promise<SessionState>((resolve, reject) => {
-        const waiters = pending.current?.waiters ?? [];
-        waiters.push({ resolve, reject });
-        pending.current = { config: next, waiters };
-      });
-      if (!writing.current) {
-        writing.current = true;
-        queue.current = drain();
+  /**
+   * Takes a config read from Rust. With a label, `previous` becomes an undo step.
+   * Without one, the top-level fields that changed since `previous` (the last
+   * config the store confirmed) are carried into the undo history.
+   */
+  const loaded = useCallback(
+    (previous: DocumentConfig | null, next: DocumentConfig, label?: string) => {
+      if (label && previous) {
+        setPast((items) => [...items, { config: previous, label }].slice(-HISTORY_LIMIT));
+        setFuture([]);
+        lastEdit.current = null;
+      } else if (previous) {
+        const keys = changedKeys(previous, next);
+        const rebase = (items: Entry[]) =>
+          items.map((entry) => ({ ...entry, config: carry(entry.config, next, keys) }));
+        if (keys.length) {
+          setPast(rebase);
+          setFuture(rebase);
+          lastEdit.current = null;
+        }
       }
-      return done;
     },
-    [drain],
+    [],
   );
 
-  const reload = useCallback(async (label?: string) => {
-    await queue.current;
-    const previous = current.current;
+  const read = useCallback(async () => {
     const loadedAt = seen.current;
     const next = await readDocumentConfig();
     revision.current = Math.max(revision.current, loadedAt);
-    if (label && previous) {
-      setPast((items) => [...items, { config: previous, label }].slice(-HISTORY_LIMIT));
-      setFuture([]);
-      lastEdit.current = null;
-    } else if (previous) {
-      const keys = changedKeys(previous, next);
-      const rebase = (items: Entry[]) =>
-        items.map((entry) => ({ ...entry, config: carry(entry.config, next, keys) }));
-      if (keys.length) {
-        setPast(rebase);
-        setFuture(rebase);
-        lastEdit.current = null;
-      }
-    }
-    current.current = next;
-    setConfig(next);
     return next;
   }, []);
+
+  const [writer] = useState(
+    () =>
+      new ConfigWriter({
+        write: updateDocumentConfig,
+        stale: () => seen.current > revision.current,
+        refresh: async (confirmed) => {
+          const next = await read();
+          loaded(confirmed, next);
+          return next;
+        },
+        show,
+        written: (state) => {
+          setError(null);
+          if (typeof state.configRevision === "number") {
+            revision.current = state.configRevision;
+            seen.current = Math.max(seen.current, state.configRevision);
+          }
+          onStateRef.current?.(state);
+        },
+        failed: (reason) => setError(asTauriError(reason)),
+      }),
+  );
+
+  const persist = useCallback(
+    (mutator: Mutator, next: DocumentConfig) => {
+      show(next);
+      return writer.enqueue(mutator, next);
+    },
+    [show, writer],
+  );
+
+  const reload = useCallback(
+    async (label?: string) => {
+      let next: DocumentConfig;
+      let generation: number;
+      // An update made during the read may be missing from it: read again once idle.
+      do {
+        await writer.idle();
+        generation = writer.generation;
+        next = await read();
+      } while (writer.generation !== generation);
+      loaded(current.current, next, label);
+      writer.base = next;
+      show(next);
+      return next;
+    },
+    [loaded, read, show, writer],
+  );
 
   useEffect(() => {
     reload().catch((reason: unknown) => setError(asTauriError(reason)));
   }, [reload]);
-  const settled = useCallback(async () => {
-    await queue.current;
-  }, []);
+  const settled = useCallback(() => writer.idle(), [writer]);
   const observe = useCallback((state: SessionState) => {
     if (typeof state.configRevision === "number")
       seen.current = Math.max(seen.current, state.configRevision);
@@ -211,7 +226,7 @@ export function DocumentConfigProvider({
         setFuture([]);
         lastEdit.current = { label, at: now };
       }
-      return persist(next);
+      return persist(mutator, next);
     },
     [persist, reload],
   );
@@ -233,7 +248,11 @@ export function DocumentConfigProvider({
       lastEdit.current = null;
       (back ? setPast : setFuture)((items) => items.slice(0, -1));
       (back ? setFuture : setPast)((items) => [...items, { config: present, label }]);
-      await persist(keepSessionFields(target.config, present));
+      const snapshot = target.config;
+      await persist(
+        (draft) => keepSessionFields(snapshot, draft),
+        keepSessionFields(snapshot, present),
+      );
     },
     [past, future, persist, reload],
   );

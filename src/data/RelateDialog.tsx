@@ -1,5 +1,6 @@
 import { type KeyboardEvent, useId, useState } from "react";
 import { asTauriError } from "../lib/api";
+import { useDocumentConfig } from "../lib/config-store";
 import type { CreateForeignKeySpec, TableSchema } from "../lib/types";
 import { applyTableChanges, previewTableChanges } from "../schema/api";
 import { ForeignKeyEditor } from "../schema/ConstraintEditors";
@@ -28,6 +29,7 @@ export function RelateDialog({
   onCancel: () => void;
 }) {
   const titleId = useId();
+  const { settled } = useDocumentConfig();
   const [child, setChild] = useState(drawn?.childTable ?? initialChild);
   const [preview, setPreview] = useState<{ fk: CreateForeignKeySpec; plan: ChangePlan } | null>(
     null,
@@ -65,6 +67,7 @@ export function RelateDialog({
         }}
         onConfirm={() =>
           run(async () => {
+            await settled();
             await applyTableChanges(child, op(preview.fk));
             await onApplied(child);
           })
@@ -92,10 +95,13 @@ export function RelateDialog({
         <h2 id={titleId}>New relationship</h2>
         <label className="grid gap-1">
           Referencing table
-          <select value={child} onChange={(e) => {
-            setDraft(null);
-            setChild(e.target.value);
-          }}>
+          <select
+            value={child}
+            onChange={(e) => {
+              setDraft(null);
+              setChild(e.target.value);
+            }}
+          >
             {schemas.map((s) => (
               <option key={s.name}>{s.name}</option>
             ))}

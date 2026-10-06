@@ -40,6 +40,7 @@ function Probe() {
     <div>
       <output aria-label="name">{store.config.name}</output>
       <output aria-label="mode">{store.config.activeMode}</output>
+      <output aria-label="error">{store.error?.message}</output>
       <button onClick={() => rename("Alpha")}>Alpha</button>
       <button onClick={() => rename("Beta", "Other")}>Beta</button>
       <button
@@ -211,21 +212,30 @@ function start<T>(run: () => T): T {
 
 function slowWrites() {
   const gates: Array<() => void> = [];
-  const failures = new Set<number>();
   updateDocumentConfig.mockImplementation(async (config: DocumentConfig) => {
-    const call = updateDocumentConfig.mock.calls.length;
+    const reply = config.name.startsWith("Bad")
+      ? Promise.reject(new Error(`invalid ${config.name}`))
+      : write(config);
+    reply.catch(() => undefined);
     await new Promise<void>((resolve) => gates.push(resolve));
-    if (failures.has(call)) throw new Error(`write ${call} failed`);
-    return write(config);
+    return reply;
   });
   return {
-    failWrite: (call: number) => failures.add(call),
     release: async () => {
       await waitFor(() => expect(gates.length).toBeGreaterThan(0));
       gates.shift()?.();
     },
   };
 }
+
+const settle = <T,>(promise: Promise<T>) =>
+  promise.then(
+    () => "ok",
+    (reason: Error) => reason.message,
+  );
+const queries = (id: string) => (draft: DocumentConfig) =>
+  ({ ...draft, savedQueries: [{ id }] }) as unknown as DocumentConfig;
+const named = (name: string) => (draft: DocumentConfig) => ({ ...draft, name });
 
 it("coalesces rapid updates into the in-flight write plus one write of the latest config", async () => {
   const writes = slowWrites();
@@ -252,36 +262,97 @@ it("coalesces rapid updates into the in-flight write plus one write of the lates
   expect(await screen.findByText("Rename report")).toBeInTheDocument();
 });
 
-it("rejects only the updates whose state was in a failed write", async () => {
+it("persists a valid update coalesced with an invalid one and rejects only the invalid one", async () => {
   const writes = slowWrites();
-  writes.failWrite(2);
   const { store } = await renderCapture();
   const results = start(() =>
-    ["A", "B", "C"].map((name) =>
-      store()
-        .update((draft) => ({ ...draft, name }))
-        .then(
-          (state) => state.name,
-          (reason: Error) => reason.message,
-        ),
-    ),
+    [named("A"), queries("b"), named("Bad C")].map((mutator) => settle(store().update(mutator))),
   );
-  await act(writes.release);
-  await act(writes.release);
-  expect(await Promise.all(results)).toEqual(["A", "write 2 failed", "write 2 failed"]);
-  expect(backend.name).toBe("A");
-  const retry = start(() => store().update((draft) => ({ ...draft, name: "D" })));
+  for (let i = 0; i < 4; i += 1) await act(writes.release);
+  expect(await Promise.all(results)).toEqual(["ok", "ok", "invalid Bad C"]);
+  expect(updateDocumentConfig.mock.calls.map(([config]) => config.name)).toEqual([
+    "A",
+    "Bad C",
+    "A",
+    "Bad C",
+  ]);
+  expect(backend).toMatchObject({ name: "A", savedQueries: [{ id: "b" }] });
+  expect(screen.getByRole("status", { name: "name" })).toHaveTextContent("A");
+  expect(screen.getByRole("status", { name: "error" })).toHaveTextContent("invalid Bad C");
+  const retry = start(() => store().update(named("D")));
   await act(writes.release);
   await expect(retry).resolves.toMatchObject({ name: "D" });
   expect(backend.name).toBe("D");
+  expect(screen.getByRole("status", { name: "error" })).toBeEmptyDOMElement();
+});
+
+it("clears the error when the pending write succeeds after the in-flight one fails", async () => {
+  const writes = slowWrites();
+  const { store } = await renderCapture();
+  const results = start(() => [named("Bad A"), queries("b")].map((m) => settle(store().update(m))));
+  await act(writes.release);
+  await act(writes.release);
+  expect(await Promise.all(results)).toEqual(["invalid Bad A", "ok"]);
+  expect(updateDocumentConfig.mock.calls[1][0].name).toBe("Untitled");
+  expect(backend).toMatchObject({ name: "Untitled", savedQueries: [{ id: "b" }] });
+  expect(screen.getByRole("status", { name: "name" })).toHaveTextContent("Untitled");
+  expect(screen.getByRole("status", { name: "error" })).toBeEmptyDOMElement();
+});
+
+it("keeps an update made while reload reads the config", async () => {
+  const { store } = await renderCapture();
+  let release!: () => void;
+  readDocumentConfig.mockImplementationOnce(async () => {
+    const snapshot = structuredClone(backend);
+    await new Promise<void>((resolve) => (release = resolve));
+    return snapshot;
+  });
+  const reloaded = start(() => store().reload());
+  await waitFor(() => expect(readDocumentConfig).toHaveBeenCalledTimes(2));
+  await act(() => store().update(named("During")));
+  expect(backend.name).toBe("During");
+  await act(async () => release());
+  await expect(reloaded).resolves.toMatchObject({ name: "During" });
+  expect(readDocumentConfig).toHaveBeenCalledTimes(3);
+  await act(() => store().update(queries("q")));
+  expect(backend).toMatchObject({ name: "During", savedQueries: [{ id: "q" }] });
+  expect(screen.getByRole("status", { name: "name" })).toHaveTextContent("During");
+});
+
+it("does not overwrite a backend change made while a write was in flight", async () => {
+  const writes = slowWrites();
+  const { store } = await renderCapture();
+  const results = start(() => [named("A"), named("B")].map((m) => settle(store().update(m))));
+  act(() => store().observe(backendEdit({ savedQueries: [{ id: "q1" }] } as never)));
+  await act(writes.release);
+  await act(writes.release);
+  expect(await Promise.all(results)).toEqual(["ok", "ok"]);
+  expect(readDocumentConfig).toHaveBeenCalledTimes(2);
+  expect(backend).toMatchObject({ name: "B", savedQueries: [{ id: "q1" }] });
+  expect(screen.getByRole("status", { name: "name" })).toHaveTextContent("B");
+});
+
+it("keeps writing after onState throws", async () => {
+  const logged = vi.spyOn(console, "error").mockImplementation(() => undefined);
+  const { store, onState } = await renderCapture();
+  onState.mockImplementationOnce(() => {
+    throw new Error("listener failed");
+  });
+  await act(async () => {
+    await expect(store().update(named("A"))).resolves.toMatchObject({ name: "A" });
+    await expect(store().update(named("B"))).resolves.toMatchObject({ name: "B" });
+  });
+  await expect(store().settled()).resolves.toBeUndefined();
+  expect(backend.name).toBe("B");
+  expect(logged).toHaveBeenCalledWith(new Error("listener failed"));
 });
 
 it("waits for queued writes before reloading", async () => {
   const writes = slowWrites();
   const { store } = await renderCapture();
   const reloaded = start(() => {
-    void store().update((draft) => ({ ...draft, name: "A" }));
-    void store().update((draft) => ({ ...draft, name: "B" }));
+    void store().update(named("A"));
+    void store().update(named("B"));
     return store().reload();
   });
   await act(writes.release);

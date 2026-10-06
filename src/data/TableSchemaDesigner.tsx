@@ -1,6 +1,7 @@
 import { Plus, Trash2 } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { asTauriError } from "../lib/api";
+import { useDocumentConfig } from "../lib/config-store";
 import type { AlterTableOperation, TableSchema } from "../lib/types";
 import {
   applyTableChanges,
@@ -58,6 +59,8 @@ export function TableSchemaDesigner({
   onDropped: () => Promise<void> | void;
   onCancel: () => void;
 }) {
+  // DDL can rewrite entity settings in the config: let queued edits land first.
+  const { settled } = useDocumentConfig();
   const initialDrafts = useMemo(
     () => Object.fromEntries(schema.columns.map((c) => [c.name, draftFromColumn(c, schema)])),
     [schema],
@@ -159,12 +162,14 @@ export function TableSchemaDesigner({
       if (fresh.destructive || fresh.rebuild || fresh.impact)
         setDialog({ kind: "apply", plan: fresh });
       else {
+        await settled();
         await applyTableChanges(schema.name, pending);
         await onChanged(finalName());
       }
     });
   const confirmApply = () =>
     run(async () => {
+      await settled();
       await applyTableChanges(schema.name, pending);
       setDialog(null);
       await onChanged(finalName());
@@ -433,6 +438,7 @@ export function TableSchemaDesigner({
           error={error}
           onConfirm={() =>
             run(async () => {
+              await settled();
               await dropDatabaseTable(schema.name);
               setDialog(null);
               await onDropped();

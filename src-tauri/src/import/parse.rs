@@ -1,6 +1,8 @@
-//! Parses an external file into typed rows: CSV, JSON, and Parquet through a
-//! DuckDB sandbox that may read only that file, XLSX through calamine.
-use crate::data::files::{sandbox, scan_sql, CsvOptions, FileFormat};
+//! Reads an external file: CSV, JSON, and Parquet through a DuckDB sandbox
+//! that may read only that file, XLSX through calamine. A preview reads the
+//! first rows with suggested types; an import streams every row
+//! (`for_each_row`) and never holds the whole file in memory.
+use crate::data::files::{sandbox, scan_sql, scan_text_sql, CsvOptions, FileFormat};
 use crate::data::{duck_value, logical_from_duckdb, DataValue, LogicalType};
 use serde::{Deserialize, Serialize};
 use std::path::Path;
@@ -61,6 +63,11 @@ pub struct ParsedFile {
     pub sheets: Vec<String>,
 }
 
+/// Largest file an import or preview reads.
+pub const MAX_FILE_BYTES: u64 = 1 << 30;
+/// Largest XLSX workbook: its shared strings are held in memory.
+pub const MAX_XLSX_BYTES: u64 = 100 << 20;
+
 pub fn resolve_format(path: &Path, options: &ParseOptions) -> Result<FileFormat, String> {
     options
         .format
@@ -70,58 +77,148 @@ pub fn resolve_format(path: &Path, options: &ParseOptions) -> Result<FileFormat,
         })
 }
 
-/// Reads `path`. `limit` caps the rows returned (`total_rows` still counts all).
-pub fn parse(
-    path: &Path,
-    options: &ParseOptions,
-    limit: Option<usize>,
-) -> Result<ParsedFile, String> {
-    if !path.is_file() {
-        return Err(format!("{} is not a readable file", path.display()));
+/// Checks that `path` is a readable file within the size cap of its format.
+pub fn check_file(path: &Path, format: FileFormat) -> Result<(), String> {
+    let max = match format {
+        FileFormat::Xlsx => MAX_XLSX_BYTES,
+        _ => MAX_FILE_BYTES,
+    };
+    check_size(path, max)
+}
+
+pub fn check_size(path: &Path, max: u64) -> Result<(), String> {
+    let meta = std::fs::metadata(path)
+        .ok()
+        .filter(|m| m.is_file())
+        .ok_or_else(|| format!("{} is not a readable file", path.display()))?;
+    if meta.len() > max {
+        return Err(format!(
+            "The file is {} MB; files over {} MB cannot be imported",
+            meta.len().div_ceil(1 << 20),
+            max >> 20
+        ));
     }
-    match resolve_format(path, options)? {
-        FileFormat::Xlsx => super::xlsx::parse(path, options, limit),
-        format => parse_duckdb(path, format, &options.csv(), limit),
+    Ok(())
+}
+
+/// Previews `path`: columns with suggested logical types, the first `limit`
+/// rows, and the row count.
+pub fn parse(path: &Path, options: &ParseOptions, limit: usize) -> Result<ParsedFile, String> {
+    let format = resolve_format(path, options)?;
+    check_file(path, format)?;
+    match format {
+        FileFormat::Xlsx => super::xlsx::preview(path, options, limit),
+        format => preview_duckdb(path, format, &options.csv(), limit),
     }
 }
 
-fn parse_duckdb(
-    path: &Path,
-    format: FileFormat,
-    csv: &CsvOptions,
-    limit: Option<usize>,
-) -> Result<ParsedFile, String> {
+/// Where a file's columns are, read before its rows.
+#[derive(Debug, Clone)]
+pub struct Layout {
+    pub format: FileFormat,
+    pub names: Vec<String>,
+    pub(super) sheet: Option<super::xlsx::SheetLayout>,
+}
+
+/// The column names of `path`, without reading its rows (XLSX reads the sheet once).
+pub fn layout(path: &Path, options: &ParseOptions) -> Result<Layout, String> {
+    let format = resolve_format(path, options)?;
+    check_file(path, format)?;
+    if format == FileFormat::Xlsx {
+        let sheet = super::xlsx::layout(path, options)?;
+        return Ok(Layout {
+            format,
+            names: sheet.names.clone(),
+            sheet: Some(sheet),
+        });
+    }
     let connection = sandbox(path)?;
-    let scan = scan_sql(path, format, csv)?;
-    let error = |e: duckdb::Error| format!("Could not read the file: {e}");
-    let mut describe = connection
+    let scan = scan_text_sql(path, format, &options.csv())?;
+    let names = describe(&connection, &scan)?
+        .into_iter()
+        .map(|c| c.name)
+        .collect();
+    Ok(Layout {
+        format,
+        names,
+        sheet: None,
+    })
+}
+
+/// Streams every row of `path` to `row` without holding the file in memory
+/// and returns the row count. CSV values arrive as text; `row` returning an
+/// error stops the read with that error.
+pub fn for_each_row(
+    path: &Path,
+    options: &ParseOptions,
+    layout: &Layout,
+    mut row: impl FnMut(Vec<DataValue>) -> Result<(), String>,
+) -> Result<u64, String> {
+    if let Some(sheet) = &layout.sheet {
+        return super::xlsx::for_each_row(path, sheet, row);
+    }
+    let connection = sandbox(path)?;
+    let scan = scan_text_sql(path, layout.format, &options.csv())?;
+    let mut stmt = connection
+        .prepare(&format!("SELECT * FROM {scan}"))
+        .map_err(read_error)?;
+    let mut cursor = stmt.query([]).map_err(read_error)?;
+    let width = layout.names.len();
+    let mut count = 0;
+    while let Some(r) = cursor.next().map_err(read_error)? {
+        let values = (0..width)
+            .map(|i| r.get::<_, duckdb::types::Value>(i).map(duck_value))
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(read_error)?;
+        count += 1;
+        row(values)?;
+    }
+    Ok(count)
+}
+
+fn read_error(e: duckdb::Error) -> String {
+    format!("Could not read the file: {e}")
+}
+
+fn describe(connection: &duckdb::Connection, scan: &str) -> Result<Vec<SourceColumn>, String> {
+    let mut stmt = connection
         .prepare(&format!("DESCRIBE SELECT * FROM {scan}"))
-        .map_err(error)?;
-    let columns = describe
+        .map_err(read_error)?;
+    let columns = stmt
         .query_map([], |r| {
             Ok(SourceColumn {
                 name: r.get(0)?,
                 logical_type: logical_from_duckdb(&r.get::<_, String>(1)?),
             })
         })
-        .map_err(error)?
+        .map_err(read_error)?
         .collect::<Result<Vec<_>, _>>()
-        .map_err(error)?;
+        .map_err(read_error)?;
+    Ok(columns)
+}
+
+fn preview_duckdb(
+    path: &Path,
+    format: FileFormat,
+    csv: &CsvOptions,
+    limit: usize,
+) -> Result<ParsedFile, String> {
+    let connection = sandbox(path)?;
+    let scan = scan_sql(path, format, csv)?;
+    let columns = describe(&connection, &scan)?;
     let total_rows: u64 = connection
         .query_row(&format!("SELECT count(*) FROM {scan}"), [], |r| r.get(0))
-        .map_err(error)?;
-    let sql = match limit {
-        Some(n) => format!("SELECT * FROM {scan} LIMIT {n}"),
-        None => format!("SELECT * FROM {scan}"),
-    };
-    let mut stmt = connection.prepare(&sql).map_err(error)?;
-    let mut cursor = stmt.query([]).map_err(error)?;
+        .map_err(read_error)?;
+    let mut stmt = connection
+        .prepare(&format!("SELECT * FROM {scan} LIMIT {limit}"))
+        .map_err(read_error)?;
+    let mut cursor = stmt.query([]).map_err(read_error)?;
     let mut rows = vec![];
-    while let Some(row) = cursor.next().map_err(error)? {
+    while let Some(row) = cursor.next().map_err(read_error)? {
         let values = (0..columns.len())
             .map(|i| row.get::<_, duckdb::types::Value>(i).map(duck_value))
             .collect::<Result<Vec<_>, _>>()
-            .map_err(error)?;
+            .map_err(read_error)?;
         rows.push(values);
     }
     Ok(ParsedFile {

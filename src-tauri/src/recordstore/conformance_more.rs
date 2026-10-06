@@ -1,4 +1,4 @@
-//! Conformance scenarios (continued): optimistic concurrency, schema changes, migrations.
+//! Conformance scenarios (continued): optimistic concurrency, schema changes, migrations, imports.
 use super::conformance::{col, each_store, int, nv, people, per_store, rows, text, Harness, Store};
 use super::{ChangeMode, CreateIndex};
 use crate::data::{AlterTable, CreateColumn, DataValue, LogicalType};
@@ -10,6 +10,7 @@ per_store!(
     schema_changes_publish_store_specific_modes_and_keep_data,
     migrations_apply_record_and_roll_back_transactionally,
     altering_a_column_keeps_replaces_or_removes_its_check,
+    imported_keys_move_the_identity_sequence_past_them,
 );
 
 fn optimistic_updates_reject_stale_original_values(store: Store) {
@@ -360,5 +361,42 @@ fn altering_a_column_keeps_replaces_or_removes_its_check(store: Store) {
         assert_eq!(h.store.table_def("stock").unwrap().checks.len(), 1);
         assert!(!accepts(h, 700), "{}: second staged check wins", h.name);
         assert!(accepts(h, 599), "{}", h.name);
+    });
+}
+
+fn imported_keys_move_the_identity_sequence_past_them(store: Store) {
+    use crate::import::write::{plan_fields, table_fields, FieldMapping, Writer};
+    each_store(store, |h| {
+        people(h);
+        h.store
+            .insert("people", &[nv("name", text("Ada"))])
+            .unwrap();
+        let columns = table_fields(h.store.as_mut(), "people").unwrap();
+        let mapping = ["id", "name"].map(|c| FieldMapping {
+            source: c.into(),
+            field: c.into(),
+        });
+        let fields = plan_fields(&["id".into(), "name".into()], &mapping, &columns).unwrap();
+        let mut writer = Writer::new(h.store.as_mut(), "people", &fields);
+        for (id, name) in [(3, "Bob"), (9, "Cy"), (5, "Di")] {
+            writer.push(vec![int(id), text(name)]).unwrap();
+        }
+        writer.flush().unwrap();
+        assert_eq!(writer.imported, 3);
+        h.store.sync_identity("people").unwrap();
+        let id = h
+            .store
+            .insert("people", &[nv("name", text("Eve"))])
+            .unwrap();
+        assert_eq!(id, vec![int(10)], "{}: next key after the import", h.name);
+        // Syncing again never moves the sequence back.
+        h.store.delete("people", &[int(10)], None).unwrap();
+        h.store.delete("people", &[int(9)], None).unwrap();
+        h.store.sync_identity("people").unwrap();
+        let id = h
+            .store
+            .insert("people", &[nv("name", text("Fay"))])
+            .unwrap();
+        assert!(id[0] != int(9) && id[0] != int(5), "{}: {id:?}", h.name);
     });
 }

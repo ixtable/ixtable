@@ -1,4 +1,4 @@
-use super::parse::{parse, unique_names, ParseOptions};
+use super::parse::{check_size, for_each_row, layout, parse, unique_names, ParseOptions};
 use super::sources::{validate, views, FileSource};
 use super::write::*;
 use super::xlsx::infer;
@@ -33,6 +33,7 @@ fn types(parsed: &super::parse::ParsedFile) -> Vec<(String, String)> {
 fn text(s: &str) -> DataValue {
     DataValue::Text(s.into())
 }
+const ALL: usize = 1_000;
 
 #[test]
 fn csv_preview_infers_types_and_counts_every_row() {
@@ -47,7 +48,7 @@ fn csv_preview_infers_types_and_counts_every_row() {
         ));
     }
     let path = write(&dir, "people.csv", &csv);
-    let parsed = parse(&path, &ParseOptions::default(), Some(50)).unwrap();
+    let parsed = parse(&path, &ParseOptions::default(), 50).unwrap();
     assert_eq!(parsed.format, FileFormat::Csv);
     assert_eq!(parsed.total_rows, 120);
     assert_eq!(parsed.rows.len(), 50);
@@ -83,15 +84,15 @@ fn csv_header_and_delimiter_options_apply() {
         delimiter: Some("|".into()),
         ..Default::default()
     };
-    let parsed = parse(&path, &options, None).unwrap();
+    let parsed = parse(&path, &options, ALL).unwrap();
     assert_eq!(parsed.columns.len(), 2);
     assert_eq!(parsed.total_rows, 2);
     assert_eq!(parsed.rows[0], vec![text("a"), text("b")]);
     let unknown = write(&dir, "data.bin", "x");
-    assert!(parse(&unknown, &ParseOptions::default(), None)
+    assert!(parse(&unknown, &ParseOptions::default(), ALL)
         .unwrap_err()
         .contains("Unsupported file type"));
-    assert!(parse(&dir.join("missing.csv"), &ParseOptions::default(), None).is_err());
+    assert!(parse(&dir.join("missing.csv"), &ParseOptions::default(), ALL).is_err());
 }
 
 #[test]
@@ -102,19 +103,20 @@ fn json_and_parquet_files_parse_through_duckdb() {
         "items.json",
         r#"[{"sku":"A1","qty":3,"tags":["x"]},{"sku":"B2","qty":null,"tags":[]}]"#,
     );
-    let parsed = parse(&json, &ParseOptions::default(), None).unwrap();
+    let parsed = parse(&json, &ParseOptions::default(), ALL).unwrap();
     assert_eq!(
-        types(&parsed)[..2],
+        types(&parsed),
         [
             ("sku".into(), "text".into()),
-            ("qty".into(), "integer".into())
+            ("qty".into(), "integer".into()),
+            ("tags".into(), "json".into())
         ]
     );
     assert_eq!(parsed.rows[1][1], DataValue::Null);
     assert_eq!(parsed.rows[0][2], text("[\"x\"]"));
     let ndjson = write(&dir, "items.ndjson", "{\"a\":1}\n{\"a\":2}\n");
     assert_eq!(
-        parse(&ndjson, &ParseOptions::default(), None)
+        parse(&ndjson, &ParseOptions::default(), ALL)
             .unwrap()
             .total_rows,
         2
@@ -128,7 +130,7 @@ fn json_and_parquet_files_parse_through_duckdb() {
             crate::data::files::literal(&parquet)
         ))
         .unwrap();
-    let parsed = parse(&parquet, &ParseOptions::default(), None).unwrap();
+    let parsed = parse(&parquet, &ParseOptions::default(), ALL).unwrap();
     assert_eq!(
         types(&parsed),
         [
@@ -143,7 +145,7 @@ fn json_and_parquet_files_parse_through_duckdb() {
 
 #[test]
 fn xlsx_sheets_parse_with_inferred_types() {
-    let parsed = parse(&fixture("people.xlsx"), &ParseOptions::default(), None).unwrap();
+    let parsed = parse(&fixture("people.xlsx"), &ParseOptions::default(), ALL).unwrap();
     assert_eq!(parsed.sheets, vec!["People", "Notes"]);
     assert_eq!(
         types(&parsed),
@@ -171,13 +173,13 @@ fn xlsx_sheets_parse_with_inferred_types() {
         sheet: Some("Notes".into()),
         ..Default::default()
     };
-    let parsed = parse(&fixture("people.xlsx"), &notes, None).unwrap();
+    let parsed = parse(&fixture("people.xlsx"), &notes, ALL).unwrap();
     assert_eq!(parsed.rows, vec![vec![text("hello")]]);
     let missing = ParseOptions {
         sheet: Some("Nope".into()),
         ..Default::default()
     };
-    assert!(parse(&fixture("people.xlsx"), &missing, None).is_err());
+    assert!(parse(&fixture("people.xlsx"), &missing, ALL).is_err());
 }
 
 #[test]
@@ -243,6 +245,25 @@ fn people_store(dir: &Path) -> SqliteRecordStore {
     store
 }
 
+fn map(source: &str, field: &str) -> FieldMapping {
+    FieldMapping {
+        source: source.into(),
+        field: field.into(),
+    }
+}
+
+/// Every row of a file as the import reads it.
+fn file_rows(path: &Path, options: &ParseOptions) -> Vec<Vec<DataValue>> {
+    let layout = layout(path, options).unwrap();
+    let mut rows = vec![];
+    for_each_row(path, options, &layout, |r| {
+        rows.push(r);
+        Ok(())
+    })
+    .unwrap();
+    rows
+}
+
 #[test]
 fn rows_are_checked_then_written_through_the_record_store() {
     let dir = temp_dir();
@@ -252,62 +273,34 @@ fn rows_are_checked_then_written_through_the_record_store() {
         "Name,Age,Joined\nAda,36,2024-01-15\nGrace,old,2024-02-01\n,40,2024-03-01\nAda,50,2024-04-01\nLinus,,2024-05-01\n",
     );
     let options = ParseOptions::default();
-    let parsed = parse(&path, &options, None).unwrap();
+    let layout = layout(&path, &options).unwrap();
+    assert_eq!(layout.names, ["Name", "Age", "Joined"]);
     let mut store = people_store(&dir);
-    let def = crate::data::TableDef {
-        columns: table_fields(&mut store, "people").unwrap(),
-        ..Default::default()
-    };
-    let map = |source: &str, field: &str| FieldMapping {
-        source: source.into(),
-        field: field.into(),
-    };
+    let columns = table_fields(&mut store, "people").unwrap();
     // Unknown, duplicate, and missing required fields are refused before any write.
-    assert!(plan_fields(&parsed, &[map("Nope", "name")], &def.columns).is_err());
-    assert!(plan_fields(&parsed, &[map("Name", "nope")], &def.columns).is_err());
-    assert!(plan_fields(
-        &parsed,
-        &[map("Name", "name"), map("Age", "name")],
-        &def.columns
-    )
-    .is_err());
-    assert!(plan_fields(&parsed, &[map("Age", "age")], &def.columns)
+    let names = &layout.names;
+    assert!(plan_fields(names, &[map("Nope", "name")], &columns).is_err());
+    assert!(plan_fields(names, &[map("Name", "nope")], &columns).is_err());
+    assert!(plan_fields(names, &[map("Name", "name"), map("Age", "name")], &columns).is_err());
+    assert!(plan_fields(names, &[map("Age", "age")], &columns)
         .unwrap_err()
         .contains("name"));
 
-    // Age reads as text because of "old"; it converts per row.
+    // CSV values arrive as text and convert per row.
     let fields = plan_fields(
-        &parsed,
+        names,
         &[
             map("Name", "name"),
             map("Age", "age"),
             map("Joined", "joined"),
         ],
-        &def.columns,
+        &columns,
     )
     .unwrap();
-    let (rows, errors) = convert_rows(&parsed, &fields);
+    let rows = file_rows(&path, &options);
+    assert_eq!(rows[0], vec![text("Ada"), text("36"), text("2024-01-15")]);
     assert_eq!(
-        errors,
-        vec![
-            RowError {
-                row: 2,
-                column: Some("age".into()),
-                message: "age requires an integer".into()
-            },
-            RowError {
-                row: 3,
-                column: Some("name".into()),
-                message: "name is required".into()
-            },
-        ]
-    );
-    assert_eq!(
-        rows.iter().map(|(n, _)| *n).collect::<Vec<_>>(),
-        vec![1, 4, 5]
-    );
-    assert_eq!(
-        rows[0].1,
+        convert_row(1, &rows[0], &fields).unwrap(),
         vec![
             NamedValue {
                 column: "name".into(),
@@ -324,14 +317,26 @@ fn rows_are_checked_then_written_through_the_record_store() {
         ]
     );
     // Row 4 repeats a unique name: its batch is retried row by row.
-    let (imported, refused) = insert_rows(&mut store, "people", &rows).unwrap();
-    assert_eq!(imported, 2);
-    assert_eq!(refused.len(), 1);
-    assert_eq!(refused[0].row, 4);
+    let outcome = write_file(&mut store, "people", &fields, &path, &options, &layout);
+    assert_eq!(outcome.aborted, None);
+    assert_eq!((outcome.rows, outcome.imported, outcome.failed), (5, 2, 3));
+    let reported: Vec<_> = outcome
+        .errors
+        .iter()
+        .map(|e| (e.row, e.column.as_deref(), e.message.as_str()))
+        .collect();
+    assert_eq!(
+        reported[..2],
+        [
+            (2, Some("age"), "age requires an integer"),
+            (3, Some("name"), "name is required"),
+        ]
+    );
+    assert_eq!((reported[2].0, reported[2].1), (4, None));
     assert!(
-        refused[0].message.to_lowercase().contains("unique"),
+        reported[2].2.to_lowercase().contains("unique"),
         "{}",
-        refused[0].message
+        reported[2].2
     );
     let names = store
         .query_internal("SELECT name, age FROM people ORDER BY id")
@@ -343,6 +348,131 @@ fn rows_are_checked_then_written_through_the_record_store() {
             vec![Some("Linus".into()), None],
         ]
     );
+}
+
+#[test]
+fn a_late_value_that_breaks_the_sniffed_type_fails_only_its_row() {
+    let dir = temp_dir();
+    let mut csv = String::from("name,age\n");
+    for i in 1..=30_005 {
+        let age = if i == 30_002 {
+            "n/a".to_string()
+        } else {
+            (i % 90).to_string()
+        };
+        csv.push_str(&format!("P{i},{age}\n"));
+    }
+    let path = write(&dir, "late.csv", &csv);
+    let options = ParseOptions::default();
+    // The preview sniffs the whole file, so the column is suggested as text.
+    let preview = parse(&path, &options, 50).unwrap();
+    assert_eq!(preview.total_rows, 30_005);
+    assert_eq!(types(&preview)[1], ("age".into(), "text".into()));
+    // Imported into an integer field, only the bad row is skipped.
+    let layout = layout(&path, &options).unwrap();
+    let mut store = people_store(&dir);
+    let columns = table_fields(&mut store, "people").unwrap();
+    let fields = plan_fields(
+        &layout.names,
+        &[map("name", "name"), map("age", "age")],
+        &columns,
+    )
+    .unwrap();
+    let outcome = write_file(&mut store, "people", &fields, &path, &options, &layout);
+    assert_eq!(outcome.aborted, None);
+    assert_eq!((outcome.imported, outcome.failed), (30_004, 1));
+    assert_eq!(
+        outcome.errors,
+        vec![RowError {
+            row: 30_002,
+            column: Some("age".into()),
+            message: "age requires an integer".into()
+        }]
+    );
+}
+
+#[test]
+fn only_constraint_and_validation_errors_are_per_row() {
+    let dir = temp_dir();
+    let mut csv = String::from("name,age\n");
+    for i in 1..=1_200 {
+        csv.push_str(&format!("P{i},{}\n", if i == 700 { 101 } else { 30 }));
+    }
+    let path = write(&dir, "people.csv", &csv);
+    let options = ParseOptions::default();
+    let layout = layout(&path, &options).unwrap();
+    let mut store = people_store(&dir);
+    // A DATABASE_ERROR (an overflow here, like a full disk) stops the import; committed batches stay.
+    rusqlite::Connection::open(dir.join("data.db"))
+        .unwrap()
+        .execute_batch(
+            "CREATE TRIGGER boom BEFORE INSERT ON people WHEN NEW.age > 100 BEGIN SELECT abs(NEW.age - NEW.age - 9223372036854775807 - 1); END;",
+        )
+        .unwrap();
+    let columns = table_fields(&mut store, "people").unwrap();
+    let fields = plan_fields(
+        &layout.names,
+        &[map("name", "name"), map("age", "age")],
+        &columns,
+    )
+    .unwrap();
+    let outcome = write_file(&mut store, "people", &fields, &path, &options, &layout);
+    assert_eq!(outcome.imported, 500);
+    assert_eq!(outcome.failed, 0);
+    assert!(
+        outcome
+            .aborted
+            .as_deref()
+            .is_some_and(|e| e.contains("overflow")),
+        "{:?}",
+        outcome.aborted
+    );
+    let count = store.query_internal("SELECT count(*) FROM people").unwrap();
+    assert_eq!(count, vec![vec![Some("500".into())]]);
+}
+
+#[test]
+fn files_over_the_size_caps_are_refused() {
+    let dir = temp_dir();
+    let path = write(&dir, "big.csv", &"a\n1\n".repeat(400_000));
+    assert!(check_size(&path, 4 << 20).is_ok());
+    let error = check_size(&path, 1 << 20).unwrap_err();
+    assert_eq!(
+        error,
+        "The file is 2 MB; files over 1 MB cannot be imported"
+    );
+    assert!(check_size(&dir, 1 << 20)
+        .unwrap_err()
+        .contains("not a readable file"));
+}
+
+#[test]
+fn xlsx_sheets_stream_and_refuse_too_many_columns() {
+    // The used range claims A1:XFD1048576; only the cells that exist are read.
+    let sparse = fixture("sparse.xlsx");
+    let preview = parse(&sparse, &ParseOptions::default(), 50).unwrap();
+    assert_eq!(
+        types(&preview),
+        [("name", "text"), ("age", "integer")].map(|(a, b)| (a.to_string(), b.to_string()))
+    );
+    assert_eq!(preview.total_rows, 2);
+    assert_eq!(
+        preview.rows,
+        vec![
+            vec![text("Ada"), DataValue::Integer(36)],
+            vec![text("Zed"), DataValue::Null]
+        ]
+    );
+    assert_eq!(file_rows(&sparse, &ParseOptions::default()), preview.rows);
+    let one = parse(&sparse, &ParseOptions::default(), 1).unwrap();
+    assert_eq!((one.rows.len(), one.total_rows), (1, 2));
+    let wide = fixture("wide.xlsx");
+    for error in [
+        parse(&wide, &ParseOptions::default(), 50).unwrap_err(),
+        layout(&wide, &ParseOptions::default()).unwrap_err(),
+    ] {
+        assert!(error.contains("more than 1600 columns"), "{error}");
+    }
 }
 
 #[test]

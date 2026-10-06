@@ -82,23 +82,40 @@ listed in its `allowed_paths`, set before the lock.
 
 **Import** (`import/`, `data::files::sandbox`). The wizard parses the chosen
 file in a fresh in-memory DuckDB whose `allowed_paths` is that one file, with
-external access off and the configuration locked. `read_csv` (header and
-delimiter options, types sniffed from the whole file), `read_json`, and
-`read_parquet` give the columns, DuckDB's inferred types (mapped to logical
-types by `logical_from_duckdb`), a 50-row preview, and the row count. XLSX
-columns get the narrowest logical type that holds every cell (whole numbers
-are integers, Excel dates are dates, or timestamps when any has a time, and
-mixed columns are text). The import itself never writes through DuckDB.
-Each mapped value is converted with `LogicalType::normalize` for its target
-field, the same check every store write uses, and a row that fails it or
-leaves a required field empty is reported and skipped. The remaining rows
-go to the RecordStore (SQLite or PostgreSQL) in batches of 500, one
-transaction each. A batch the store rejects is retried row by row, so only
-the rows that break a constraint are reported; a connection or busy error
-stops the import. Rows already committed stay, and the report counts them.
-A new-table import creates the table through the usual `create_table` path
-(with an `id` integer key unless a file column is chosen as the key). Record
-triggers do not run for imported rows, and runtime roles cannot import.
+external access off and the configuration locked. Files over 1 GB (100 MB for
+XLSX, whose shared strings stay in memory) are refused before reading. The
+preview reads `read_csv` (header and delimiter options), `read_json`, or
+`read_parquet` with types sniffed from the whole file (`sample_size=-1`), and
+returns the columns, DuckDB's types mapped to logical types by
+`logical_from_duckdb` (lists, structs, maps, and unions are JSON, intervals
+are text), the first 50 rows, and the row count. XLSX is read with calamine's
+streaming cell reader: the preview reads the sheet once for the narrowest
+logical type that holds every cell (whole numbers are integers, Excel dates
+are dates, or timestamps when any has a time, and mixed columns are text),
+the first 50 rows, and the count. Only cells that exist are read, so a huge
+declared used range costs nothing; a sheet whose cells span more than 1600
+columns (PostgreSQL's table limit) is refused.
+
+The sniffed types are only suggestions for the mapping. The import reads CSV
+with `all_varchar=true` and streams rows from the file; it never holds the
+file in memory and never writes through DuckDB. Each mapped value is
+converted with `LogicalType::normalize` for its target field, the same check
+every store write uses, so a value that does not fit (say `n/a` at row 30,002
+of a column sniffed as integer) skips only its row, which the report lists.
+A row that leaves a required field empty is skipped the same way. The
+remaining rows go to the RecordStore (SQLite or PostgreSQL) in batches of 500,
+one transaction each. A batch the store rejects with a constraint or
+validation error is retried row by row, so only the rows at fault are
+reported; any other store error (a lost connection, a busy or full database)
+or a file read error stops the import. A stop after anything was written
+(including a new table being created) is not a command error: the report
+comes back with `aborted` and the counts so far, the committed batches stay,
+and the wizard reloads the configuration and tables after every attempt.
+After writing, `sync_identity` moves PostgreSQL key sequences past the
+imported keys (see `recordstore-capabilities.md`). A new-table import creates
+the table through the usual `create_table` path (with an `id` integer key
+unless a file column is chosen as the key). Record triggers do not run for
+imported rows, and runtime roles cannot import.
 
 **File sources** (`import::sources`, `data::files::create_views`). A bundled
 source is an application asset plus a `fileSources` entry in the config
@@ -108,7 +125,9 @@ A runtime installation keeps no extracted assets, so opening one writes the
 source files to `<installation>/attachments/<id>/content` first.
 When the reader is built, it attaches an in-memory `files` catalog and
 creates `files.main.<name>` as a view over the asset's extracted file
-(`attachments/<id>/content`) while external access is still on. The lockdown
+(`attachments/<id>/content`) while external access is still on. View types
+are sniffed from the whole file, like the preview, so a late value that does
+not fit a type sniffed from the first rows cannot fail a query. The lockdown
 then adds exactly those files to `allowed_paths` next to `data.db`. Queries,
 reports, and dashboards read `files.<name>`; `read_only_guard` still rejects
 writes and direct `read_*` calls, and DuckDB refuses any other file even

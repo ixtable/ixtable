@@ -57,6 +57,10 @@ sends it to the schema designer, which labels each staged change by its mode.
 `inspect_table` reports `autoIncrement` on a column the database fills in on
 insert: the SQLite rowid alias, or a PostgreSQL identity (`attidentity`) or
 `nextval` (serial) default. Generated forms make only those keys read-only.
+Rows written with explicit keys (an import) leave a PostgreSQL sequence
+behind, so `RecordStore::sync_identity` then moves each identity or serial
+sequence to the column's largest key with `setval`, only ever forward.
+SQLite picks `max(rowid) + 1` itself, so it is a no-op there.
 
 Native errors map to stable codes: `CONSTRAINT_VIOLATION` with the constraint
 kind, `READ_ONLY`, `CONNECTION`, `BUSY`, `NOT_FOUND`, `CONFLICT`, `STALE_ROW`,

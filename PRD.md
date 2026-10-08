@@ -947,7 +947,7 @@ An agent-only judgment may block CI only when it produces a deterministic failin
 
 - No plaintext datasource credentials in an unencrypted archive entry.
 - No custom cryptographic primitives.
-- Signed bundles and updates must fail closed.
+- Signed bundles and updates must fail closed. (In-app updates are deferred post-MVP; this applies to bundles until they return.)
 - Cloud applications are private by default.
 - Authorization checks must occur at every Runtime object/action entry point.
 - Sensitive values are redacted from logs and crash reports.
@@ -1137,7 +1137,7 @@ Deliver:
 - abuse/rate controls;
 - privacy policy, terms, and security documentation;
 - service monitoring, alerting, backups, and incident procedures;
-- signed desktop installers and update channels for all platforms;
+- signed desktop installers for all platforms (in-app update channels are deferred post-MVP; users download new versions from GitHub Releases);
 - onboarding using the three golden applications; and
 - public documentation.
 

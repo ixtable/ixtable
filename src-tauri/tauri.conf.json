@@ -70,7 +70,6 @@
         "mimeType": "application/x-ixtable-runtime"
       }
     ],
-    "createUpdaterArtifacts": true,
     "macOS": {
       "minimumSystemVersion": "11.0",
       "hardenedRuntime": true,
@@ -89,17 +88,6 @@
       },
       "rpm": {
         "release": "1"
-      }
-    }
-  },
-  "plugins": {
-    "updater": {
-      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IERGQTk4MzA1RUUxMEVENUEKUldSYTdSRHVCWU9wMzNZUDVqQ1dsaWpsemdCRy9TWHpPZjV1d2RvMUFzS1ZycVluai9JSWhMVFMK",
-      "endpoints": [
-        "https://releases.ixtable.app/stable/latest.json?target={{target}}&arch={{arch}}&current_version={{current_version}}"
-      ],
-      "windows": {
-        "installMode": "passive"
       }
     }
   }

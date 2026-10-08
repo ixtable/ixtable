@@ -3,39 +3,7 @@
 `.github/workflows/release.yml` signs every platform. When a `beta` or
 `stable` run is missing any secret below, `scripts/release/signing.mjs` fails
 the build and names the missing secrets (never their values). A `draft` run
-warns and builds whatever it can sign. Without the updater key it builds no
-updater artifacts.
-
-## Updater key (all platforms)
-
-| Secret | Use |
-|---|---|
-| `TAURI_SIGNING_PRIVATE_KEY` | minisign private key (contents of the `.key` file) |
-| `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` | its password |
-
-| Variable | Use |
-|---|---|
-| `IXTABLE_UPDATER_PUBKEY` | the matching public key (`.pub` contents, one base64 line) |
-
-The committed `plugins.updater.pubkey` in `src-tauri/tauri.conf.json` is a
-**development key**, generated with `npx tauri signer generate -w <path> --ci -p ""`.
-It stays committed for tests. Release builds replace it with
-`IXTABLE_UPDATER_PUBKEY` through the `--config` override, and beta and stable
-runs fail when that variable is missing or equals the development key
-(`scripts/release/keys.mjs`). Before the first public release:
-
-1. Generate the production pair offline with a password:
-   `npx tauri signer generate -w ixtable-updater.key`.
-2. Put the private key and password in the secrets above, and the `.pub`
-   contents in the `IXTABLE_UPDATER_PUBKEY` variable. Keep an offline backup.
-   A lost key cannot sign updates that installed apps accept.
-3. Do not edit `tauri.conf.json` or the fixtures in
-   `src-tauri/src/updater/fixtures/`.
-
-The `Check the updater key pair` step signs a probe file with the secret and
-verifies it against the variable, so a mismatched pair fails before the
-build. Rotation: see
-[the desktop updates record](../decisions/desktop-updates.md#rotation).
+warns and builds whatever it can sign.
 
 ## macOS (Developer ID + notarization)
 
@@ -92,20 +60,14 @@ certificate is installed, and change `REQUIRED.windows` in
 ## Linux
 
 AppImage, `.deb` and `.rpm` are built on Ubuntu 22.04, which keeps the glibc
-requirement low. The updater uses the AppImage, which is signed with the
-updater key. No other secret is needed.
+requirement low. Linux needs no signing secret.
 
-## Release host (update manifests)
+## Publishing
 
-| Secret / variable | Use |
-|---|---|
-| `RELEASE_S3_BUCKET`, `RELEASE_S3_ENDPOINT` | S3-compatible bucket behind `releases.ixtable.app` |
-| `RELEASE_S3_ACCESS_KEY_ID`, `RELEASE_S3_SECRET_ACCESS_KEY` | write credentials for that bucket |
-| `vars.RELEASE_S3_REGION` | defaults to `auto` (R2) |
-| `vars.RELEASE_BASE_URL` | defaults to `https://releases.ixtable.app` |
-
-If any of the four secrets is missing, `publish-update-manifest` skips the
-upload with a notice. The installers are still on the draft GitHub release.
+A release run ends as a draft GitHub release. A maintainer publishes it by
+hand after [the release checklist](./checklist.md). Beta releases are GitHub
+prereleases. Stable releases are full releases. There is no in-app updater,
+so users download new versions from GitHub Releases.
 
 ## ixtable Cloud build values
 
@@ -123,11 +85,5 @@ release CSP (see [security.md](./security.md)).
 ## Local builds
 
 A local `tauri build` without `IXTABLE_RELEASE=1` is a development build: it
-may pin no cloud key and ships the committed development updater key. Only
-release.yml sets the opt-in.
-
-`bundle.createUpdaterArtifacts` is on, so a full local `npm run tauri build`
-needs an updater key. Either set `TAURI_SIGNING_PRIVATE_KEY` to a development
-key, or turn the artifacts off:
-`npm run tauri build -- --config '{"bundle":{"createUpdaterArtifacts":false}}'`.
-`--no-bundle` builds, as in Desktop CI, need neither.
+may pin no cloud key. Only release.yml sets the opt-in. A local
+`npm run tauri build` needs no signing secret.

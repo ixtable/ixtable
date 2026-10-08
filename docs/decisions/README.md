@@ -18,7 +18,7 @@ every risk-retirement spike. This index maps each spike to its record.
 | [Expression language](./expression-language.md) | none. Records the PRD §17.1 language design | accepted |
 | [Cloud architecture](./cloud-architecture.md) | none. ixtable Cloud control plane: schema, RLS, functions, local stack | accepted, implemented (control plane, distribution, credentials, desktop sign-in, billing, desktop client) |
 | [Cloud security model](./cloud-security-model.md) | signed personalized bundle and envelope-encryption threat model | accepted, implemented, external security review pending |
-| [Desktop updates, signing, and CSP](./desktop-updates.md) | none. Signed installers, update channels, webview CSP (PRD Phase 5) | accepted; release key gate in CI, production key ceremony pending |
+| [Desktop signing and webview CSP](./desktop-updates.md) | none. Signed installers, webview CSP (PRD Phase 5). In-app updates removed from the MVP (2026-10-06) | accepted; release key gate in CI, production key ceremony pending |
 | [Performance budgets](./performance-budgets.md) | none. PRD §27.3 targets, reference hardware, fixture, and the report-only harness | accepted, report-only |
 | [Windows support](./windows-support.md) | none. Windows-only failures in Rust tests and the NAPI test bridge | accepted, pending Windows CI (no run has reached a runner yet) |
 

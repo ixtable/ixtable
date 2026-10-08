@@ -1,19 +1,14 @@
 #!/usr/bin/env node
-// Release key gates for release.yml (PRD §27.2 "signed bundles and updates must fail closed").
-// Production public keys come from repository variables, never from the repository:
-//   IXTABLE_UPDATER_PUBKEY        minisign public key (the .pub contents, one base64 line)
+// Release key gates for release.yml (PRD §27.2 "signed bundles must fail closed").
+// The production public key comes from repository variables, never from the repository:
 //   IXTABLE_CLOUD_PUBLIC_KEY_RAW  ixtable Cloud bundle-signing key (raw 32-byte Ed25519, base64),
 //                                 or IXTABLE_CLOUD_PUBLIC_KEY (SPKI DER base64)
 // A beta/stable build refuses to run when a key is missing, malformed, or a known dev/test key.
-//   probe                 sign a probe file with TAURI_SIGNING_PRIVATE_KEY and verify it against
-//                         the release updater pubkey (catches a private/public key mismatch)
-//   embedded --binary f   check a built binary pins the release cloud key and not the dev updater key
+//   embedded --binary f   check a built binary pins the release cloud key
 //   build <tauri args>    tauri-action's tauriScript: `tauri build`, then, when IXTABLE_RELEASE=1, the
 //                         embedded check on IXTABLE_RELEASE_BINARY, so a bad binary fails before upload
 import { spawnSync } from "node:child_process";
-import { createPublicKey } from "node:crypto";
-import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { existsSync, readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
@@ -31,43 +26,6 @@ export const DEV_CLOUD_KEYS = JSON.parse(
 
 const SPKI_PREFIX = Buffer.from("302a300506032b6570032100", "hex");
 const present = (value) => typeof value === "string" && value.trim() !== "";
-
-/** The committed (development) updater key in tauri.conf.json. */
-export function configuredPubkey(root = ROOT) {
-  const conf = JSON.parse(readFileSync(join(root, "src-tauri/tauri.conf.json"), "utf8"));
-  const key = conf.plugins?.updater?.pubkey;
-  if (!key) throw new Error("tauri.conf.json has no plugins.updater.pubkey");
-  return key;
-}
-
-/** Decodes a Tauri updater pubkey (base64 of a minisign .pub file) into its key id and Ed25519 key. */
-export function decodeMinisignPubkey(pubkeyB64) {
-  const text = Buffer.from(pubkeyB64.trim(), "base64").toString("utf8").split(/\r?\n/);
-  const raw = Buffer.from(text[1] ?? "", "base64");
-  if (raw.length !== 42 || raw.subarray(0, 2).toString() !== "Ed")
-    throw new Error("Malformed minisign public key");
-  return {
-    id: raw.subarray(2, 10),
-    raw: raw.subarray(10),
-    key: createPublicKey({
-      key: Buffer.concat([SPKI_PREFIX, raw.subarray(10)]),
-      format: "der",
-      type: "spki",
-    }),
-  };
-}
-
-/** The updater pubkey a release verifies against: the variable when set, else the committed key. */
-export function releaseUpdaterPubkey(env, root = ROOT) {
-  return present(env.IXTABLE_UPDATER_PUBKEY)
-    ? env.IXTABLE_UPDATER_PUBKEY.trim()
-    : configuredPubkey(root);
-}
-
-/** True when `pubkey` is the committed development key (compared by key bytes, not text). */
-export function isDevUpdaterKey(pubkey, root = ROOT) {
-  return decodeMinisignPubkey(pubkey).raw.equals(decodeMinisignPubkey(configuredPubkey(root)).raw);
-}
 
 /** Raw 32-byte Ed25519 key from base64 (raw or SPKI DER), base64url, hex, or PEM, as cloud/config.rs accepts. */
 export function rawCloudKey(text) {
@@ -122,18 +80,6 @@ export function releaseCloudKey(env) {
 /** Problems that make a build unfit for beta/stable. Names variables, never secret values. */
 export function releaseKeyProblems(env, root = ROOT) {
   const problems = [];
-  if (!present(env.IXTABLE_UPDATER_PUBKEY)) {
-    problems.push(
-      "IXTABLE_UPDATER_PUBKEY is not set (the committed tauri.conf.json key is for development only)",
-    );
-  } else {
-    try {
-      if (isDevUpdaterKey(env.IXTABLE_UPDATER_PUBKEY, root))
-        problems.push("IXTABLE_UPDATER_PUBKEY is the committed development key");
-    } catch (error) {
-      problems.push(`IXTABLE_UPDATER_PUBKEY: ${error.message}`);
-    }
-  }
   const cloud = releaseCloudKey(env);
   if (!cloud) {
     problems.push(
@@ -150,48 +96,17 @@ export function releaseKeyProblems(env, root = ROOT) {
   return problems;
 }
 
-/** Problems with a built binary: it must hold the release cloud key text and not the dev updater key. */
-export function embeddedKeyProblems(binary, env, root = ROOT) {
+/** Problems with a built binary: it must hold the release cloud key text. */
+export function embeddedKeyProblems(binary, env) {
   const problems = [];
   const cloud = releaseCloudKey(env);
   if (cloud && !binary.includes(Buffer.from(cloud)))
     problems.push("the binary does not pin the release ixtable Cloud key");
-  if (binary.includes(Buffer.from(configuredPubkey(root))))
-    problems.push("the binary embeds the committed development updater key");
   return problems;
 }
 
 /** The Tauri CLI's JavaScript entry point in this checkout. */
 export const tauriCli = (root = ROOT) => join(root, "node_modules/@tauri-apps/cli/tauri.js");
-
-/**
- * Signs a probe file with the Tauri CLI (TAURI_SIGNING_PRIVATE_KEY[_PASSWORD] from env) and
- * verifies the signature against `pubkey`. Throws when the pair does not match.
- */
-export async function probeUpdaterKeyPair(env, pubkey, root = ROOT) {
-  const { verifySignature } = await import("./update-manifest.mjs");
-  const dir = mkdtempSync(join(tmpdir(), "ixtable-probe-"));
-  try {
-    const file = join(dir, "probe.bin");
-    writeFileSync(file, `ixtable updater key probe ${Date.now()}\n`);
-    // Node runs the CLI's JS entry directly: no shell, so arguments reach it unchanged on Windows.
-    const run = spawnSync(process.execPath, [tauriCli(root), "signer", "sign", file], {
-      cwd: root,
-      env: {
-        ...env,
-        TAURI_SIGNING_PRIVATE_KEY_PASSWORD: env.TAURI_SIGNING_PRIVATE_KEY_PASSWORD ?? "",
-      },
-      encoding: "utf8",
-    });
-    if (run.status !== 0 || !existsSync(`${file}.sig`))
-      throw new Error("the Tauri CLI could not sign with TAURI_SIGNING_PRIVATE_KEY");
-    verifySignature(readFileSync(file), readFileSync(`${file}.sig`, "utf8"), pubkey);
-  } catch (error) {
-    throw new Error(`Updater key pair check failed: ${error.message}`, { cause: error });
-  } finally {
-    rmSync(dir, { recursive: true, force: true });
-  }
-}
 
 function arg(name) {
   const index = process.argv.indexOf(`--${name}`);
@@ -201,11 +116,6 @@ function arg(name) {
 async function main() {
   const [command] = process.argv.slice(2);
   const env = process.env;
-  if (command === "probe") {
-    await probeUpdaterKeyPair(env, releaseUpdaterPubkey(env));
-    console.log("updater private key matches the release pubkey");
-    return;
-  }
   if (command === "embedded") {
     const problems = embeddedKeyProblems(readFileSync(arg("binary")), env);
     if (problems.length) throw new Error(problems.join("; "));
@@ -226,7 +136,7 @@ async function main() {
     console.log("binary pins the release keys");
     return;
   }
-  throw new Error("usage: keys.mjs probe | embedded --binary <file> | build <tauri args>");
+  throw new Error("usage: keys.mjs embedded --binary <file> | build <tauri args>");
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {

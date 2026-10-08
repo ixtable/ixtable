@@ -62,11 +62,13 @@ it("lists problems after a migration and refuses a dry run that fails preflight"
     /Drop label changed after it was applied/,
   );
   expect(screen.queryByText("Dry run succeeded; nothing was changed.")).toBeNull();
+  expect(screen.getByRole("button", { name: "Apply pending (1)" })).toBeDisabled();
   await captureDocument(document, {
     name: "migrations-02-dry-run-preflight-error",
     expectations: [
       "Drop label is marked 'Changed after apply' and Add tags is pending in the migration list.",
       "The dry run shows an error that Drop label changed after it was applied; nothing ran.",
+      "'Apply pending (1)' is disabled after the failed dry run.",
     ],
   });
 });

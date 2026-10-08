@@ -154,4 +154,5 @@ it("dry run refuses what apply refuses, such as an edited applied migration", as
     /Make a changed after it was applied/,
   );
   expect(screen.queryByText("Dry run succeeded; nothing was changed.")).toBeNull();
+  expect(screen.getByRole("button", { name: /^Apply pending/ })).toBeDisabled();
 });

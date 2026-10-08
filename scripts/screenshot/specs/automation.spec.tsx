@@ -214,11 +214,12 @@ it("switches a trigger to run as the signed-in user and warns on roles that cann
     LONG,
   );
   expect(warning).toHaveTextContent("Saves that fire it will be refused for this role.");
+  expect(warning).toHaveTextContent('execute action "Log new work order"');
   await captureDocument(document, {
     name: "roles-03-user-trigger-warning",
     expectations: [
       "The Technician role shows a warning that the background logging trigger runs as the signed-in user.",
-      "The warning names the permissions the role is missing and says its saves will be refused.",
+      "The warning names the permissions the role is missing by object name (not uuid) and says its saves will be refused.",
     ],
   });
 });

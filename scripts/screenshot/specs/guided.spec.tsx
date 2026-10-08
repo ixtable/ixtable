@@ -52,7 +52,7 @@ it("generates a three-level app from tables and opens a detail with its related 
     name: "guided-01-build-your-app",
     expectations: [
       "The empty Runtime page shows a 'Build your app' hint saying the application has no pages yet.",
-      "The hint offers a 'Generate app from tables' button.",
+      "The hint offers a 'Generate app from tables' primary button, with no blank starter form below it.",
     ],
   });
 

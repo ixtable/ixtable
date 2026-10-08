@@ -87,6 +87,7 @@ describe("dashboard component conditions", () => {
     const odd = screen.getByRole("region", { name: "Odd" });
     expect(within(odd).getByRole("alert")).toHaveTextContent(/^Enabled when: /);
     expect(odd).toHaveAttribute("aria-disabled", "true");
+    expect(within(odd).queryByText("Not available right now.")).toBeNull();
   });
 
   it("hides and disables components from params, keeping other placements", async () => {
@@ -104,6 +105,7 @@ describe("dashboard component conditions", () => {
     await waitFor(() => expect(screen.getByRole("button", { name: "Run" })).toBeDisabled());
     const go = screen.getByRole("region", { name: "Go" });
     expect(go).toHaveAttribute("aria-disabled", "true");
+    expect(within(go).getByText("Not available right now.")).toBeInTheDocument();
     expect(
       screen.getByRole("region", { name: "Always" }).parentElement?.getAttribute("style"),
     ).toBe(style);

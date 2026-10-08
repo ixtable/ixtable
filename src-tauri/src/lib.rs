@@ -1,3 +1,4 @@
+pub mod access;
 pub mod archive;
 pub mod archive_io;
 pub mod asset_data;
@@ -432,6 +433,9 @@ pub fn run() {
             queries::run_saved_query_page,
             queries::cancel_query,
             queries::check_query_sql,
+            // access commands
+            access::inspect_access_file,
+            access::import_access_file,
             // templates commands
             templates::list_templates,
             templates::read_template_config,

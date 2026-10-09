@@ -369,7 +369,7 @@ fn domain_sql(w: &mut SqlWriter, f: &str, args: &[Expr]) -> Result<String, Strin
     }
     let select = match parse_statement(&sql)? {
         Statement::Select(s) => s,
-        Statement::Crosstab(_) => return Err("unexpected crosstab".into()),
+        _ => return Err("a domain function needs a SELECT".into()),
     };
     let mut inner = w.select(&select)?;
     if agg.is_none() {

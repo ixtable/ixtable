@@ -5,6 +5,9 @@ import { render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, expect, it } from "vitest";
 import App from "../../src/App";
+import { invoke } from "@tauri-apps/api/core";
+import { runActionQuery } from "../../src/lib/records";
+import { packTemplate } from "./access-template";
 import { readPage, value } from "./helpers";
 import { dialogMock } from "./setup";
 
@@ -81,4 +84,38 @@ it("explains why a file cannot be read", async () => {
   expect(within(dialog).getByRole("button", { name: "Import" })).toBeDisabled();
   await user.click(within(dialog).getByRole("button", { name: "Cancel" }));
   expect(screen.queryByRole("dialog", { name: "Import Access database" })).toBeNull();
+});
+
+it("imports a template whose VBA is viewable and whose action queries run", async () => {
+  const dialog = await openWizard();
+  const dir = mkdtempSync(join(process.env.IXTABLE_STATE_DIR!, "access-"));
+  dialogMock.open.mockResolvedValueOnce(packTemplate(join(dir, "Order Desk.accdt")));
+  await user.click(within(dialog).getByRole("button", { name: /Choose file/ }));
+  await within(dialog).findByRole("table", { name: "Access tables" }, LONG);
+  await user.click(within(dialog).getByRole("button", { name: "Import" }));
+  await within(dialog).findByRole("region", { name: "Access import report" }, LONG);
+  await user.click(within(dialog).getByRole("button", { name: "Open document" }));
+
+  await user.click(await screen.findByRole("button", { name: "Settings" }, LONG));
+  await user.click(await screen.findByRole("tab", { name: "Assets" }, LONG));
+  await user.click(await screen.findByRole("button", { name: "View Access VBA.txt" }, LONG));
+  const preview = await screen.findByRole("region", { name: "Preview of Access VBA.txt" }, LONG);
+  expect(
+    await within(preview).findByRole("heading", { name: "Module Helpers" }, LONG),
+  ).toBeInTheDocument();
+  expect(
+    within(preview).getByRole("heading", { name: "Form Customer Details" }),
+  ).toBeInTheDocument();
+  expect(within(preview).getByRole("navigation", { name: "Sections" })).toBeInTheDocument();
+
+  const config = await invoke<{ savedQueries: { id: string; name: string; action?: unknown }[] }>(
+    "read_document_config",
+    { windowLabel: "main" },
+  );
+  const raise = config.savedQueries.find((q) => q.name === "RaiseBigOrders");
+  expect(raise?.action).toEqual({ kind: "update", table: "Orders" });
+  const run = await runActionQuery(raise!.id, [{ column: "minimum", value: value("integer", 0) }], {
+    dryRun: true,
+  });
+  expect(run.changed).toBe((await readPage("Orders")).total);
 });

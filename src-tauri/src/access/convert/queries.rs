@@ -1,9 +1,11 @@
 //! Access saved queries → ixtable saved queries (DuckDB SQL).
 //!
 //! A query that reads other saved queries gets them as CTEs, in dependency
-//! order, so each saved query stands alone. Action queries (append, update,
-//! delete, make-table) and SQL-specific queries have no read-only equivalent;
-//! their Access SQL is kept in the import report and document settings.
+//! order, so each saved query stands alone. Append, update and delete queries
+//! become action queries (`docs/decisions/action-queries.md`); a make-table
+//! query becomes a replace query whose target table the import creates when
+//! the file has none. Data-definition and pass-through queries have no
+//! equivalent; their Access SQL is kept in the report and document settings.
 use super::report::{ImportReport, Notes, Status};
 use super::schema::DbSchema;
 use crate::access::model::{AccessDb, QueryKind};
@@ -25,6 +27,10 @@ pub struct ConvertedQuery {
     pub columns: Vec<String>,
     /// The base table when the query reads exactly one table.
     pub base_table: Option<String>,
+    /// For an action query: (kind, target table) as `ActionSpec` names them.
+    pub action: Option<(&'static str, String)>,
+    /// A make-table query whose target the file does not have: the import creates it.
+    pub creates_table: bool,
 }
 
 impl ConvertedQuery {
@@ -40,6 +46,13 @@ impl ConvertedQuery {
             .map(|q| format!("{} AS ({})", quote(&q.name), q.body))
             .collect();
         format!("WITH {} {}", ctes.join(", "), self.body)
+    }
+
+    /// The `action` value of the saved query.
+    pub fn action_json(&self) -> Option<Value> {
+        self.action
+            .as_ref()
+            .map(|(kind, table)| json!({ "kind": kind, "table": table }))
     }
 
     pub fn all_params(&self, all: &BTreeMap<String, ConvertedQuery>) -> Vec<Param> {
@@ -61,6 +74,34 @@ pub struct QueryConversion {
     pub unconverted: Vec<(String, QueryKind, String)>,
 }
 
+/// One translated statement.
+pub struct Translated {
+    pub body: String,
+    pub deps: Vec<String>,
+    pub params: Vec<Param>,
+    pub columns: Vec<String>,
+    /// The table an action statement writes or a make-table query creates.
+    pub target: Option<String>,
+}
+
+/// The `ActionSpec` kind of an Access query kind, for those that become action queries.
+pub fn action_kind(kind: QueryKind) -> Option<&'static str> {
+    match kind {
+        QueryKind::Append => Some("insert"),
+        QueryKind::Update => Some("update"),
+        QueryKind::Delete => Some("delete"),
+        QueryKind::MakeTable => Some("replace"),
+        _ => None,
+    }
+}
+
+fn converts(kind: QueryKind) -> bool {
+    matches!(
+        kind,
+        QueryKind::Select | QueryKind::Union | QueryKind::Crosstab
+    ) || action_kind(kind).is_some()
+}
+
 /// Translates one Access SQL text; dependencies must already be converted.
 pub fn translate(
     db: &AccessDb,
@@ -68,7 +109,7 @@ pub fn translate(
     sql: &str,
     declared: &[(String, String)],
     done: &BTreeMap<String, ConvertedQuery>,
-) -> Result<(String, Vec<String>, Vec<Param>, Vec<String>), String> {
+) -> Result<Translated, String> {
     let st = parse_statement(sql)?;
     let mut w = SqlWriter::new(Dialect::DuckDb, schema);
     w.declare(declared);
@@ -89,7 +130,13 @@ pub fn translate(
         }
     }
     let _ = db;
-    Ok((body, deps, w.out.params, w.out.columns))
+    Ok(Translated {
+        body,
+        deps,
+        params: w.out.params,
+        columns: w.out.columns,
+        target: w.out.target,
+    })
 }
 
 /// The single table a query reads, following other queries.
@@ -125,46 +172,44 @@ fn base_table(db: &AccessDb, sql: &str) -> Option<String> {
 pub fn convert(db: &AccessDb, schema: &mut DbSchema, report: &mut ImportReport) -> QueryConversion {
     let mut done: BTreeMap<String, ConvertedQuery> = BTreeMap::new();
     let mut failed: BTreeMap<String, String> = BTreeMap::new();
-    let mut unconverted = vec![];
-    for q in &db.queries {
-        if !matches!(
-            q.kind,
-            QueryKind::Select | QueryKind::Union | QueryKind::Crosstab
-        ) {
-            unconverted.push((q.name.clone(), q.kind, q.sql.clone()));
-        }
-    }
     // Convert in rounds until no more queries can be converted (dependency order).
-    let mut pending: Vec<&crate::access::model::Query> = db
-        .queries
-        .iter()
-        .filter(|q| {
-            matches!(
-                q.kind,
-                QueryKind::Select | QueryKind::Union | QueryKind::Crosstab
-            )
-        })
-        .collect();
+    let mut pending: Vec<&crate::access::model::Query> =
+        db.queries.iter().filter(|q| converts(q.kind)).collect();
     loop {
         let before = pending.len();
         let mut next = vec![];
         for q in pending {
-            match translate(db, schema, &q.sql, &q.parameters, &done) {
-                Ok((body, deps, params, columns)) => {
-                    schema.query_columns.insert(
-                        q.name.to_lowercase(),
-                        columns.iter().map(|c| (c.clone(), Kind::Other)).collect(),
-                    );
+            match translate(db, schema, &q.sql, &q.parameters, &done).and_then(|t| {
+                let kind = action_kind(q.kind);
+                match (kind, &t.target) {
+                    (Some(_), None) => Err("the statement names no target table".into()),
+                    (None, Some(_)) if q.kind != QueryKind::MakeTable => {
+                        Err(format!("{:?} query with an INTO clause", q.kind))
+                    }
+                    _ => Ok((t, kind)),
+                }
+            }) {
+                Ok((t, kind)) => {
+                    if kind.is_none() {
+                        schema.query_columns.insert(
+                            q.name.to_lowercase(),
+                            t.columns.iter().map(|c| (c.clone(), Kind::Other)).collect(),
+                        );
+                    }
+                    let creates_table = q.kind == QueryKind::MakeTable
+                        && t.target.as_deref().is_some_and(|n| db.table(n).is_none());
                     done.insert(
                         q.name.to_lowercase(),
                         ConvertedQuery {
                             id: uuid::Uuid::now_v7().to_string(),
                             name: q.name.clone(),
-                            body,
-                            deps,
-                            params,
-                            columns,
-                            base_table: base_table(db, &q.sql),
+                            body: t.body,
+                            deps: t.deps,
+                            params: t.params,
+                            columns: t.columns,
+                            base_table: kind.is_none().then(|| base_table(db, &q.sql)).flatten(),
+                            action: kind.zip(t.target),
+                            creates_table,
                         },
                     );
                 }
@@ -191,6 +236,12 @@ pub fn convert(db: &AccessDb, schema: &mut DbSchema, report: &mut ImportReport) 
                     "crosstab converted to a DuckDB PIVOT; column headings come from the data",
                 );
             }
+            if c.creates_table {
+                notes.push(format!(
+                    "make-table query: the import creates the table {} and the query replaces its rows",
+                    c.action.as_ref().map(|a| a.1.as_str()).unwrap_or("")
+                ));
+            }
             for p in &c.params {
                 if p.original.contains('!') {
                     notes.push(format!(
@@ -212,9 +263,6 @@ pub fn convert(db: &AccessDb, schema: &mut DbSchema, report: &mut ImportReport) 
             );
         } else {
             let why = match q.kind {
-                QueryKind::Append | QueryKind::Update | QueryKind::Delete | QueryKind::MakeTable => {
-                    "action queries change data; ixtable saved queries only read it. Use an action or a migration"
-                }
                 QueryKind::DataDefinition => "data-definition queries become migrations",
                 _ => "pass-through queries run on a server ixtable does not connect to",
             };
@@ -226,6 +274,17 @@ pub fn convert(db: &AccessDb, schema: &mut DbSchema, report: &mut ImportReport) 
             );
         }
     }
+    let unconverted = db
+        .queries
+        .iter()
+        .filter(|q| {
+            !matches!(
+                q.kind,
+                QueryKind::Select | QueryKind::Union | QueryKind::Crosstab
+            ) && !done.contains_key(&q.name.to_lowercase())
+        })
+        .map(|q| (q.name.clone(), q.kind, q.sql.clone()))
+        .collect();
     QueryConversion {
         queries: done,
         unconverted,
@@ -243,7 +302,11 @@ pub fn saved_queries(conv: &QueryConversion) -> Vec<Value> {
                 .iter()
                 .map(|p| json!({ "name": p.name, "logicalType": p.logical_type }))
                 .collect();
-            json!({ "id": q.id, "name": q.name, "sql": q.sql(&conv.queries), "parameters": params })
+            let mut query = json!({ "id": q.id, "name": q.name, "sql": q.sql(&conv.queries), "parameters": params });
+            if let Some(action) = q.action_json() {
+                query["action"] = action;
+            }
+            query
         })
         .collect()
 }

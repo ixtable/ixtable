@@ -138,6 +138,7 @@ impl<'a> Context<'a> {
             .db
             .query(rs)
             .and_then(|q| self.queries.queries.get(&q.name.to_lowercase()))
+            .filter(|q| q.action.is_none())
         {
             Some(q) => {
                 bound.source = Source::Query {
@@ -175,16 +176,21 @@ impl<'a> Context<'a> {
         sql: &str,
         owner: &str,
     ) -> Result<(String, Vec<String>), String> {
-        let (body, deps, params, columns) =
-            queries::translate(self.db, self.schema, sql, &[], &self.queries.queries)?;
+        let t = queries::translate(self.db, self.schema, sql, &[], &self.queries.queries)?;
+        if t.target.is_some() {
+            return Err("a record source must read rows".into());
+        }
+        let columns = t.columns;
         let q = queries::ConvertedQuery {
             id: uuid::Uuid::now_v7().to_string(),
             name: format!("{owner} (record source)"),
-            body,
-            deps,
-            params,
+            body: t.body,
+            deps: t.deps,
+            params: t.params,
             columns: columns.clone(),
             base_table: None,
+            action: None,
+            creates_table: false,
         };
         let params: Vec<_> = q
             .all_params(&self.queries.queries)
@@ -193,6 +199,38 @@ impl<'a> Context<'a> {
             .collect();
         self.extra_queries.push(json!({ "id": q.id, "name": q.name, "sql": q.sql(&self.queries.queries), "parameters": params }));
         Ok((q.id, columns))
+    }
+
+    /// The saved action query for the SQL of a RunSQL macro action.
+    pub fn sql_action_query(&self, sql: &str, name: &str) -> Result<serde_json::Value, String> {
+        use crate::access::translate::ast::{parse_statement, Statement};
+        let kind = match parse_statement(sql)? {
+            Statement::Insert(_) => "insert",
+            Statement::Update(_) => "update",
+            Statement::Delete(_) => "delete",
+            _ => return Err("RunSQL runs only INSERT, UPDATE and DELETE here".into()),
+        };
+        let t = queries::translate(self.db, self.schema, sql, &[], &self.queries.queries)?;
+        let target = t.target.ok_or("the statement names no target table")?;
+        let q = queries::ConvertedQuery {
+            id: uuid::Uuid::now_v7().to_string(),
+            name: name.to_string(),
+            body: t.body,
+            deps: t.deps,
+            params: t.params,
+            columns: vec![],
+            base_table: None,
+            action: Some((kind, target)),
+            creates_table: false,
+        };
+        let params: Vec<_> = q
+            .all_params(&self.queries.queries)
+            .iter()
+            .map(|p| json!({ "name": p.name, "logicalType": p.logical_type }))
+            .collect();
+        Ok(
+            json!({ "id": q.id, "name": q.name, "sql": q.sql(&self.queries.queries), "parameters": params, "action": q.action_json() }),
+        )
     }
 
     /// The base table of a one-table query chain and each output column as a column or expression.

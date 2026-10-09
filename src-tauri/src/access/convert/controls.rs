@@ -520,9 +520,14 @@ impl<'c, 'a> ControlWriter<'c, 'a> {
                 resolve: &resolve,
                 form_id: Some(self.info.id.clone()),
                 notes: Notes::default(),
+                owner: format!("{}: {label}", self.info.name),
+                queries: vec![],
             };
             let steps = w.steps(&stmts);
-            let lost = w.notes.0;
+            let (lost, made) = (w.notes.0, w.queries);
+            if !steps.is_empty() {
+                self.ctx.extra_queries.extend(made);
+            }
             if steps.is_empty() {
                 if !header || !lost.is_empty() {
                     self.notes.push(format!(

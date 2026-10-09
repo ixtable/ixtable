@@ -1,4 +1,5 @@
-//! Syntax tree and parser for Access expressions and SELECT statements.
+//! Syntax tree and parser for Access expressions and query statements: SELECT,
+//! TRANSFORM, and the action statements INSERT, UPDATE and DELETE.
 use super::lexer::{lex, Tok};
 
 #[derive(Debug, Clone, PartialEq)]
@@ -131,10 +132,45 @@ pub struct Crosstab {
     pub pivot_in: Vec<Expr>,
 }
 
+/// Where an append query's rows come from.
+#[derive(Debug, Clone, PartialEq)]
+pub enum InsertSource {
+    Select(Select),
+    Values(Vec<Expr>),
+}
+
+/// `INSERT INTO table [(columns)] SELECT ... | VALUES (...)`.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Insert {
+    pub table: String,
+    pub columns: Vec<String>,
+    pub source: InsertSource,
+}
+
+/// `UPDATE from SET target = value, ... [WHERE ...]`; `from` may join tables.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Update {
+    pub from: From,
+    pub sets: Vec<(Vec<Part>, Expr)>,
+    pub where_clause: Option<Expr>,
+}
+
+/// `DELETE [target.*] FROM ... [WHERE ...]`; `target` names the table rows go from.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Delete {
+    pub target: Option<String>,
+    pub from: Vec<From>,
+    pub where_clause: Option<Expr>,
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub enum Statement {
+    /// A SELECT; `into` set makes it a make-table query.
     Select(Select),
     Crosstab(Crosstab),
+    Insert(Insert),
+    Update(Update),
+    Delete(Delete),
 }
 
 pub struct Parser {
@@ -700,11 +736,142 @@ impl Parser {
                 pivot_in,
             }));
         }
-        let s = self.select()?;
+        let statement = if self.eat_word("INSERT") {
+            Statement::Insert(self.insert()?)
+        } else if self.eat_word("UPDATE") {
+            Statement::Update(self.update()?)
+        } else if self.eat_word("DELETE") {
+            Statement::Delete(self.delete()?)
+        } else {
+            Statement::Select(self.select()?)
+        };
         if !self.at_end() {
             return Err(format!("unexpected {:?} after the query", self.peek()));
         }
-        Ok(Statement::Select(s))
+        Ok(statement)
+    }
+
+    /// A column of an INSERT list or SET target: the last part of a name.
+    fn target_parts(&mut self) -> Result<Vec<Part>, String> {
+        match self.expr_primary_name()? {
+            Expr::Name(parts) => Ok(parts),
+            other => Err(format!("expected a field name, found {other:?}")),
+        }
+    }
+
+    fn expr_primary_name(&mut self) -> Result<Expr, String> {
+        let mut parts = vec![Part {
+            text: self.alias()?,
+            bang: false,
+        }];
+        while self.peek().is_some_and(|t| t.is_op(".") || t.is_op("!")) {
+            let bang = self.peek().is_some_and(|t| t.is_op("!"));
+            self.pos += 1;
+            parts.push(Part {
+                text: self.alias()?,
+                bang,
+            });
+        }
+        Ok(Expr::Name(parts))
+    }
+
+    fn insert(&mut self) -> Result<Insert, String> {
+        self.expect_word("INTO")?;
+        let mut table = self.alias()?;
+        while self.eat_op(".") {
+            table = self.alias()?;
+        }
+        if self.eat_word("IN") {
+            return Err("appending to a table in another database is not supported".into());
+        }
+        let mut columns = vec![];
+        if self.peek().is_some_and(|t| t.is_op("("))
+            && !self.peek_at(1).is_some_and(|t| t.is_word("SELECT"))
+        {
+            self.pos += 1;
+            loop {
+                let parts = self.target_parts()?;
+                columns.push(parts.last().map(|p| p.text.clone()).unwrap_or_default());
+                if !self.eat_op(",") {
+                    break;
+                }
+            }
+            self.expect_op(")")?;
+        }
+        let source = if self.eat_word("VALUES") {
+            self.expect_op("(")?;
+            let mut values = vec![];
+            loop {
+                values.push(self.expr()?);
+                if !self.eat_op(",") {
+                    break;
+                }
+            }
+            self.expect_op(")")?;
+            InsertSource::Values(values)
+        } else {
+            InsertSource::Select(self.select()?)
+        };
+        Ok(Insert {
+            table,
+            columns,
+            source,
+        })
+    }
+
+    fn update(&mut self) -> Result<Update, String> {
+        self.eat_word("DISTINCTROW");
+        let from = self.from_item()?;
+        self.expect_word("SET")?;
+        let mut sets = vec![];
+        loop {
+            let target = self.target_parts()?;
+            self.expect_op("=")?;
+            sets.push((target, self.expr()?));
+            if !self.eat_op(",") {
+                break;
+            }
+        }
+        let where_clause = if self.eat_word("WHERE") {
+            Some(self.expr()?)
+        } else {
+            None
+        };
+        Ok(Update {
+            from,
+            sets,
+            where_clause,
+        })
+    }
+
+    fn delete(&mut self) -> Result<Delete, String> {
+        self.eat_word("DISTINCTROW");
+        // `DELETE *`, `DELETE T.*` or a field list: only the table matters.
+        let mut target = None;
+        while !self.at_end() && !self.peek().is_some_and(|t| t.is_word("FROM")) {
+            match self.next() {
+                Some(Tok::Word(w)) | Some(Tok::Bracket(w)) if target.is_none() => target = Some(w),
+                _ => {}
+            }
+        }
+        self.expect_word("FROM")?;
+        let mut from = vec![];
+        loop {
+            from.push(self.from_item()?);
+            if !self.eat_op(",") {
+                break;
+            }
+        }
+        let where_clause = if self.eat_word("WHERE") {
+            Some(self.expr()?)
+        } else {
+            None
+        };
+        Ok(Delete {
+            target,
+            from,
+            where_clause,
+        })
     }
 }
 
@@ -723,6 +890,8 @@ pub fn is_keyword(w: &str) -> bool {
         "DISTINCT",
         "DISTINCTROW",
         "TOP",
+        "SET",
+        "VALUES",
         "MOD",
         "XOR",
         "EQV",

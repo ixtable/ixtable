@@ -354,6 +354,7 @@ fn convert_report(ctx: &mut Context, r: &DesignObject, report: &mut ImportReport
         .db
         .query(&record_source)
         .and_then(|q| ctx.queries.queries.get(&q.name.to_lowercase()))
+        .filter(|q| q.action.is_none())
     {
         Some(q) => super::sources::Bound {
             source: Source::Query {

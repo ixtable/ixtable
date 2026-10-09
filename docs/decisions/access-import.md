@@ -59,9 +59,11 @@ staged copy of the data, in this order:
    never dropped.
 3. `queries::convert` translates Access SQL to DuckDB SQL with
    `translate::sql`. Queries that depend on other queries become CTEs. Prompt
-   parameters become saved-query parameters. Action queries (append, update,
-   delete, make-table) have no saved-query equivalent, so their Access SQL is
-   kept in `settings.accessImport.actionQueries` and reported.
+   parameters become saved-query parameters. Append, update, delete and
+   make-table queries become [action queries](./action-queries.md)
+   (`translate::dml`). A make-table target the file lacks is created by
+   migration 002 once the data is in. Data-definition and pass-through
+   queries keep their Access SQL in `settings.accessImport.actionQueries`.
 4. Reports (`reports.rs`), macros (`macros.rs`), then forms (`forms.rs`,
    `controls.rs`) convert, in that order so buttons only point at objects that
    exist. Expressions go through `translate::expr` into the ixtable expression
@@ -78,7 +80,8 @@ staged copy of the data, in this order:
 does. It stores the definitions, applies the schema as
 migration 001, copies the staged rows in with foreign keys checked, and checks
 each saved query with `DESCRIBE`. VBA modules and code-behind are kept as the
-text asset `Access VBA.txt`. The conversion report, with a status and notes
+text asset `Access VBA.txt`, one section per module and form, which
+Settings › Assets previews. The conversion report, with a status and notes
 for every object, is stored in `settings.accessImport.report` and returned to
 the wizard.
 
@@ -136,5 +139,7 @@ whether to import data, import, read the report, open the document.
 ## Audit log
 
 - 2026-10-08: record created with the importer.
+- 2026-10-09: action queries, RunSQL and OpenQuery now convert (see the
+  action-queries record). The VBA asset has a preview in Settings › Assets.
 - 2026-10-09: password-protected and encrypted files moved out of scope. Jet
   3/4 page decryption removed, Jet database passwords now refused.

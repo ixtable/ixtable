@@ -454,6 +454,8 @@ fn event_notes(ctx: &Context, block: &Node, notes: &mut Notes) {
                 resolve: &none,
                 form_id: None,
                 notes: Notes::default(),
+                owner: String::new(),
+                queries: vec![],
             };
             let steps = w.steps(&stmts);
             if !steps.is_empty() || !w.notes.0.is_empty() {

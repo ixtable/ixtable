@@ -5,6 +5,7 @@
 //! 2. convert queries, forms, reports and macros into definitions;
 //! 3. start a new untitled document, store the definitions, apply the schema
 //!    migration, and copy the staged rows in, as templates do.
+pub mod actions;
 pub mod autoforms;
 pub mod controls;
 pub mod forms;
@@ -51,6 +52,8 @@ pub struct Conversion {
     pub report: ImportReport,
     pub assets: Vec<forms::AssetRef>,
     pub staging: Option<staging::Staging>,
+    /// Make-table queries whose target the import creates: (query id, table).
+    pub make_tables: Vec<(String, String)>,
 }
 
 fn id() -> String {
@@ -230,12 +233,23 @@ pub fn convert(
         config["settings"]["accessImport"]["vbaAsset"] = json!(format!("{{{{asset:{VBA_KEY}}}}}"));
     }
     let assets = ctx.assets.clone();
+    let make_tables = queries
+        .queries
+        .values()
+        .filter(|q| q.creates_table)
+        .filter_map(|q| {
+            q.action
+                .as_ref()
+                .map(|(_, table)| (q.id.clone(), table.clone()))
+        })
+        .collect();
     Ok(Conversion {
         config,
         plans,
         report,
         assets,
         staging,
+        make_tables,
     })
 }
 
@@ -334,6 +348,7 @@ pub fn create(
         mut report,
         assets,
         staging,
+        make_tables,
     } = conversion;
     m.new_session(window)?;
     let result = (|| {
@@ -353,9 +368,11 @@ pub fn create(
             staging::copy_into(s, &db, &plans).map_err(|e| AppError::new("IMPORT_FAILED", e))?;
         }
         m.mark_data_dirty(window)?;
-        check_queries(m, window, &config, &mut report);
-        // The report stays with the document (Settings › YAML shows it).
         let mut config = config;
+        actions::create_targets(m, window, &mut config, &make_tables, &mut report)?;
+        check_queries(m, window, &config, &mut report);
+        actions::check_statements(m, window, &config, &mut report)?;
+        // The report stays with the document (Settings › YAML shows it).
         config.settings["accessImport"]["report"] =
             serde_json::to_value(&report.items).unwrap_or_default();
         m.update_config(window, config)
@@ -383,22 +400,14 @@ fn check_queries(
     config: &DocumentConfig,
     report: &mut ImportReport,
 ) {
-    for q in &config.saved_queries {
-        let mut sql = q.sql.clone();
-        // Longest names first so `$a` does not replace part of `$ab`.
-        let mut params: Vec<_> = q.parameters.iter().collect();
-        params.sort_by_key(|p| std::cmp::Reverse(p.name.len()));
-        for p in params {
-            let ty = match p.logical_type.as_str() {
-                "integer" => "BIGINT",
-                "number" => "DOUBLE",
-                "boolean" => "BOOLEAN",
-                "date" => "DATE",
-                "timestamp" => "TIMESTAMP",
-                _ => "VARCHAR",
-            };
-            sql = sql.replace(&format!("${}", p.name), &format!("CAST(NULL AS {ty})"));
-        }
+    // Insert, update and delete statements are checked by `actions::check_statements`.
+    let reads = config.saved_queries.iter().filter(|q| {
+        q.action
+            .as_ref()
+            .is_none_or(|a| a.kind == crate::archive::ActionKind::Replace)
+    });
+    for q in reads {
+        let sql = actions::with_null_params(q);
         if let Err(e) = m.read_query(window, &format!("DESCRIBE {sql}")) {
             report.note(
                 "query",

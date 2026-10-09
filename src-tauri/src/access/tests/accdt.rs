@@ -121,8 +121,10 @@ fn template_fixture_reads_every_object() {
         kinds,
         [
             ("ContactsAndCompanies", QueryKind::Union),
+            ("MakeCustomerTotals", QueryKind::MakeTable),
             ("Order Totals", QueryKind::Select),
-            ("PaidOrdersAppend", QueryKind::Append)
+            ("PaidOrdersAppend", QueryKind::Append),
+            ("RaiseBigOrders", QueryKind::Update)
         ]
     );
     let totals = db.query("Order Totals").unwrap();

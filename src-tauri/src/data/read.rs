@@ -138,6 +138,10 @@ impl ReadRuntime {
     pub fn connection(&self) -> &duckdb::Connection {
         &self.connection
     }
+    /// The verified sqlite_scanner this reader loaded (the action-query writer loads it too).
+    pub fn sqlite_extension(&self) -> &Path {
+        &self.sqlite_extension
+    }
     /// Shared access to the `data` catalog for one read (see `data::gate`): it
     /// excludes RecordStore writes to the embedded file and every `refresh`.
     pub fn read_gate(&self) -> Result<Option<super::gate::GateGuard>, String> {
@@ -463,7 +467,7 @@ pub(crate) fn mark_rowid_alias(def: &mut TableDef) {
 }
 
 /// `<workspace>/data.db`, quoted for a SQL string literal.
-fn sql_path(workspace: &Path) -> String {
+pub(super) fn sql_path(workspace: &Path) -> String {
     workspace
         .join("data.db")
         .to_string_lossy()

@@ -125,7 +125,8 @@ fn template_package_becomes_a_working_document() {
     let config = m.config("tpl").unwrap();
     assert_eq!(config.name, "Order Desk");
     assert_eq!(config.active_mode, "run");
-    // Tables, child tables for the attachment and multi-value fields, and data.
+    // Tables, child tables for the attachment and multi-value fields, the
+    // make-table query's target, and data.
     let mut tables: Vec<String> = m
         .database_objects("tpl")
         .unwrap()
@@ -135,9 +136,15 @@ fn template_package_becomes_a_working_document() {
     tables.sort();
     assert_eq!(
         tables,
-        ["Customers", "Customers Logo", "Customers Tags", "Orders"]
+        [
+            "Customer Totals",
+            "Customers",
+            "Customers Logo",
+            "Customers Tags",
+            "Orders"
+        ]
     );
-    assert_eq!(config.entities.len(), 4);
+    assert_eq!(config.entities.len(), 5);
     assert_eq!(
         rows(m, "tpl", "SELECT count(*) FROM Orders"),
         [[Integer(3)]]
@@ -218,14 +225,7 @@ fn template_package_becomes_a_working_document() {
     let totals = rows(m, "tpl", &q("Order Totals").sql);
     assert_eq!(totals[0][0], Text("Fabrikam, Inc.".into()));
     assert!(rows(m, "tpl", &q("ContactsAndCompanies").sql).len() >= 3);
-    assert!(config
-        .saved_queries
-        .iter()
-        .all(|q| q.name != "PaidOrdersAppend"));
-    assert_eq!(
-        config.settings["accessImport"]["actionQueries"][0]["name"],
-        "PaidOrdersAppend"
-    );
+    action_queries_convert_and_run(m, &config);
     // Forms: list, detail, generated detail for the subform's rows.
     let list = form(&config, "Customer List");
     let details = form(&config, "Customer Details");
@@ -457,4 +457,131 @@ fn forms_opened_from_related_lists_hold_no_related_lists() {
     convert::forms::unnest_related_lists(&mut forms);
     assert!(forms[0]["controls"][0]["related"].get("formId").is_none());
     assert_eq!(forms[1]["controls"][0]["related"]["formId"], "c");
+}
+
+/// Append, update and make-table queries and RunSQL/OpenQuery macro actions
+/// become action queries; run them on the imported data the way `action::run` does.
+fn action_queries_convert_and_run(m: &DocumentManager, config: &crate::archive::DocumentConfig) {
+    use crate::archive::ActionKind;
+    use crate::data::DataValue::*;
+    use crate::queries::action::{plan, Plan};
+    let q = |name: &str| {
+        config
+            .saved_queries
+            .iter()
+            .find(|q| q.name == name)
+            .unwrap_or_else(|| panic!("no query {name}"))
+    };
+    let spec = |name: &str| {
+        q(name)
+            .action
+            .clone()
+            .unwrap_or_else(|| panic!("{name} is no action query"))
+    };
+    assert_eq!(
+        (
+            spec("PaidOrdersAppend").kind,
+            spec("PaidOrdersAppend").table.as_str()
+        ),
+        (ActionKind::Insert, "Orders")
+    );
+    assert_eq!(spec("RaiseBigOrders").kind, ActionKind::Update);
+    assert_eq!(q("RaiseBigOrders").parameters[0].name, "minimum");
+    let make = spec("MakeCustomerTotals");
+    assert_eq!(
+        (make.kind, make.table.as_str()),
+        (ActionKind::Replace, "Customer Totals")
+    );
+    assert_eq!(
+        config.settings["accessImport"]["actionQueries"],
+        serde_json::json!([])
+    );
+    assert_eq!(
+        config.migrations.len(),
+        2,
+        "migration 002 creates the make-table target"
+    );
+    // RunSQL and OpenQuery become runQuery steps.
+    let nightly = config.actions.iter().find(|a| a.name == "Nightly").unwrap();
+    let ids: Vec<String> = nightly
+        .steps
+        .iter()
+        .map(|s| s.fields["queryId"].as_str().unwrap().to_string())
+        .collect();
+    let run_sql = config
+        .saved_queries
+        .iter()
+        .find(|x| x.id == ids[0])
+        .unwrap();
+    assert_eq!(run_sql.name, "Nightly (RunSQL 1)");
+    assert_eq!(run_sql.action.as_ref().unwrap().kind, ActionKind::Delete);
+    assert_eq!(ids[1], q("MakeCustomerTotals").id);
+    // Run them: the make-table query fills the new table; the update goes through the copy.
+    let workspace = m
+        .database_path("tpl")
+        .unwrap()
+        .parent()
+        .unwrap()
+        .to_path_buf();
+    let extension = crate::data::extensions::sqlite_extension_path().unwrap();
+    let writer = || {
+        crate::data::write::open_writer(
+            &workspace,
+            &extension,
+            &crate::data::read::ReadTarget::Sqlite,
+        )
+        .unwrap()
+    };
+    let job = |table: &str, kind| crate::queries::action_exec::Job {
+        table: format!("data.\"main\".\"{table}\""),
+        name: table.into(),
+        keys: vec!["ID".into()],
+        rowid: true,
+        kind,
+        watch: false,
+        dry_run: false,
+    };
+    let Plan::Direct(sql) = plan(q("MakeCustomerTotals"), &make, "main", true)
+        .unwrap()
+        .0
+    else {
+        panic!("replace runs directly");
+    };
+    let out = crate::queries::action_exec::direct(
+        &writer(),
+        &sql,
+        &[],
+        &job("Customer Totals", ActionKind::Replace),
+    )
+    .unwrap();
+    assert!(out.changed > 0);
+    m.mark_data_dirty("tpl").unwrap();
+    let totals = rows(m, "tpl", "SELECT count(*) FROM \"Customer Totals\"");
+    assert_eq!(totals[0][0], Integer(out.changed as i64));
+    let raise = spec("RaiseBigOrders");
+    let Plan::Copy(sql) = plan(q("RaiseBigOrders"), &raise, "main", true).unwrap().0 else {
+        panic!("embedded-SQLite updates run on a copy");
+    };
+    let before = rows(m, "tpl", "SELECT count(*) FROM Orders WHERE Amount > 100");
+    let w = writer();
+    let computed = crate::queries::action_exec::compute_update(
+        &w,
+        &sql,
+        &[duckdb::types::Value::Double(100.0)],
+        &job("Orders", ActionKind::Update),
+    )
+    .unwrap();
+    drop(w);
+    assert_eq!(Integer(computed.outcome.changed as i64), before[0][0]);
+    let mut store =
+        crate::recordstore::for_config(&Default::default(), &m.database_path("tpl").unwrap())
+            .unwrap();
+    store.execute_batch(&computed.ops).unwrap();
+    for item in m.config("tpl").unwrap().settings["accessImport"]["report"]
+        .as_array()
+        .unwrap()
+    {
+        let notes = item["notes"].to_string();
+        assert!(!notes.contains("DuckDB rejects"), "{notes}");
+    }
 }

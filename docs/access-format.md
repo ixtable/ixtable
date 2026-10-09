@@ -727,8 +727,9 @@ Module: `access/convert/` and `access/translate/`. The decision record is
   (`translate/sql.rs`): `[Name]` quoting, `table!field`, `IIf`, `Nz`, `Like`
   with `*` and `?`, `#date#` literals, VBA date and text functions, date
   arithmetic, `TRANSFORM ... PIVOT` to `PIVOT`, union queries, and parameters
-  (`[Enter a date]`) as `$enter_a_date` saved-query parameters. Action queries
-  are kept as Access SQL in `settings.accessImport.actionQueries`.
+  (`[Enter a date]`) as `$enter_a_date` saved-query parameters. Append,
+  update, delete and make-table queries become action queries
+  (`translate/dml.rs`), as do RunSQL macro actions.
 - **Expressions** in forms, reports, and macros are translated to the ixtable
   expression language (`translate/expr.rs`), and `Format` patterns to ixtable
   format patterns (`translate/format.rs`).

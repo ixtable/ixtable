@@ -121,6 +121,8 @@ fn legacy_args(action: &str) -> &'static [&'static str] {
             "WindowMode",
         ],
         "OpenTable" => &["TableName", "View", "DataMode"],
+        "OpenQuery" => &["QueryName", "View", "DataMode"],
+        "RunSQL" => &["SQLStatement", "UseTransaction"],
         "MsgBox" => &["Message", "Beep", "Type", "Title"],
         "RunMacro" => &["MacroName", "RepeatCount", "RepeatExpression"],
         "SetTempVar" => &["Name", "Expression"],
@@ -218,6 +220,10 @@ pub struct StepWriter<'c, 'a> {
     /// The form the macro belongs to (GoToRecord New opens it in create mode).
     pub form_id: Option<String>,
     pub notes: Notes,
+    /// Names the saved queries RunSQL actions become (`<owner> (RunSQL n)`).
+    pub owner: String,
+    /// Saved action queries made from RunSQL actions; the caller adds them to the document.
+    pub queries: Vec<Value>,
 }
 
 fn arg<'s>(args: &'s [(String, String)], name: &str) -> Option<&'s str> {
@@ -379,6 +385,44 @@ impl StepWriter<'_, '_> {
                     json!({ "target": { "kind": "table", "id": name } }),
                 ))
             }
+            "OpenQuery" => {
+                let name = arg(args, "QueryName")?;
+                let q = self.ctx.queries.queries.get(&name.to_lowercase());
+                let Some(q) = q.filter(|q| q.action.is_some()) else {
+                    self.notes.push(format!(
+                        "OpenQuery {name}: showing a query's rows has no ixtable equivalent"
+                    ));
+                    return None;
+                };
+                let (id, params) = (q.id.clone(), q.all_params(&self.ctx.queries.queries));
+                Some(step(
+                    "runQuery",
+                    json!({ "queryId": id, "params": self.query_params(&params), "storeAs": "" }),
+                ))
+            }
+            "RunSQL" => {
+                let sql = arg(args, "SQLStatement")?;
+                if sql.starts_with('=') {
+                    self.notes
+                        .push("RunSQL with SQL built by an expression was not converted");
+                    return None;
+                }
+                let name = format!("{} (RunSQL {})", self.owner, self.queries.len() + 1);
+                match self.ctx.sql_action_query(sql, &name) {
+                    Ok(query) => {
+                        let id = query["id"].clone();
+                        self.queries.push(query);
+                        Some(step(
+                            "runQuery",
+                            json!({ "queryId": id, "params": {}, "storeAs": "" }),
+                        ))
+                    }
+                    Err(e) => {
+                        self.notes.push(format!("RunSQL was not converted ({e})"));
+                        None
+                    }
+                }
+            }
             "MessageBox" | "MsgBox" => {
                 let message = arg(args, "Message")?;
                 match self.text_or_expr(message) {
@@ -424,6 +468,23 @@ impl StepWriter<'_, '_> {
                 None
             }
         }
+    }
+
+    /// Values for an action query's parameters: form references become expressions.
+    fn query_params(&mut self, params: &[crate::access::translate::sql::Param]) -> Value {
+        let mut out = serde_json::Map::new();
+        for p in params {
+            match self.expr(&format!("[{}]", p.original)) {
+                Ok(e) if p.original.contains('!') => {
+                    out.insert(p.name.clone(), json!(e));
+                }
+                _ => self.notes.push(format!(
+                    "the query parameter {} has no value in ixtable; set it on the step",
+                    p.original
+                )),
+            }
+        }
+        Value::Object(out)
     }
 
     /// `"[ID]=" & [ID]` / `[ID]=Forms!X!ID` → the record id expression.
@@ -533,11 +594,15 @@ pub fn convert_macros(ctx: &mut Context, report: &mut ImportReport) -> Vec<Value
                 resolve: &no_fields,
                 form_id: None,
                 notes: Notes::default(),
+                owner: action_name.clone(),
+                queries: vec![],
             };
             let steps = w.steps(&body);
-            for n in w.notes.0 {
+            let (lost, made) = (w.notes.0, w.queries);
+            for n in lost {
                 notes.push(n);
             }
+            ctx.extra_queries.extend(made);
             let Some(id) = ctx.action_ids.get(&action_name.to_lowercase()).cloned() else {
                 continue;
             };

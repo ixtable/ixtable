@@ -316,3 +316,80 @@ fn structured_queries_render_access_sql() {
     }];
     assert_eq!(to_access_sql(&upd), "UPDATE T\nSET T.n = 0");
 }
+
+#[test]
+fn action_statements_become_duckdb_statements_that_run() {
+    let db = duckdb::Connection::open_in_memory().unwrap();
+    db.execute_batch(
+        "CREATE TABLE orders(\"ID\" INTEGER PRIMARY KEY, \"Customer\" INTEGER, \"Order Date\" DATE, \"Amount\" DOUBLE, \"Paid\" BOOLEAN, \"Status\" VARCHAR);
+         CREATE TABLE customers(\"ID\" INTEGER PRIMARY KEY, \"Company\" VARCHAR, \"Logo\" BLOB);
+         INSERT INTO customers VALUES (1, 'Contoso', NULL), (2, 'Fabrikam', NULL);
+         INSERT INTO orders VALUES (1, 1, DATE '2024-01-05', 10, false, 'open'), (2, 2, DATE '2024-02-05', 20, false, 'open');",
+    )
+    .unwrap();
+    let cases = [
+        (
+            "INSERT INTO Orders ( ID, Customer, Amount ) SELECT DISTINCTROW Orders.ID + 10, Orders.Customer, Orders.Amount * 2 FROM Orders WHERE Orders.Paid = False;",
+            "INSERT INTO \"Orders\" (\"ID\", \"Customer\", \"Amount\") SELECT \"Orders\".\"ID\" + 10 AS \"Expr1000\", \"Orders\".\"Customer\", \"Orders\".\"Amount\" * 2 AS \"Expr1001\" FROM \"Orders\" WHERE \"Orders\".\"Paid\" = FALSE",
+            2,
+        ),
+        (
+            "INSERT INTO Customers (ID, Company) VALUES (3, \"Northwind\")",
+            "INSERT INTO \"Customers\" (\"ID\", \"Company\") VALUES (3, 'Northwind')",
+            1,
+        ),
+        (
+            "UPDATE Orders INNER JOIN Customers ON Orders.Customer = Customers.ID SET Orders.Status = \"Paid by \" & Customers.Company, Orders.Paid = True WHERE Customers.Company Like \"Con*\";",
+            "",
+            2,
+        ),
+        (
+            "UPDATE DISTINCTROW Orders SET Orders.[Order Date] = DateAdd(\"d\", 7, [Order Date]) WHERE Orders.ID > [Minimum ID]",
+            "UPDATE \"Orders\" SET \"Order Date\" = (\"Order Date\" + to_days(CAST(7 AS INTEGER))) WHERE (\"Orders\".\"ID\" > $minimum_id)",
+            4,
+        ),
+        (
+            "DELETE Orders.* FROM Orders INNER JOIN Customers ON Orders.Customer = Customers.ID WHERE Customers.Company = \"Fabrikam\"",
+            "",
+            2,
+        ),
+        ("DELETE * FROM Customers WHERE ID = 3", "DELETE FROM \"Customers\" WHERE (\"ID\" = 3)", 1),
+    ];
+    for (access, expected, rows) in cases {
+        let st = parse_statement(access).unwrap_or_else(|e| panic!("{access}: {e}"));
+        let mut w = SqlWriter::new(Dialect::DuckDb, &Fixture);
+        let sql = w.statement(&st).unwrap_or_else(|e| panic!("{access}: {e}"));
+        if !expected.is_empty() {
+            assert_eq!(sql, expected, "{access}");
+        }
+        let target = w.out.target.clone().unwrap();
+        assert!(
+            ["Orders", "Customers"].contains(&target.as_str()),
+            "{access}: {target}"
+        );
+        // The bare parameter becomes $minimum_id; bind it so the statement runs.
+        let sql = sql.replace("$minimum_id", "0");
+        let changed = db
+            .execute(&sql, [])
+            .unwrap_or_else(|e| panic!("{sql}: {e}"));
+        assert_eq!(changed, rows, "{sql}");
+    }
+    let status: Vec<String> = db
+        .prepare("SELECT \"Status\" FROM orders ORDER BY \"ID\"")
+        .unwrap()
+        .query_map([], |r| r.get(0))
+        .unwrap()
+        .map(Result::unwrap)
+        .collect();
+    // Orders 1 and 11 (Contoso) were updated; Fabrikam's 2 and 12 were deleted.
+    assert_eq!(status, ["Paid by Contoso", "Paid by Contoso"]);
+    let outer = parse_statement("UPDATE Orders LEFT JOIN Customers ON Orders.Customer = Customers.ID SET Orders.Status = Customers.Company").unwrap();
+    let err = SqlWriter::new(Dialect::DuckDb, &Fixture)
+        .statement(&outer)
+        .unwrap_err();
+    assert!(err.contains("outer joins"), "{err}");
+    let make = parse_statement("SELECT Orders.Customer, Sum(Orders.Amount) AS Total INTO [Customer Totals] FROM Orders GROUP BY Orders.Customer").unwrap();
+    let mut w = SqlWriter::new(Dialect::DuckDb, &Fixture);
+    w.statement(&make).unwrap();
+    assert_eq!(w.out.target.as_deref(), Some("Customer Totals"));
+}

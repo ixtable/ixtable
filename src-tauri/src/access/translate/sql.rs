@@ -53,22 +53,24 @@ pub struct Translation {
     pub queries: Vec<String>,
     /// Output column names of a SELECT.
     pub columns: Vec<String>,
+    /// The table an INSERT, UPDATE or DELETE writes, or a make-table query creates.
+    pub target: Option<String>,
     pub notes: Vec<String>,
 }
 
-struct Scope {
+pub(super) struct Scope {
     /// (name or alias, columns)
-    sources: Vec<(String, Vec<(String, Kind)>)>,
+    pub(super) sources: Vec<(String, Vec<(String, Kind)>)>,
     /// Complex columns per source name.
-    complex: Vec<(String, Vec<String>)>,
+    pub(super) complex: Vec<(String, Vec<String>)>,
     /// Select-list aliases with their expressions (Access lets any clause use them).
-    aliases: Vec<(String, Expr)>,
+    pub(super) aliases: Vec<(String, Expr)>,
 }
 
 pub struct SqlWriter<'a> {
     pub dialect: Dialect,
-    schema: &'a dyn Schema,
-    scopes: Vec<Scope>,
+    pub(super) schema: &'a dyn Schema,
+    pub(super) scopes: Vec<Scope>,
     pub out: Translation,
     declared: BTreeMap<String, String>,
     /// For field rules and defaults: the table whose columns are bare names.
@@ -542,7 +544,7 @@ impl<'a> SqlWriter<'a> {
         ))
     }
 
-    fn from(&mut self, f: &From) -> Result<String, String> {
+    pub(super) fn from(&mut self, f: &From) -> Result<String, String> {
         Ok(match f {
             From::Table { name, alias } => {
                 let cols = self.source_columns(name);
@@ -725,8 +727,14 @@ impl<'a> SqlWriter<'a> {
     /// A whole query statement (SELECT or crosstab) as DuckDB SQL.
     pub fn statement(&mut self, st: &Statement) -> Result<String, String> {
         match st {
-            Statement::Select(s) => self.select(s),
+            Statement::Select(s) => {
+                self.out.target = s.into.clone();
+                self.select(s)
+            }
             Statement::Crosstab(c) => self.crosstab(c),
+            Statement::Insert(i) => self.insert(i),
+            Statement::Update(u) => self.update(u),
+            Statement::Delete(d) => self.delete(d),
         }
     }
 

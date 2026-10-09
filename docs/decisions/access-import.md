@@ -29,13 +29,21 @@ as SaveAsText, a readable text format.
 **Readers.** Two pure-Rust readers in `src-tauri/src/access/` build one model
 (`model.rs`, trait `AccessFile`). `accdt.rs` reads template packages, with
 `text_format.rs` for SaveAsText and `xml.rs` for the XML parts. `jet/` reads
-Jet 3, Jet 4, and ACE page files: header and RC4 masking (`page.rs`), table
+Jet 3, Jet 4, and ACE page files: header, its fixed mask, and protection checks (`page.rs`), table
 definitions (`tdef.rs`), rows and value types (`row.rs`, `text.rs`), property
 maps (`props.rs`), and the system catalog with relationships, queries, and
 complex columns (`catalog.rs`). The readers do not decode compiled forms,
 reports, macros, or VBA in binary files. They list them so the wizard can say
-so. Password-protected ACE files are refused with a message to remove the
-password. Jet 3 and Jet 4 page encryption is decrypted.
+so.
+
+**Protected files are out of scope.** The importer refuses any file with a
+database password or encryption, in every version, and the error tells the
+user to remove the protection in Access first. Decrypting Access 2007+ files
+would need AES and SHA-1 crates outside the release gate's crypto allowlist
+(PRD §21.3) and a password prompt. A Jet database password does not encrypt
+anything, but reading past it would ignore a protection the file's owner set.
+The header mask is stored as a constant table, so the reader holds no cipher
+code.
 
 **Conversion.** `convert::convert` turns the model into a `DocumentConfig` and a
 staged copy of the data, in this order:
@@ -96,6 +104,7 @@ whether to import data, import, read the report, open the document.
   through `lower()`. This costs index use in large tables.
 - An Access rule the data already breaks is not enforced after import. The
   report lists it so the developer can clean the data and add it back.
+- Users must remove the password or encryption in Access before importing.
 - One level of master and detail: a form opened from a related list cannot
   hold related lists itself, so such rows open nothing.
 
@@ -104,7 +113,8 @@ whether to import data, import, read the report, open the document.
 - `src-tauri/src/access/tests/`: SaveAsText parsing (`text_format.rs`), template
   reading and the fixture package in `tests/fixtures/access/template/`
   (`accdt.rs`), page-file decoding of `orders.accdb`, `orders.mdb`, and the
-  Jackcess `complex-data.accdb` (`jet.rs`), SQL and expression translation
+  Jackcess `complex-data.accdb`, and refusal of password-protected and
+  encrypted copies of the fixtures (`jet.rs`), SQL and expression translation
   (`translate.rs`), and full conversions into working documents
   (`convert.rs`).
 - `tests/unit/access-summary.test.ts` and
@@ -126,3 +136,5 @@ whether to import data, import, read the report, open the document.
 ## Audit log
 
 - 2026-10-08: record created with the importer.
+- 2026-10-09: password-protected and encrypted files moved out of scope. Jet
+  3/4 page decryption removed, Jet database passwords now refused.

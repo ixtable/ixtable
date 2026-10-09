@@ -388,25 +388,36 @@ Module: `jet/page.rs` (`parse_header`).
 | 0x14 | 1 | version: 0 Jet 3, 1 Jet 4, 2 ACE 12 (2007), 3 ACE 14 (2010), 5 ACE 16 (2016), 6 ACE 16 with Large Number support (2019) |
 | 0x18 | 126 or 128 | masked header bytes (below) |
 
-Bytes from 0x18 are XORed with an RC4 keystream. The key is the u32
-`0x6B39DAC7` as 4 little-endian bytes. Jet 3 masks 126 bytes, Jet 4 and ACE
-mask 128. After unmasking:
+Bytes from 0x18 are XORed with a fixed 128-byte mask, `page::HEADER_MASK`. It
+is the RC4 keystream of the key `0x6B39DAC7` (4 bytes, little-endian), and
+starts `B5 6F 03 62 61 08 C2 55`. Jackcess and mdbtools store the same table.
+Jet 3 masks 126 bytes, Jet 4 and ACE mask 128. After unmasking:
 
 | Offset | Size | Field |
 |---|---|---|
 | 0x3C | 2 | Windows code page of Jet 3 text (0 means the system default. Read as 1252) |
 | 0x3E | 4 | page encoding key, 0 when pages are not encrypted |
-| 0x42 | 40 (Jet 4: 40 bytes of UTF-16) | database password, XORed with the mask (not used by the importer) |
-| 0x72 | 8 | creation date (f64), part of the Jet 4 password mask |
+| 0x42 | 20 (Jet 3) or 40 (Jet 4/ACE, UTF-16) | database password, all zero when there is none (below) |
+| 0x72 | 8 | creation date (f64). Jet 4 and ACE mask the password with it |
 
-### 4.2 Page encryption
+### 4.2 Passwords and encryption
 
-Jet 3 and Jet 4 files with "Encrypt Database" set have a non-zero encoding key.
-Every page after page 0 is RC4-encrypted with the key `page_number XOR
-encoding_key`, written as a little-endian u32. Decrypt on read. ACE files with
-a password use Office Agile or standard CryptoAPI encryption with the key in an
-encryption header. The importer refuses those (`Pages::open`) and asks the user
-to remove the password in Access.
+The importer reads only unprotected files. `page::protection_error` refuses
+the rest, and the user removes the protection in Access first.
+
+- **Jet 3/4 database password.** The password bytes at 0x42 are non-zero. In
+  Jet 4 and ACE they are also XORed with the creation date: take the f64 at
+  0x72, truncate it to an i32, and XOR its 4 little-endian bytes over the
+  password, repeating. Only Access checks this password. The pages themselves
+  are readable.
+- **Jet 3/4 encryption** ("Encrypt Database"). The encoding key at 0x3E is
+  non-zero, and every page after page 0 is RC4-encrypted with the key
+  `page_number XOR encoding_key` (a little-endian u32).
+- **ACE password.** Setting a password in Access 2007 or later encrypts the
+  file with Office encryption. Access 2007 and the "legacy encryption" option
+  use standard encryption (RC4 or AES-128 with SHA-1). Later versions default
+  to agile encryption (AES-256 with SHA-512). The encoding key is non-zero and
+  the header holds the encryption parameters.
 
 ### 4.3 Data pages and usage maps
 
@@ -690,7 +701,7 @@ as `ResN` (the bytes) and `ResN-name.txt` (UTF-16LE name without BOM).
 ## 5. Known gaps
 
 - Compiled forms, reports, and VBA in binary files (§4.8).
-- ACE password encryption (§4.2).
+- Password-protected and encrypted files (§4.2), by design.
 - Index B-tree pages (0x03, 0x04) are not needed to read data and are not
   parsed.
 - Data macros (table events) are read from AXL but have no ixtable equivalent.

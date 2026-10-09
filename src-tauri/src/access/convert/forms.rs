@@ -409,7 +409,11 @@ pub fn unnest_related_lists(forms: &mut [Value]) {
     let is_list = |c: &Value| c["kind"] == "relatedList";
     let holders: BTreeSet<String> = forms
         .iter()
-        .filter(|f| f["controls"].as_array().is_some_and(|c| c.iter().any(is_list)))
+        .filter(|f| {
+            f["controls"]
+                .as_array()
+                .is_some_and(|c| c.iter().any(is_list))
+        })
         .filter_map(|f| f["id"].as_str().map(str::to_string))
         .collect();
     for form in forms.iter_mut() {

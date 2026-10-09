@@ -119,13 +119,36 @@ fn dump_corpus_for_comparison() {
     }
 }
 
+/// A copy of a fixture with header bytes XORed: on masked bytes, XOR changes the plain value.
+fn with_header_bits(name: &str, at: usize, bits: &[u8]) -> std::path::PathBuf {
+    let path = super::fixtures::binary(name);
+    let mut bytes = std::fs::read(&path).unwrap();
+    for (i, b) in bits.iter().enumerate() {
+        bytes[at + i] ^= b;
+    }
+    std::fs::write(&path, bytes).unwrap();
+    path
+}
+
+fn open_error(path: &std::path::Path) -> String {
+    JetFile::open(std::fs::File::open(path).unwrap())
+        .err()
+        .unwrap()
+}
+
 #[test]
-fn header_mask_is_rc4_of_the_known_key() {
-    use crate::access::jet::page::{rc4, HEADER_KEY};
-    let mut stream = [0u8; 8];
-    rc4(&HEADER_KEY.to_le_bytes(), &mut stream);
-    // The first bytes of the mask Jackcess and mdbtools hard-code.
-    assert_eq!(stream, [0xB5, 0x6F, 0x03, 0x62, 0x61, 0x08, 0xC2, 0x55]);
+fn password_protected_and_encrypted_databases_are_refused() {
+    for (name, encrypted) in [
+        ("orders.mdb", "is encrypted; decrypt it in Access"),
+        ("orders.accdb", "has a password; remove it in Access"),
+    ] {
+        let password = with_header_bits(name, 0x42, b"p\0w\0");
+        assert!(open_error(&password).contains("has a password"), "{name}");
+        let key = with_header_bits(name, 0x3E, &[0x12, 0x34, 0x56, 0x78]);
+        assert!(open_error(&key).contains(encrypted), "{name}");
+        let err = crate::access::inventory(&key).err().unwrap();
+        assert!(err.contains(encrypted), "{name}: {err}");
+    }
 }
 
 #[test]

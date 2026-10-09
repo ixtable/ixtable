@@ -529,6 +529,7 @@ fn action_queries_convert_and_run(m: &DocumentManager, config: &crate::archive::
             &workspace,
             &extension,
             &crate::data::read::ReadTarget::Sqlite,
+            false,
         )
         .unwrap()
     };
@@ -573,10 +574,13 @@ fn action_queries_convert_and_run(m: &DocumentManager, config: &crate::archive::
     .unwrap();
     drop(w);
     assert_eq!(Integer(computed.outcome.changed as i64), before[0][0]);
-    let mut store =
-        crate::recordstore::for_config(&Default::default(), &m.database_path("tpl").unwrap())
-            .unwrap();
-    store.execute_batch(&computed.ops).unwrap();
+    let written = crate::queries::action_tests::apply(
+        &m.database_path("tpl").unwrap(),
+        &job("Orders", ActionKind::Update),
+        &computed.changes,
+    )
+    .unwrap();
+    assert_eq!(written, computed.outcome.changed);
     for item in m.config("tpl").unwrap().settings["accessImport"]["report"]
         .as_array()
         .unwrap()

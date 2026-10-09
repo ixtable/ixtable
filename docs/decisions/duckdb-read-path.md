@@ -240,9 +240,9 @@ Linux for extensions that do.
 They never run on the reader. Each run opens a short-lived writer
 (`data::write::open_writer`) with the datasource attached read-write, locked
 down the same way, and holds the gate exclusively for the embedded file. An
-UPDATE of the embedded file is computed on a copy and written through the
-RecordStore, because `sqlite_scanner` cannot update date and timestamp
-columns.
+UPDATE of the embedded file is computed on a copy and written back by a
+second writer that attaches the file with `sqlite_all_varchar`, because
+`sqlite_scanner` cannot bind date and timestamp values in an UPDATE.
 
 ## Consequences
 
@@ -336,3 +336,4 @@ columns.
 - 2026-10-05 (after merging #36): re-checked the PostgreSQL refresh (`pg_clear_cache` in `data/read.rs`) that #36 added. It matches the code. No changes.
 - 2026-10-05 (later): the data gate now lets waiting readers in after each write (cherry-picked a487178). The gate paragraph and Evidence describe it.
 - 2026-10-09: added the action-query writer (`data/write.rs`) and its section.
+  SQLite UPDATEs are written back through a text attachment, not the RecordStore.

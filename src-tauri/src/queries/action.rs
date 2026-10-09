@@ -319,7 +319,7 @@ pub fn check_sql(sql: &str, spec: &ActionSpec, schema: &str) -> Result<super::Re
 pub enum Plan {
     /// Statements run on the read-write attachment, in one transaction.
     Direct(Vec<String>),
-    /// An embedded-SQLite UPDATE run on a copy, then applied through the RecordStore (see the record).
+    /// An embedded-SQLite UPDATE computed on a copy, then written back through DuckDB (see the record).
     Copy(String),
 }
 
@@ -417,6 +417,11 @@ pub fn run(
         ))
     })?;
     let keys = def.primary_key;
+    let logical: Vec<(String, crate::data::logical::LogicalType)> = def
+        .columns
+        .iter()
+        .map(|c| (c.name.clone(), c.logical_type.clone()))
+        .collect();
     if watch && keys.is_empty() && !matches!(plan, Plan::Copy(_)) {
         return Err(invalid(format!(
             "The table \"{}\" has triggers but no primary key, so an action query cannot tell which rows changed",
@@ -441,18 +446,25 @@ pub fn run(
         } else {
             None
         };
-        let connection = data::write::open_writer(&workspace, &extension, &target)
-            .map_err(|e| AppError::new("CONNECTION", e))?;
+        let open = |text: bool| {
+            data::write::open_writer(&workspace, &extension, &target, text)
+                .map_err(|e| AppError::new("CONNECTION", e))
+        };
+        let connection = open(false)?;
         match &plan {
             Plan::Direct(sql) => super::action_exec::direct(&connection, sql, &values, &job),
             Plan::Copy(sql) => {
                 let computed = super::action_exec::compute_update(&connection, sql, &values, &job)?;
-                // The writer's handles on the file close before the RecordStore writes it.
                 drop(connection);
-                if !dry_run && !computed.ops.is_empty() {
-                    crate::recordstore::for_session(window)?
-                        .execute_batch(&computed.ops)
-                        .map_err(AppError::from)?;
+                if !dry_run && !computed.changes.rows.is_empty() {
+                    let text = super::action_exec::needs_text(&computed.changes, &spec.table)?;
+                    super::action_exec::write_back(
+                        &open(text)?,
+                        &job,
+                        &computed.changes,
+                        &logical,
+                        text,
+                    )?;
                 }
                 Ok(computed.outcome)
             }

@@ -20,10 +20,15 @@ const SQLITE_DEFAULTS: &str =
     "CREATE TEMP MACRO current_date() AS CAST(CAST(now() AS TIMESTAMP) AS DATE); \
      CREATE TEMP MACRO get_current_time() AS CAST(CAST(now() AS TIMESTAMP) AS TIME);";
 
+/// `text` attaches the embedded file with every column as VARCHAR
+/// (`sqlite_all_varchar`): the scanner can then UPDATE date and timestamp
+/// columns, which it cannot bind typed, and SQLite's column affinity stores
+/// the text as the column's type.
 pub fn open_writer(
     workspace: &Path,
     sqlite_extension: &Path,
     target: &ReadTarget,
+    text: bool,
 ) -> Result<duckdb::Connection, String> {
     let config = duckdb::Config::default()
         .enable_autoload_extension(false)
@@ -39,6 +44,11 @@ pub fn open_writer(
             .map_err(|e| format!("{what} extension startup: {e}"))
     };
     load(sqlite_extension, "SQLite")?;
+    if text {
+        connection
+            .execute_batch("SET sqlite_all_varchar = true")
+            .map_err(|e| format!("SQLite attachment: {e}"))?;
+    }
     match target {
         ReadTarget::Sqlite => connection
             .execute_batch(&format!(

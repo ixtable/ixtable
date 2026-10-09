@@ -126,9 +126,13 @@ pub fn check_statements(
     let extension = m.with_session(window, |s| Ok(s.reader.sqlite_extension().to_path_buf()))?;
     let workspace = db.parent().map(|p| p.to_path_buf()).unwrap_or_default();
     let _gate = data::gate::exclusive(&db).map_err(|e| AppError::new("BUSY", e))?;
-    let connection =
-        data::write::open_writer(&workspace, &extension, &data::read::ReadTarget::Sqlite)
-            .map_err(|e| AppError::new("CONNECTION", e))?;
+    let connection = data::write::open_writer(
+        &workspace,
+        &extension,
+        &data::read::ReadTarget::Sqlite,
+        false,
+    )
+    .map_err(|e| AppError::new("CONNECTION", e))?;
     for q in queries {
         let Some(spec) = &q.action else { continue };
         if let Err(e) = crate::queries::action::prepare_check(&connection, q, spec, "main") {

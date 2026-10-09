@@ -497,7 +497,7 @@ fn attach(
     }
 }
 
-pub(super) fn duck_bind(value: &DataValue) -> Result<duckdb::types::Value, String> {
+pub(crate) fn duck_bind(value: &DataValue) -> Result<duckdb::types::Value, String> {
     use duckdb::types::Value as V;
     Ok(match value {
         DataValue::Null => V::Null,

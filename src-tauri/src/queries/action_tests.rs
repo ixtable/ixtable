@@ -151,7 +151,7 @@ fn workspace() -> std::path::PathBuf {
 
 fn writer(dir: &std::path::Path) -> duckdb::Connection {
     let extension = data::extensions::sqlite_extension_path().unwrap();
-    data::write::open_writer(dir, &extension, &data::read::ReadTarget::Sqlite).unwrap()
+    data::write::open_writer(dir, &extension, &data::read::ReadTarget::Sqlite, false).unwrap()
 }
 
 fn rows(dir: &std::path::Path, sql: &str) -> Vec<Vec<i64>> {
@@ -192,6 +192,40 @@ fn copy_sql(sql: &str, table: &str) -> String {
     }
 }
 
+/// Writes computed changes the way `action::run` does: a text or typed writer, then `write_back`.
+pub(crate) fn apply(
+    db: &std::path::Path,
+    job: &Job,
+    changes: &super::action_exec::Changes,
+) -> Result<u64, crate::manager::AppError> {
+    use crate::data::logical::LogicalType;
+    let c = rusqlite::Connection::open(db).unwrap();
+    let mut stmt = c
+        .prepare(&format!(
+            "SELECT name, type FROM pragma_table_info('{}')",
+            job.name
+        ))
+        .unwrap();
+    let logical: Vec<(String, LogicalType)> = stmt
+        .query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?)))
+        .unwrap()
+        .map(|r| {
+            let (n, t) = r.unwrap();
+            (n, LogicalType::from_sqlite_declared(&t))
+        })
+        .collect();
+    let text = super::action_exec::needs_text(changes, &job.name)?;
+    let extension = data::extensions::sqlite_extension_path().unwrap();
+    let w = data::write::open_writer(
+        db.parent().unwrap(),
+        &extension,
+        &data::read::ReadTarget::Sqlite,
+        text,
+    )
+    .unwrap();
+    super::action_exec::write_back(&w, job, changes, &logical, text)
+}
+
 /// Runs a computed update and applies it the way `action::run` does.
 fn update(
     dir: &std::path::Path,
@@ -202,9 +236,8 @@ fn update(
     let c = writer(dir);
     let computed = compute_update(&c, &copy_sql(sql, &job.name), values, job).unwrap();
     drop(c);
-    let mut store =
-        crate::recordstore::for_config(&Default::default(), &dir.join("data.db")).unwrap();
-    store.execute_batch(&computed.ops).unwrap();
+    let written = apply(&dir.join("data.db"), job, &computed.changes).unwrap();
+    assert_eq!(written as usize, computed.changes.rows.len());
     computed.outcome
 }
 
@@ -340,9 +373,13 @@ fn dry_runs_and_failures_leave_the_data_unchanged() {
         .execute_batch("SET enable_external_access = true")
         .is_err());
     drop(c);
-    let mut store =
-        crate::recordstore::for_config(&Default::default(), &dir.join("data.db")).unwrap();
-    assert!(store.execute_batch(&computed.ops).is_err());
+    let err = apply(
+        &dir.join("data.db"),
+        &job(ActionKind::Update, false, false),
+        &computed.changes,
+    )
+    .unwrap_err();
+    assert_eq!(err.code, "CONSTRAINT", "{}", err.message);
     assert_eq!(
         rows(
             &dir,
@@ -374,7 +411,7 @@ fn postgres_action_queries_write_through_the_attachment() {
         conninfo: url.clone(),
         schema: schema.clone(),
     };
-    let c = data::write::open_writer(&dir, &extension, &target).unwrap();
+    let c = data::write::open_writer(&dir, &extension, &target, false).unwrap();
     let job = |kind, dry_run| Job {
         table: format!("data.\"{schema}\".\"visits\""),
         name: "visits".into(),
@@ -498,4 +535,48 @@ fn inserts_fill_current_date_and_time_defaults_without_icu() {
     assert_eq!(day, today);
     assert_eq!(time.len(), 8, "{time}");
     assert!(stamp.starts_with(&today), "{stamp}");
+}
+
+#[test]
+fn binary_updates_use_the_typed_attachment_and_cannot_mix_with_dates() {
+    let dir = workspace();
+    let c = rusqlite::Connection::open(dir.join("data.db")).unwrap();
+    c.execute_batch(
+        "CREATE TABLE files(id INTEGER PRIMARY KEY, body BLOB, day DATE, flag BOOLEAN CHECK (flag IS NULL OR flag IN (0,1)));
+         INSERT INTO files VALUES (1, x'0102', '2024-01-01', 0);",
+    )
+    .unwrap();
+    drop(c);
+    let files = Job {
+        table: "data.\"main\".\"files\"".into(),
+        name: "files".into(),
+        ..job(ActionKind::Update, false, false)
+    };
+    update(
+        &dir,
+        "UPDATE files SET body = from_hex('0a0b'), flag = true",
+        &[],
+        &files,
+    );
+    let c = rusqlite::Connection::open(dir.join("data.db")).unwrap();
+    let (body, flag): (Vec<u8>, i64) = c
+        .query_row("SELECT body, flag FROM files", [], |r| {
+            Ok((r.get(0)?, r.get(1)?))
+        })
+        .unwrap();
+    assert_eq!((body, flag), (vec![0x0a, 0x0b], 1));
+    drop(c);
+    let w = writer(&dir);
+    let both = copy_sql(
+        "UPDATE files SET body = from_hex('0c'), day = day + 1",
+        "files",
+    );
+    let computed = compute_update(&w, &both, &[], &files).unwrap();
+    drop(w);
+    let err = apply(&dir.join("data.db"), &files, &computed.changes).unwrap_err();
+    assert!(
+        err.message.contains("split it into two queries"),
+        "{}",
+        err.message
+    );
 }

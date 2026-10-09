@@ -191,7 +191,7 @@ pub fn prepare_sql(sql: &str) -> Result<Rewritten, AppError> {
 pub mod action;
 pub(crate) mod action_exec;
 #[cfg(test)]
-mod action_tests;
+pub(crate) mod action_tests;
 mod page;
 mod params;
 mod run;

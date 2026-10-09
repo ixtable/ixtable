@@ -49,10 +49,17 @@ Two `sqlite_scanner` limits shape the SQLite path:
   assertion and invalidates the database. So an UPDATE of the embedded file
   runs on a copy of the table (`Plan::Copy`, the target renamed to
   `temp.main.__ixtable_work` with the table's name as its alias). The copy is
-  compared with the live table by rowid, and the changed columns are written
-  through the RecordStore in one batch. Values then take ixtable's storage
-  format and constraints, and the comparison gives triggers their `old`
-  values at no extra cost.
+  compared with the live table by rowid, which also gives triggers their
+  `old` values. A second writer then writes the changed columns in one
+  DuckDB transaction: the rows go into a temp table, and one `UPDATE … FROM`
+  sets each changed cell. That writer attaches the file with
+  `sqlite_all_varchar`, so every column is VARCHAR and the scanner never
+  binds a date. Values are written as the text ixtable stores (each
+  column's canonical form, booleans as 0 and 1), and SQLite's column
+  affinity turns numbers back into numbers. Binary values cannot go through
+  text, so an update that changes a binary column uses a typed writer, and
+  one that changes both a binary and a date or time column is refused.
+  Every statement of a saved query, the write included, runs in DuckDB.
 - It evaluates column defaults in DuckDB, and `CURRENT_DATE` and
   `CURRENT_TIME` need the ICU extension, which ixtable does not bundle. The
   writer defines `current_date()` and `get_current_time()` as temporary
@@ -100,6 +107,8 @@ becomes a `runQuery` step.
 - An action query writes outside the RecordStore's per-row checks: the
   entity concurrency policy (`optimistic` and the rest) does not apply. A
   dry run and the confirmation are the safeguard in Studio.
+- A SQLite UPDATE commits in its own transaction after the computation, still
+  under the exclusive gate, so no other write can come between them.
 - A SQLite UPDATE copies the whole table into memory, and a run with
   triggers copies the keys or rows of the target. Large tables cost memory
   and time in proportion.
@@ -129,3 +138,5 @@ becomes a `runQuery` step.
 ## Audit log
 
 - 2026-10-09: record created with the feature.
+- 2026-10-09: the SQLite UPDATE write-back moved from the RecordStore to
+  DuckDB (a text attachment), so every action query runs in DuckDB.

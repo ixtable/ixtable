@@ -26,6 +26,7 @@ pub mod support;
 #[cfg(test)]
 mod tests;
 pub mod values;
+pub mod write;
 
 pub use ddl::{
     parse_sqlite_create_index, parse_sqlite_create_table, CheckDef, ColumnDef, ForeignKeyDef,
